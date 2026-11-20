@@ -46,6 +46,8 @@ export default function MirrorPanel({
     canvasRef,
     enabled: session.status === 'streaming',
     onError: setActionError,
+    // 首选通道：镜像 WS（毫秒级、有序）；不可用时 hook 内部自动回落 REST /touch
+    wsTouch: session.sendTouch,
   })
   const keyboard = useKeyboardInput({
     serial,

@@ -42,6 +42,11 @@ export interface MirrorSession {
   stopMirror: () => Promise<void>
   reconnect: () => void
   requestKeyframe: () => void
+  /**
+   * 通过镜像 WS 发送流式触摸（首选通道，~1ms、严格有序）。
+   * 返回 false 表示 WS 未连接，调用方回落 REST /touch。
+   */
+  sendTouch: (action: 'down' | 'move' | 'up', nx: number, ny: number) => boolean
 }
 
 function toHelloInfo(msg: MirrorHello, fallbackSerial: string): MirrorHelloInfo {
@@ -552,6 +557,10 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
     socketRef.current?.requestKeyframe()
   }, [])
 
+  const sendTouch = useCallback((action: 'down' | 'move' | 'up', nx: number, ny: number): boolean => {
+    return socketRef.current?.sendTouch(action, nx, ny) ?? false
+  }, [])
+
   return {
     status,
     hello,
@@ -563,5 +572,6 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
     stopMirror,
     reconnect,
     requestKeyframe,
+    sendTouch,
   }
 }

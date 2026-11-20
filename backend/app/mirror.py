@@ -281,6 +281,7 @@ class Subscriber:
     dropped: int = 0
     sent: int = 0
     awaiting_keyframe: bool = True  # 新订阅者从下一个 IDR 开始收（保证解码器可启动）
+    last_flush_at: float = 0.0  # 上次 flush 时间：按 500ms 节流（丢帧风暴时不能每帧发一条）
 
 
 class MirrorSession:
@@ -674,9 +675,10 @@ class MirrorSession:
             running = self._state == "running"
         if running:
             # 新订阅者：先单播当前参数集（只给它，避免其它客户端被 config 打扰），
-            # 再请求一次 IDR（节流，多标签页/重连不会把编码器刷爆）。
+            # 再**强制**请求一次 IDR：否则若编码器正处于静止（没有新帧）且请求被节流，
+            # 新打开的镜像页会一直黑屏等自然关键帧（真机复现过）。重连有 2~10s 退避，不会成风暴。
             self._deliver_control(sub, {"kind": "config", **self._hello_fields()})
-            self.request_keyframe()
+            self.request_keyframe(force=True)
         return sub
 
     def unsubscribe(self, sub: Subscriber | None) -> None:
@@ -738,7 +740,12 @@ class MirrorSession:
             with self._lock:
                 self._dropped += drained
             sub.dropped += drained
-            sub.controls.append({"kind": "flush", "reason": "keyframe_drop"})
+            # flush 按时间节流（每 500ms 最多一条）：慢消费者在极端速率下会连续触发丢弃，
+            # 若每帧都排一条 flush，控制通道会淹没帧通道（实测每秒数百条 → 画面被饿死）。
+            now = time.monotonic()
+            if now - sub.last_flush_at >= 0.5:
+                sub.controls.append({"kind": "flush", "reason": "keyframe_drop"})
+                sub.last_flush_at = now
             try:
                 queue.put_nowait(binary)
             except asyncio.QueueFull:  # pragma: no cover - 极端竞态

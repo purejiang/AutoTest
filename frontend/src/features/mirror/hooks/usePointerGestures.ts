@@ -17,7 +17,12 @@ const LONG_PRESS_MS = 500
 const MOVE_THRESHOLD_PX = 10
 const WHEEL_DEBOUNCE_MS = 150
 const WHEEL_SWIPE_DURATION_MS = 220
-const UP_FLUSH_TIMEOUT_MS = 400
+const UP_FLUSH_TIMEOUT_MS = 600
+// 流式触摸投递节拍：pointermove 只记位置（零 React 状态更新），由定时器按 8ms 投递，
+// 保证手机上收到的是**等间隔、连续**的移动采样（滚动量/惯性与真实手势一致）。
+const PUMP_INTERVAL_MS = 8
+// 位置队列：拖动很快时保留最近 N 个采样点，队列满才丢最旧的（而不是只留最后一个）
+const MAX_MOVE_QUEUE = 12
 
 export interface PointerGesturesOptions {
   serial: string
@@ -25,6 +30,11 @@ export interface PointerGesturesOptions {
   /** 仅在出流（streaming）时接受输入 */
   enabled: boolean
   onError?: (message: string) => void
+  /**
+   * 首选触摸通道：镜像 WS（"down"|"move"|"up", nx, ny）→ 返回 false 表示不可用。
+   * 提供时优先使用（无 HTTP 开销、严格有序）；否则回落 REST /touch。
+   */
+  wsTouch?: (action: 'down' | 'move' | 'up', nx: number, ny: number) => boolean
 }
 
 export interface PointerGestureHandlers {
@@ -72,7 +82,9 @@ export function usePointerGestures(options: PointerGesturesOptions): {
   handlers: PointerGestureHandlers
   busy: boolean
 } {
-  const { serial, canvasRef, enabled, onError } = options
+  const { serial, canvasRef, enabled, onError, wsTouch } = options
+  const wsTouchRef = useRef(wsTouch)
+  wsTouchRef.current = wsTouch
 
   const enabledRef = useRef(enabled)
   enabledRef.current = enabled
@@ -90,13 +102,15 @@ export function usePointerGestures(options: PointerGesturesOptions): {
   const streamSupportedRef = useRef<boolean | null>(null)
   /** 同一时刻只允许一个 touch 请求在飞（保证 down→move→up 顺序） */
   const inFlightRef = useRef(false)
-  /** 待发送的最新 move 位置（拖动时高频产生，只保留最新） */
-  const pendingMoveRef = useRef<NormalizedPoint | null>(null)
+  /** 待发送的 move 采样队列（按时间顺序，投递时逐条发出） */
+  const moveQueueRef = useRef<NormalizedPoint[]>([])
+  /** 投递定时器（拖动期间运行） */
+  const pumpTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // 切设备时重置能力探测
   useEffect(() => {
     streamSupportedRef.current = null
-    pendingMoveRef.current = null
+    moveQueueRef.current = []
     inFlightRef.current = false
   }, [serial])
 
@@ -141,7 +155,18 @@ export function usePointerGestures(options: PointerGesturesOptions): {
     [setBusyBoth],
   )
 
-  /** 流式触摸单条消息；失败则永久降级到一次性手势（本次会话内不再尝试） */
+  /** 首选通道：镜像 WS（同步、有序、无 HTTP 开销）。返回 false 表示没发出去。 */
+  const tryWsTouch = useCallback((action: 'down' | 'move' | 'up', point: NormalizedPoint): boolean => {
+    const fn = wsTouchRef.current
+    if (!fn) return false
+    try {
+      return fn(action, Number(point.nx.toFixed(5)), Number(point.ny.toFixed(5)))
+    } catch {
+      return false
+    }
+  }, [])
+
+  /** REST 兜底：流式触摸单条消息；失败则永久降级到一次性手势 */
   const sendTouch = useCallback(async (action: StreamAction, point: NormalizedPoint): Promise<boolean> => {
     try {
       await post<void>(devicePath(serialRef.current, 'touch'), {
@@ -152,7 +177,7 @@ export function usePointerGestures(options: PointerGesturesOptions): {
       return true
     } catch (err) {
       streamSupportedRef.current = false
-      pendingMoveRef.current = null
+      moveQueueRef.current = []
       onErrorRef.current?.(
         `实时拖动不可用（${errorMessage(err)}），已回落到松手后执行手势；启动镜像后可恢复实时跟手。`,
       )
@@ -160,29 +185,56 @@ export function usePointerGestures(options: PointerGesturesOptions): {
     }
   }, [])
 
-  /** 发送 move：同一时刻只发一条，期间只保留最新位置（避免请求堆积导致跟手延迟） */
-  const flushMoveRef = useRef<() => Promise<void>>(async () => undefined)
-  const flushMove = useCallback(async (): Promise<void> => {
-    if (inFlightRef.current) return
-    inFlightRef.current = true
-    setBusyBoth(true)
-    try {
-      // 循环排空：拖动期间新位置不断覆盖 pendingMoveRef，这里始终只发最新的
-      while (pendingMoveRef.current && streamSupportedRef.current !== false) {
-        const next = pendingMoveRef.current
-        pendingMoveRef.current = null
-        await sendTouch('move', next)
+  /** 投递一条排队中的 move（同一时刻只有一条在飞，保证顺序） */
+  const pump = useCallback(async (): Promise<void> => {
+    if (streamSupportedRef.current === false) return
+    // 首选 WS：同步写出即可，队列一次排空（WS 本身有序，不需要 in-flight 串行）
+    if (wsTouchRef.current) {
+      while (moveQueueRef.current.length > 0) {
+        const next = moveQueueRef.current.shift()
+        if (!next) break
+        if (!tryWsTouch('move', next)) {
+          moveQueueRef.current.unshift(next) // 放回，交给 REST 兜底
+          break
+        }
       }
+      if (moveQueueRef.current.length > 0) {
+        // WS 失败 → 走 REST
+        await pumpRest()
+      }
+      return
+    }
+    await pumpRest()
+  }, [tryWsTouch])
+
+  const pumpRest = useCallback(async (): Promise<void> => {
+    if (inFlightRef.current || streamSupportedRef.current === false) return
+    const next = moveQueueRef.current.shift()
+    if (!next) return
+    inFlightRef.current = true
+    try {
+      await sendTouch('move', next)
     } finally {
       inFlightRef.current = false
-      setBusyBoth(false)
     }
-    // 收尾竞态：finally 之后若又来了新位置，补一次
-    if (pendingMoveRef.current && streamSupportedRef.current !== false) {
-      void flushMoveRef.current()
+    if (moveQueueRef.current.length > 0) {
+      void pump()
     }
-  }, [sendTouch, setBusyBoth])
-  flushMoveRef.current = flushMove
+  }, [sendTouch, pump])
+
+  const startPump = useCallback((): void => {
+    if (pumpTimerRef.current !== null) return
+    pumpTimerRef.current = setInterval(() => {
+      void pump()
+    }, PUMP_INTERVAL_MS)
+  }, [pump])
+
+  const stopPump = useCallback((): void => {
+    if (pumpTimerRef.current !== null) {
+      clearInterval(pumpTimerRef.current)
+      pumpTimerRef.current = null
+    }
+  }, [])
 
   /** 等待在飞请求结束（最多 UP_FLUSH_TIMEOUT_MS），保证 up 顺序在 move 之后 */
   const waitIdle = useCallback(async (): Promise<void> => {
@@ -247,9 +299,12 @@ export function usePointerGestures(options: PointerGesturesOptions): {
       dragRef.current = drag
 
       if (streaming) {
-        // 立即下发 down：设备端马上产生按下效果
+        // 立即下发 down：设备端马上产生按下效果（WS 优先，毫秒级）
+        if (tryWsTouch('down', point)) {
+          startPump()
+          return
+        }
         inFlightRef.current = true
-        setBusyBoth(true)
         void (async () => {
           const ok = await sendTouch('down', point)
           inFlightRef.current = false
@@ -260,8 +315,7 @@ export function usePointerGestures(options: PointerGesturesOptions): {
             setBusyBoth(false)
             return
           }
-          if (dragRef.current) void flushMove()
-          else setBusyBoth(false)
+          startPump()
         })()
         return
       }
@@ -279,7 +333,7 @@ export function usePointerGestures(options: PointerGesturesOptions): {
         })
       }, LONG_PRESS_MS)
     },
-    [clearLongPressTimer, fire, flushMove, normalize, sendTouch, setBusyBoth],
+    [clearLongPressTimer, fire, normalize, pump, sendTouch, setBusyBoth, startPump],
   )
 
   const onPointerMove = useCallback(
@@ -296,14 +350,31 @@ export function usePointerGestures(options: PointerGesturesOptions): {
         if (drag.streaming) clearLongPressTimer()
       }
       if (drag.streaming) {
-        // 只保留最新位置；在飞的那条结束后自动追一帧
-        pendingMoveRef.current = point
-        void flushMove()
+        // 只入队 + 尝试投递：不触发 React 状态更新，避免 60Hz 重渲染把 pointermove 采样拖丢。
+        // 浏览器会在主线程忙时合并 pointermove（帧对齐），getCoalescedEvents() 能拿到被合并掉的
+        // 原始采样点——把这些点也发给手机，拖动/滚动轨迹才与手指一致。
+        const queue = moveQueueRef.current
+        const native = event.nativeEvent as PointerEvent & {
+          getCoalescedEvents?: () => PointerEvent[]
+        }
+        let added = false
+        if (typeof native.getCoalescedEvents === 'function') {
+          for (const sample of native.getCoalescedEvents()) {
+            const p = normalize(sample.clientX, sample.clientY)
+            if (p) {
+              queue.push(p)
+              added = true
+            }
+          }
+        }
+        if (!added) queue.push(point)
+        if (queue.length > MAX_MOVE_QUEUE) queue.splice(0, queue.length - MAX_MOVE_QUEUE)
+        void pump()
         return
       }
       if (drag.moved) clearLongPressTimer()
     },
-    [canvasRef, clearLongPressTimer, flushMove, normalize],
+    [canvasRef, clearLongPressTimer, normalize, pump],
   )
 
   const finishGesture = useCallback(
@@ -319,22 +390,34 @@ export function usePointerGestures(options: PointerGesturesOptions): {
         /* ignore */
       }
 
-      if (drag.streaming && !cancelled) {
+      if (drag.streaming) {
+        // 先把剩余采样发完，再发 up（WS 通道同步发即可；REST 通道需要等待）
+        if (wsTouchRef.current) {
+          stopPump()
+          while (moveQueueRef.current.length > 0) {
+            const next = moveQueueRef.current.shift()
+            if (!next) break
+            if (!tryWsTouch('move', next)) {
+              moveQueueRef.current.unshift(next)
+              break
+            }
+          }
+          tryWsTouch('up', point)
+          return
+        }
         void (async () => {
-          pendingMoveRef.current = null
+          stopPump()
+          // 尾部落点入队，保证松开位置也发给手机（否则滚动会"提前结束"）
+          moveQueueRef.current.push(point)
+          const deadline = Date.now() + UP_FLUSH_TIMEOUT_MS
+          while (moveQueueRef.current.length > 0 && Date.now() < deadline) {
+            await pump()
+          }
           await waitIdle()
           inFlightRef.current = true
           await sendTouch('up', point)
           inFlightRef.current = false
-          setBusyBoth(false)
-        })()
-        return
-      }
-      if (drag.streaming && cancelled) {
-        void (async () => {
-          await waitIdle()
-          await sendTouch('up', point)
-          setBusyBoth(false)
+          void cancelled
         })()
         return
       }
@@ -342,7 +425,7 @@ export function usePointerGestures(options: PointerGesturesOptions): {
       if (drag.committed) return
       void fireBuffered(drag, point)
     },
-    [clearLongPressTimer, fireBuffered, normalize, sendTouch, setBusyBoth, waitIdle],
+    [clearLongPressTimer, fireBuffered, normalize, sendTouch, stopPump, waitIdle],
   )
 
   const onPointerUp = useCallback(
@@ -403,9 +486,10 @@ export function usePointerGestures(options: PointerGesturesOptions): {
   useEffect(() => {
     return () => {
       clearLongPressTimer()
+      stopPump()
       if (wheelTimerRef.current !== null) clearTimeout(wheelTimerRef.current)
     }
-  }, [clearLongPressTimer])
+  }, [clearLongPressTimer, stopPump])
 
   return {
     handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },

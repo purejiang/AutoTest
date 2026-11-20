@@ -152,6 +152,11 @@ def _check_token(token: str | None) -> bool:
     return token == configured
 
 
+def serial_of(session: Any) -> str:
+    """会话对应的设备 serial（MirrorSession.serial）。"""
+    return str(getattr(session, "serial", "") or "")
+
+
 async def _receive_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
     """处理 client→server 控制消息（ping / request_keyframe），回复走订阅队列保证发送串行。"""
     while True:
@@ -173,6 +178,27 @@ async def _receive_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
             # 客户端显式请求（工具栏按钮/新连接首帧）→ 绕过节流
             session.request_keyframe(force=True)
             logger.debug("mirror ws requested keyframe for %s", session.serial)
+        elif kind == "touch":
+            # 流式触摸（首选通道）：down/move/up 直接写 control socket，无 HTTP 开销、严格有序。
+            # 与 REST /touch 共用 apply_stream_touch（含录制归并、暂停干预留痕）。
+            action = str(message.get("action") or "").strip().lower()
+            if action not in ("down", "move", "up"):
+                continue
+            try:
+                nx = float(message.get("nx"))
+                ny = float(message.get("ny"))
+            except (TypeError, ValueError):
+                continue
+            if not (0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0):
+                continue
+            try:
+                from .devices import apply_stream_touch  # 局部导入避免循环依赖
+
+                # WS 通道不阻塞画面：设备被运行占用时静默忽略（REST 端点才抛 409）
+                await asyncio.to_thread(apply_stream_touch, serial_of(session), action, nx, ny,
+                                        raise_on_busy=False)
+            except Exception:  # noqa: BLE001 - 单条触摸失败不能打断镜像
+                logger.debug("mirror ws touch failed", exc_info=True)
         else:
             logger.debug("mirror ws ignored control message: %s", kind)
 

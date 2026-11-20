@@ -116,6 +116,11 @@ export interface MirrorSocket {
   close(): void
   requestKeyframe(): void
   ping(): void
+  /**
+   * 流式触摸（首选手动控制通道）：走同一条 WS，无 HTTP 开销且严格有序。
+   * 返回 false 表示连接不可用（调用方应回落到 REST /touch）。
+   */
+  sendTouch(action: 'down' | 'move' | 'up', nx: number, ny: number): boolean
 }
 
 const INITIAL_BACKOFF_MS = 2000
@@ -198,6 +203,10 @@ export function createMirrorSocket(options: MirrorSocketOptions): MirrorSocket {
       if (documentHidden()) return
       sendJson({ kind: 'ping' })
     }, HEARTBEAT_MS)
+  }
+
+  function sendTouch(action: 'down' | 'move' | 'up', nx: number, ny: number): boolean {
+    return sendJson({ kind: 'touch', action, nx, ny })
   }
 
   function sendJson(payload: Record<string, unknown>): boolean {
@@ -384,6 +393,9 @@ export function createMirrorSocket(options: MirrorSocketOptions): MirrorSocket {
     },
     ping() {
       sendJson({ kind: 'ping' })
+    },
+    sendTouch(action: 'down' | 'move' | 'up', nx: number, ny: number) {
+      return sendJson({ kind: 'touch', action, nx, ny })
     },
   }
 }
