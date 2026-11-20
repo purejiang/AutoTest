@@ -34,20 +34,20 @@ def _git(*args: str, timeout_s: float = 2.0) -> str | None:
         return None
     if result.returncode != 0:
         return None
-    value = result.stdout.strip()
-    return value or None
+    # 注意：成功但输出为空（如干净工作区的 git status）也是有效结果，不能转成 None
+    return result.stdout.strip()
 
 
 @lru_cache(maxsize=1)
 def build_info() -> dict[str, Any]:
     """返回 {commit, dirty, built_at}；拿不到 git 时为 None（打包版建议注入环境变量）。"""
-    commit = os.environ.get("AUTOTEST_GIT_COMMIT") or _git("rev-parse", "--short", "HEAD")
+    commit = os.environ.get("AUTOTEST_GIT_COMMIT") or _git("rev-parse", "--short", "HEAD") or None
     dirty_env = os.environ.get("AUTOTEST_GIT_DIRTY")
     if dirty_env is not None:
         dirty: bool | None = dirty_env.strip().lower() in ("1", "true", "yes", "dirty")
     else:
         status = _git("status", "--porcelain")
-        dirty = bool(status) if status is not None else None
+        dirty = bool(status) if status is not None else None  # 空输出 = 干净 = False
     built_at = os.environ.get("AUTOTEST_BUILD_TIME") or None
     if commit is None and built_at is None:
         logger.debug("build info unavailable (not a git checkout and no env injected)")
