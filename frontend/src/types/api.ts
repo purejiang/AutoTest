@@ -309,6 +309,8 @@ export interface HealthResponse {
   db: string
   adb: { path: string; version: string; devices: number }
   data_dir: string
+  /** 后端运行代码的构建元信息（源码运行时由 git 推断） */
+  build?: { commit: string | null; dirty: boolean | null; built_at: string | null }
 }
 
 export interface MaintenanceStats {

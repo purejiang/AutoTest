@@ -59,6 +59,26 @@ git 会忽略：`backend/.venv`、`frontend/node_modules`、`frontend/dist`、`b
 `~/.autotest/data` 之外的数据文件、`__pycache__` 等；**会**跟踪 `backend/vendor/scrcpy-server-v5.0.1.jar`
 （734KB，保证离线可用）。仓库约 3MB。
 
+### 版本模型：一个产品版本，前后端同 tag
+
+前后端在**同一个仓库**、同一个提交里，所以：
+
+- **一个 tag = 一份完整快照**（前端 + 后端代码都在里面），不需要分别打；
+- **版本号以后端为权威**（`backend/app/__init__.py`），发版时四处同步（见下）；
+- 界面上显示 **后端版本 + 页面版本/提交**，随时能确认"线上页面是哪次构建、与后端是否同源"。
+
+**前端热更**（不重启后端、不重新打 tag 也能换界面）：
+
+```bash
+cd frontend && npm run build                  # 重新构建 dist
+# 方式一（源码运行）：直接覆盖仓库的 frontend/dist，浏览器硬刷新即可
+# 方式二（打包单文件）：让后端指向外部目录（重启一次，之后只换文件）
+AUTOTEST_FRONTEND_DIR=/path/to/dist sh -c './autotest'      # 或设置 runtime.frontend_dir
+```
+
+热更出来的页面仍会显示它的 `页面版本·提交`（构建时注入），所以"这版是哪个提交打的"可追溯；
+如果这版要正式发布，再 `git tag` 标记即可（热更本身不需要新版本号）。
+
 ### 发版（打 tag）
 
 ```bash

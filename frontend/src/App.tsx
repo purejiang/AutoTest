@@ -103,9 +103,19 @@ function BackendHealth() {
     )
   }
 
+  const backendCommit = data.build?.commit ?? '未知'
+  const backendDirty = data.build?.dirty ? ' (+未提交改动)' : ''
+  const buildTime = (() => {
+    try {
+      return new Date(__APP_BUILD_TIME__).toLocaleString('zh-CN', { hour12: false })
+    } catch {
+      return __APP_BUILD_TIME__
+    }
+  })()
   const tooltip = [
     `状态：${data.status}`,
-    `版本：${data.version}`,
+    `后端版本：${data.version} · 提交 ${backendCommit}${backendDirty}`,
+    `前端版本：${__APP_VERSION__} · 提交 ${__APP_COMMIT__} · 构建 ${buildTime}`,
     `数据库：${data.db}`,
     `adb：${data.adb?.path ?? '—'} ${data.adb?.version ?? ''}`,
     `数据目录：${data.data_dir}`,
@@ -115,6 +125,9 @@ function BackendHealth() {
     <Tooltip title={<pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{tooltip}</pre>}>
       <Space size={6}>
         <Badge status="success" text={`后端 ${data.version}`} />
+        <Typography.Text type="secondary" className="small-text">
+          页面 ${__APP_VERSION__}·{__APP_COMMIT__}
+        </Typography.Text>
         <Typography.Text type="secondary" className="small-text">
           adb 设备 {data.adb?.devices ?? 0}
         </Typography.Text>

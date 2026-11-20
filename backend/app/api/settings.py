@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from .. import __version__, config, db, models
 from ..api_schemas import CleanupRequest, SettingsUpdateRequest
+from ..build_info import build_info
 from ..deps import get_db
 from ..logs import logger
 from ..services import settings_service
@@ -109,6 +110,7 @@ def health() -> dict[str, Any]:
     payload: dict[str, Any] = {
         "status": "ok" if db_state == "ok" and writable else "degraded",
         "version": __version__,
+        "build": build_info(),
         "db": db_state,
         "adb": _adb_health(),
         "data_dir": str(config.data_dir()),

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import pkgutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -31,6 +32,27 @@ from .services import settings_service
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = BACKEND_ROOT / "static"
 FRONTEND_DIST = BACKEND_ROOT.parent / "frontend" / "dist"
+
+
+def frontend_dist_dir() -> Path:
+    """对外提供前端产物的目录。
+
+    默认用仓库内 ``frontend/dist``；设置 ``AUTOTEST_FRONTEND_DIR``（或配置
+    ``runtime.frontend_dir``）可指向任意目录——这样**打包后的单文件程序也能热更前端**：
+    重建 dist 后覆盖该目录里的文件、刷新浏览器即可，无需重启后端。
+    """
+    override = os.environ.get("AUTOTEST_FRONTEND_DIR") or ""
+    if not override:
+        try:
+            override = str(config.get("runtime.frontend_dir") or "")
+        except Exception:  # pragma: no cover - 配置层异常不影响启动
+            override = ""
+    if override:
+        candidate = Path(override).expanduser()
+        if (candidate / "index.html").exists():
+            return candidate
+        logger.warning("frontend dir override has no index.html, fallback to builtin: %s", candidate)
+    return FRONTEND_DIST
 
 CORS_ORIGINS = [
     "http://localhost:5173",
@@ -146,9 +168,10 @@ def _mount_static(app: FastAPI) -> list[str]:
             mounted.append(f"/artifacts -> {artifacts_root}")
     except OSError:  # 数据目录不可写时不挂载，端点仍返回 url（会 404，由前端提示）
         logger.warning("artifacts dir unavailable, skip /artifacts mount")
-    if FRONTEND_DIST.is_dir() and (FRONTEND_DIST / "index.html").exists():
-        app.mount("/", SPAStaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
-        mounted.append(str(FRONTEND_DIST))
+    dist_dir = frontend_dist_dir()
+    if dist_dir.is_dir() and (dist_dir / "index.html").exists():
+        app.mount("/", SPAStaticFiles(directory=str(dist_dir), html=True), name="frontend")
+        mounted.append(str(dist_dir))
     return mounted
 
 
@@ -173,7 +196,7 @@ def create_app() -> FastAPI:
     included = _include_api_routers(application)
     logger.info("included api routers: %s", ", ".join(included) if included else "(none)")
 
-    frontend_built = (FRONTEND_DIST / "index.html").exists()
+    frontend_built = (frontend_dist_dir() / "index.html").exists()
     mounted = _mount_static(application)
     logger.info("mounted static: %s", ", ".join(mounted) if mounted else "(none)")
 

@@ -37,7 +37,8 @@ ENV_MAP: dict[str, str] = {
 DEFAULTS: dict[str, Any] = {
     "adb.path": "",
     "adb.connect_timeout_s": 20,
-    "runtime.data_dir": "",  # 空 = ~/.autotest/data
+    "runtime.data_dir": "",
+    "runtime.frontend_dir": "",
     "runtime.artifacts_dir": "",  # 空 = data_dir/artifacts
     "engine.poll_interval_ms": 350,
     "engine.default_timeout_ms": 8000,
