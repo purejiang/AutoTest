@@ -1,17 +1,13 @@
-// 镜像画布指针手势 -> 归一化坐标 -> REST 手动控制（契约 §6.2/§7.1）。
+// 镜像画布指针手势 → 手动控制。
 //
-// 坐标约定：nx,ny ∈ [0,1]，相对视频帧（不是相对 canvas 元素）。因为 canvas 已经是
-// contain 后的内容盒，直接按 canvas.getBoundingClientRect() 归一化即可。
+// 两种模式（自动选择）：
+//  1) **流式触摸（首选）**：pointerdown 立即下发 down，pointermove 持续下发 move（合并最新位置，
+//     保证同一时刻只有一个请求在飞），pointerup 收尾 up。设备端实时跟手，拖动过程有画面反馈。
+//     后端 `POST /devices/{serial}/touch` 直接把消息写进 scrcpy control socket（~5ms/条）。
+//  2) **一次性手势（回落）**：无镜像会话/后端不支持时，沿用旧行为——在本地判定
+//     tap / long_press / swipe / drag，松手后一次性发 `tap|long_press|swipe`。
 //
-// 手势判定：
-//   - 按下到抬起 <500ms 且位移 <10px        -> tap        POST /api/devices/{serial}/tap {nx,ny}
-//   - 按下后 ≥500ms 保持不动                -> long_press POST .../long_press {nx,ny,duration_ms}
-//   - 位移 ≥10px（任意时长）                -> swipe      POST .../swipe {nx1,ny1,nx2,ny2,duration_ms}
-//   - 滚轮：按竖直方向 ffi 上下滑动（可选）  -> swipe
-// 约束：
-//   - pointer capture 防止拖出画布丢失事件；
-//   - in-flight 标记（busyRef）防止重复提交；长按已提交后抬起不再补 tap；
-//   - 面板 enabled=false（未出流）时完全忽略输入。
+// 坐标始终是相对视频帧的归一化 nx,ny ∈ [0,1]（后端换算，前端不做设备像素换算）。
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { errorMessage, post } from '../lib/api'
@@ -21,6 +17,7 @@ const LONG_PRESS_MS = 500
 const MOVE_THRESHOLD_PX = 10
 const WHEEL_DEBOUNCE_MS = 150
 const WHEEL_SWIPE_DURATION_MS = 220
+const UP_FLUSH_TIMEOUT_MS = 400
 
 export interface PointerGesturesOptions {
   serial: string
@@ -45,14 +42,18 @@ interface DragState {
   nx: number
   ny: number
   moved: boolean
-  /** 长按已经提交，抬起时不再判定 tap/swipe */
+  /** 长按已经提交，抬起时不再判定 tap/swipe（仅回落模式使用） */
   committed: boolean
+  /** 本次手势是否走流式触摸 */
+  streaming: boolean
 }
 
 interface NormalizedPoint {
   nx: number
   ny: number
 }
+
+type StreamAction = 'down' | 'move' | 'up'
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0
@@ -61,6 +62,10 @@ function clamp01(value: number): number {
 
 function devicePath(serial: string, action: string): string {
   return `/devices/${encodeURIComponent(serial)}/${action}`
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 export function usePointerGestures(options: PointerGesturesOptions): {
@@ -80,6 +85,25 @@ export function usePointerGestures(options: PointerGesturesOptions): {
   const busyRef = useRef(false)
   const dragRef = useRef<DragState | null>(null)
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /** 流式触摸是否可用：null=未知（尚未失败过） */
+  const streamSupportedRef = useRef<boolean | null>(null)
+  /** 同一时刻只允许一个 touch 请求在飞（保证 down→move→up 顺序） */
+  const inFlightRef = useRef(false)
+  /** 待发送的最新 move 位置（拖动时高频产生，只保留最新） */
+  const pendingMoveRef = useRef<NormalizedPoint | null>(null)
+
+  // 切设备时重置能力探测
+  useEffect(() => {
+    streamSupportedRef.current = null
+    pendingMoveRef.current = null
+    inFlightRef.current = false
+  }, [serial])
+
+  const setBusyBoth = useCallback((value: boolean): void => {
+    busyRef.current = value
+    setBusy(value)
+  }, [])
 
   const clearLongPressTimer = useCallback((): void => {
     if (longPressTimerRef.current !== null) {
@@ -102,190 +126,284 @@ export function usePointerGestures(options: PointerGesturesOptions): {
     [canvasRef],
   )
 
-  /** 发一条手动控制 REST；用 busy 标记串行化，避免连点/重复提交。 */
+  /** 一次性手动控制（回落模式）：tap / long_press / swipe */
   const fire = useCallback(
     async (action: string, body: Record<string, unknown>): Promise<void> => {
-      busyRef.current = true
-      setBusy(true)
+      setBusyBoth(true)
       try {
         await post<void>(devicePath(serialRef.current, action), body)
       } catch (err) {
         onErrorRef.current?.(`${action} 失败：${errorMessage(err)}`)
       } finally {
-        busyRef.current = false
-        setBusy(false)
+        setBusyBoth(false)
       }
     },
-    [],
+    [setBusyBoth],
   )
 
+  /** 流式触摸单条消息；失败则永久降级到一次性手势（本次会话内不再尝试） */
+  const sendTouch = useCallback(async (action: StreamAction, point: NormalizedPoint): Promise<boolean> => {
+    try {
+      await post<void>(devicePath(serialRef.current, 'touch'), {
+        action,
+        nx: Number(point.nx.toFixed(5)),
+        ny: Number(point.ny.toFixed(5)),
+      })
+      return true
+    } catch (err) {
+      streamSupportedRef.current = false
+      pendingMoveRef.current = null
+      onErrorRef.current?.(
+        `实时拖动不可用（${errorMessage(err)}），已回落到松手后执行手势；启动镜像后可恢复实时跟手。`,
+      )
+      return false
+    }
+  }, [])
+
+  /** 发送 move：同一时刻只发一条，期间只保留最新位置（避免请求堆积导致跟手延迟） */
+  const flushMoveRef = useRef<() => Promise<void>>(async () => undefined)
+  const flushMove = useCallback(async (): Promise<void> => {
+    if (inFlightRef.current) return
+    inFlightRef.current = true
+    setBusyBoth(true)
+    try {
+      // 循环排空：拖动期间新位置不断覆盖 pendingMoveRef，这里始终只发最新的
+      while (pendingMoveRef.current && streamSupportedRef.current !== false) {
+        const next = pendingMoveRef.current
+        pendingMoveRef.current = null
+        await sendTouch('move', next)
+      }
+    } finally {
+      inFlightRef.current = false
+      setBusyBoth(false)
+    }
+    // 收尾竞态：finally 之后若又来了新位置，补一次
+    if (pendingMoveRef.current && streamSupportedRef.current !== false) {
+      void flushMoveRef.current()
+    }
+  }, [sendTouch, setBusyBoth])
+  flushMoveRef.current = flushMove
+
+  /** 等待在飞请求结束（最多 UP_FLUSH_TIMEOUT_MS），保证 up 顺序在 move 之后 */
+  const waitIdle = useCallback(async (): Promise<void> => {
+    const deadline = Date.now() + UP_FLUSH_TIMEOUT_MS
+    while (inFlightRef.current && Date.now() < deadline) {
+      await sleep(2)
+    }
+  }, [])
+
+  /** 回落模式：根据位移/时长判定手势并一次性下发 */
+  const fireBuffered = useCallback(
+    async (drag: DragState, end: NormalizedPoint): Promise<void> => {
+      const durationMs = Math.max(0, Date.now() - drag.startedAt)
+      const rect = canvasRef.current?.getBoundingClientRect()
+      const dx = rect ? (end.nx - drag.nx) * rect.width : 0
+      const dy = rect ? (end.ny - drag.ny) * rect.height : 0
+      const distance = Math.hypot(dx, dy)
+      if (distance >= MOVE_THRESHOLD_PX) {
+        await fire('swipe', {
+          nx1: drag.nx,
+          ny1: drag.ny,
+          nx2: end.nx,
+          ny2: end.ny,
+          duration_ms: Math.min(10_000, Math.max(50, Math.round(durationMs))),
+        })
+        return
+      }
+      if (durationMs >= TAP_MAX_MS) {
+        await fire('long_press', { nx: end.nx, ny: end.ny, duration_ms: Math.min(10_000, durationMs) })
+        return
+      }
+      await fire('tap', { nx: end.nx, ny: end.ny })
+    },
+    [canvasRef, fire],
+  )
+
+  // ---- 事件处理 ----
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>): void => {
       if (!enabledRef.current) return
-      if (event.pointerType === 'mouse' && event.button !== 0) return
-      if (dragRef.current || busyRef.current) return
       const point = normalize(event.clientX, event.clientY)
       if (!point) return
-      event.preventDefault()
-      dragRef.current = {
+      // 只处理主指针（忽略多指，避免拖动时第二个手指打乱状态）
+      if (dragRef.current) return
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        /* 某些浏览器对合成事件会抛，忽略 */
+      }
+      const streaming = streamSupportedRef.current !== false
+      const drag: DragState = {
         pointerId: event.pointerId,
         startClientX: event.clientX,
         startClientY: event.clientY,
-        startedAt: typeof performance !== 'undefined' ? performance.now() : Date.now(),
+        startedAt: Date.now(),
         nx: point.nx,
         ny: point.ny,
         moved: false,
         committed: false,
+        streaming,
       }
-      busyRef.current = true
-      setBusy(true)
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId)
-      } catch {
-        /* 某些环境不支持 capture，忽略 */
+      dragRef.current = drag
+
+      if (streaming) {
+        // 立即下发 down：设备端马上产生按下效果
+        inFlightRef.current = true
+        setBusyBoth(true)
+        void (async () => {
+          const ok = await sendTouch('down', point)
+          inFlightRef.current = false
+          if (!ok) {
+            // 降级到一次性手势：继续走 pointerup 判定
+            const current = dragRef.current
+            if (current) current.streaming = false
+            setBusyBoth(false)
+            return
+          }
+          if (dragRef.current) void flushMove()
+          else setBusyBoth(false)
+        })()
+        return
       }
+
+      // 回落模式：长按由定时器兜底
       longPressTimerRef.current = setTimeout(() => {
-        longPressTimerRef.current = null
-        const drag = dragRef.current
-        if (!drag || drag.moved || !enabledRef.current) return
-        drag.committed = true
-        const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
-        const duration = Math.max(LONG_PRESS_MS, Math.round(now - drag.startedAt))
-        void fire('long_press', { nx: drag.nx, ny: drag.ny, duration_ms: duration })
+        const current = dragRef.current
+        if (!current || current.moved) return
+        current.committed = true
+        clearLongPressTimer()
+        void fire('long_press', {
+          nx: current.nx,
+          ny: current.ny,
+          duration_ms: Math.max(LONG_PRESS_MS, Date.now() - current.startedAt),
+        })
       }, LONG_PRESS_MS)
     },
-    [normalize, fire],
+    [clearLongPressTimer, fire, flushMove, normalize, sendTouch, setBusyBoth],
   )
 
-  const onPointerMove = useCallback((event: ReactPointerEvent<HTMLCanvasElement>): void => {
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    if (drag.moved) return
-    const dx = event.clientX - drag.startClientX
-    const dy = event.clientY - drag.startClientY
-    if (Math.hypot(dx, dy) >= MOVE_THRESHOLD_PX) {
-      drag.moved = true
-      clearLongPressTimer()
-    }
-  }, [clearLongPressTimer])
+  const onPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+      const drag = dragRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      const point = normalize(event.clientX, event.clientY)
+      if (!point) return
+      const rect = canvasRef.current?.getBoundingClientRect()
+      const dx = rect ? (point.nx - drag.nx) * rect.width : 0
+      const dy = rect ? (point.ny - drag.ny) * rect.height : 0
+      if (Math.hypot(dx, dy) >= MOVE_THRESHOLD_PX) {
+        drag.moved = true
+        if (drag.streaming) clearLongPressTimer()
+      }
+      if (drag.streaming) {
+        // 只保留最新位置；在飞的那条结束后自动追一帧
+        pendingMoveRef.current = point
+        void flushMove()
+        return
+      }
+      if (drag.moved) clearLongPressTimer()
+    },
+    [canvasRef, clearLongPressTimer, flushMove, normalize],
+  )
 
-  const finish = useCallback(
+  const finishGesture = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>, cancelled: boolean): void => {
       const drag = dragRef.current
       if (!drag || drag.pointerId !== event.pointerId) return
       dragRef.current = null
       clearLongPressTimer()
+      const point = normalize(event.clientX, event.clientY) ?? { nx: drag.nx, ny: drag.ny }
       try {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId)
-        }
+        event.currentTarget.releasePointerCapture(event.pointerId)
       } catch {
-        /* noop */
+        /* ignore */
       }
 
-      if (drag.committed) {
-        // 长按已在计时器里提交；抬起只清状态（busy 由那次 fire 的 finally 复位）
+      if (drag.streaming && !cancelled) {
+        void (async () => {
+          pendingMoveRef.current = null
+          await waitIdle()
+          inFlightRef.current = true
+          await sendTouch('up', point)
+          inFlightRef.current = false
+          setBusyBoth(false)
+        })()
         return
       }
-
-      const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
-      const elapsed = now - drag.startedAt
-      const distance = Math.hypot(
-        event.clientX - drag.startClientX,
-        event.clientY - drag.startClientY,
-      )
-      const end = normalize(event.clientX, event.clientY)
-
-      // 先释放手势锁，再交给 fire 接管（fire 内部会重新置 busy）
-      busyRef.current = false
-      setBusy(false)
-
-      if (cancelled) return
-      if (!drag.moved && distance < MOVE_THRESHOLD_PX) {
-        if (elapsed < TAP_MAX_MS) {
-          if (end) void fire('tap', { nx: end.nx, ny: end.ny })
-        } else {
-          // 事件循环迟滞导致计时器没来得及触发：补发长按
-          if (end) {
-            void fire('long_press', {
-              nx: end.nx,
-              ny: end.ny,
-              duration_ms: Math.min(10_000, Math.max(LONG_PRESS_MS, Math.round(elapsed))),
-            })
-          }
-        }
+      if (drag.streaming && cancelled) {
+        void (async () => {
+          await waitIdle()
+          await sendTouch('up', point)
+          setBusyBoth(false)
+        })()
         return
       }
-      if (end) {
-        void fire('swipe', {
-          nx1: drag.nx,
-          ny1: drag.ny,
-          nx2: end.nx,
-          ny2: end.ny,
-          // 后端 SwipeRequest.duration_ms 约束 [50,10000]，快速滑动也不能传 <50
-          duration_ms: Math.min(10_000, Math.max(50, Math.round(elapsed))),
-        })
-      }
+      // 回落模式
+      if (drag.committed) return
+      void fireBuffered(drag, point)
     },
-    [clearLongPressTimer, normalize, fire],
+    [clearLongPressTimer, fireBuffered, normalize, sendTouch, setBusyBoth, waitIdle],
   )
 
   const onPointerUp = useCallback(
-    (event: ReactPointerEvent<HTMLCanvasElement>): void => finish(event, false),
-    [finish],
-  )
-  const onPointerCancel = useCallback(
-    (event: ReactPointerEvent<HTMLCanvasElement>): void => finish(event, true),
-    [finish],
+    (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+      finishGesture(event, false)
+    },
+    [finishGesture],
   )
 
-  // ---- 滚轮 -> 上下 swipe（可选交互） ----
+  const onPointerCancel = useCallback(
+    (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+      finishGesture(event, true)
+    },
+    [finishGesture],
+  )
+
+  // ---- 滚轮：上下滑动（保持一次性 swipe 语义，滚轮本身是离散的） ----
+  const wheelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wheelAccumRef = useRef(0)
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
-    let accumulated = 0
-    let timer: ReturnType<typeof setTimeout> | null = null
-    let lastClientX = 0
-    let lastClientY = 0
-
-    const handleWheel = (event: WheelEvent): void => {
-      if (!enabledRef.current) return
-      lastClientX = event.clientX
-      lastClientY = event.clientY
+    if (!canvas || !enabled) return
+    const onWheel = (event: WheelEvent): void => {
       event.preventDefault()
-      accumulated += event.deltaY
-      if (timer !== null) return
-      timer = setTimeout(() => {
-        timer = null
-        const delta = accumulated
-        accumulated = 0
-        if (!delta || busyRef.current) return
-        const point = normalize(lastClientX, lastClientY)
-        if (!point) return
-        const direction = delta > 0 ? 1 : -1 // 向下滚 = 手指上划（内容向上）
-        const ny1 = Math.min(0.85, Math.max(0.15, point.ny))
-        const ny2 = Math.min(0.98, Math.max(0.02, ny1 + direction * 0.3))
+      wheelAccumRef.current += event.deltaY
+      if (wheelTimerRef.current !== null) return
+      wheelTimerRef.current = setTimeout(() => {
+        wheelTimerRef.current = null
+        const accum = wheelAccumRef.current
+        wheelAccumRef.current = 0
+        if (!Number.isFinite(accum) || Math.abs(accum) < 1) return
+        const rect = canvas.getBoundingClientRect()
+        if (rect.height <= 0) return
+        const cx = 0.5
+        const cy = 0.5
+        const ratio = Math.min(0.35, Math.max(0.08, Math.abs(accum) / 1200))
+        const dy = accum > 0 ? ratio : -ratio
         void fire('swipe', {
-          nx1: point.nx,
-          ny1,
-          nx2: point.nx,
-          ny2,
+          nx1: cx,
+          ny1: Math.min(0.95, Math.max(0.05, cy + dy / 2)),
+          nx2: cx,
+          ny2: Math.min(0.95, Math.max(0.05, cy - dy / 2)),
           duration_ms: WHEEL_SWIPE_DURATION_MS,
         })
       }, WHEEL_DEBOUNCE_MS)
     }
-
-    canvas.addEventListener('wheel', handleWheel, { passive: false })
+    canvas.addEventListener('wheel', onWheel, { passive: false })
     return () => {
-      canvas.removeEventListener('wheel', handleWheel)
-      if (timer !== null) clearTimeout(timer)
+      canvas.removeEventListener('wheel', onWheel)
+      if (wheelTimerRef.current !== null) {
+        clearTimeout(wheelTimerRef.current)
+        wheelTimerRef.current = null
+      }
     }
-  }, [canvasRef, normalize, fire])
+  }, [canvasRef, enabled, fire])
 
-  // 卸载时清掉长按计时器
+  // 卸载时清定时器
   useEffect(() => {
     return () => {
       clearLongPressTimer()
+      if (wheelTimerRef.current !== null) clearTimeout(wheelTimerRef.current)
     }
   }, [clearLongPressTimer])
 

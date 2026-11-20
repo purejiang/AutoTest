@@ -34,6 +34,7 @@ from ..api_schemas import (
     ShellRequest,
     SwipeRequest,
     TextRequest,
+    TouchStreamRequest,
     items_response,
 )
 from ..deps import get_db, get_driver_or_503
@@ -84,6 +85,14 @@ def _network_fn(action: str) -> Any | None:
         if callable(fn):
             return fn
     return None
+
+
+# 进行中的流式手势（key=serial）：down 时建，up 时消费并归并为一条录制事件
+_TOUCH_GESTURES: dict[str, dict[str, Any]] = {}
+_TOUCH_LOCK = threading.RLock()
+_SWIPE_MIN_DIST_PX = 10
+_TAP_MAX_MS = 500
+_SWIPE_MAX_MS = 300
 
 
 def _try_mirror(serial: str, method: str, **kwargs: Any) -> bool:
@@ -414,6 +423,100 @@ def run_shell(
 # ---------------------------------------------------------------- 手动控制（录制挂钩 + 占用 + 坐标）
 def _control_response(serial: str, kind: str, **extra: Any) -> dict[str, Any]:
     return {"ok": True, "serial": serial, "kind": kind, **extra}
+
+
+@router.post("/{serial}/touch")
+def touch_stream(
+    serial: str,
+    payload: TouchStreamRequest,
+    driver: Driver = Depends(get_driver_or_503),
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """流式触摸：镜像页拖动时按 pointerdown/move/up 实时下发（scrcpy control，~5ms/条）。
+
+    与一次性 `/swipe` 的区别：**按下即生效、移动过程实时跟手**，松手时只做收尾与录制归并。
+    无活跃镜像会话时返回 UNSUPPORTED，前端会回落到「松手后一次性 swipe」的旧行为。
+    """
+    manual_run_id = _manual_state(serial, session)
+    action = payload.action
+
+    if action == "down":
+        # 先注入（保证手感），再抓 pre 层级做录制归因（无录制时是零开销）
+        ok = _try_mirror(serial, "inject_touch", action="down", nx=payload.nx, ny=payload.ny)
+        if not ok:
+            raise ApiError(
+                "UNSUPPORTED",
+                "流式触摸需要活跃镜像会话（scrcpy control socket）",
+                {"serial": serial},
+            )
+        pre = None
+        try:
+            pre = hooks.on_before_pointer(serial)
+        except Exception:  # noqa: BLE001 - 归因失败不影响手感
+            pre = None
+        with _TOUCH_LOCK:
+            _TOUCH_GESTURES[serial] = {
+                "started_at": time.monotonic(),
+                "sx": payload.nx,
+                "sy": payload.ny,
+                "last_x": payload.nx,
+                "last_y": payload.ny,
+                "pre": pre,
+                "manual_run_id": manual_run_id,
+            }
+        return {"ok": True, "serial": serial, "action": "down"}
+
+    if action == "move":
+        if not _try_mirror(serial, "inject_touch", action="move", nx=payload.nx, ny=payload.ny):
+            raise ApiError("UNSUPPORTED", "流式触摸需要活跃镜像会话", {"serial": serial})
+        with _TOUCH_LOCK:
+            gesture = _TOUCH_GESTURES.get(serial)
+            if gesture is not None:
+                gesture["last_x"] = payload.nx
+                gesture["last_y"] = payload.ny
+        return {"ok": True, "serial": serial, "action": "move"}
+
+    # up：收尾 + 归并成一条录制事件（tap / long_press / swipe / drag）
+    ok = _try_mirror(serial, "inject_touch", action="up", nx=payload.nx, ny=payload.ny)
+    if not ok:
+        raise ApiError("UNSUPPORTED", "流式触摸需要活跃镜像会话", {"serial": serial})
+    with _TOUCH_LOCK:
+        gesture = _TOUCH_GESTURES.pop(serial, None)
+    result: dict[str, Any] = {"ok": True, "serial": serial, "action": "up"}
+    if gesture is None:
+        return result
+
+    duration_ms = int(round((time.monotonic() - float(gesture["started_at"])) * 1000))
+    start = _normalized_to_device(serial, gesture["sx"], gesture["sy"])
+    end = _normalized_to_device(serial, payload.nx, payload.ny)
+    kind = "tap"
+    if start and end:
+        dist = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
+        if dist < _SWIPE_MIN_DIST_PX:
+            kind = "long_press" if duration_ms >= _TAP_MAX_MS else "tap"
+        else:
+            kind = "swipe" if duration_ms < _SWIPE_MAX_MS else "drag"
+    if kind in ("tap", "long_press") and start:
+        event = {"x": start[0], "y": start[1], "duration_ms": duration_ms}
+    elif start and end:
+        event = {"x1": start[0], "y1": start[1], "x2": end[0], "y2": end[1], "duration_ms": duration_ms}
+    else:  # 镜像坐标不可用时只留归一化数值，避免录到错误设备像素
+        event = {"nx": payload.nx, "ny": payload.ny, "duration_ms": duration_ms}
+    _after_action(serial, kind, event, gesture.get("pre"), gesture.get("manual_run_id"))
+    result.update({"kind": kind, "duration_ms": duration_ms, "event": event})
+    return result
+
+
+def _normalized_to_device(serial: str, nx: float, ny: float) -> tuple[int, int] | None:
+    """归一化（相对视频帧）→ 设备像素；镜像不可用时返回 None（录制不写错坐标）。"""
+    try:
+        from .. import mirror as mirror_mod
+    except Exception:  # pragma: no cover
+        return None
+    try:
+        return mirror_mod.map_normalized_to_device(serial, float(nx), float(ny))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @router.post("/{serial}/tap")

@@ -207,6 +207,18 @@ def inject_tap(serial: str, x: int, y: int) -> bool:
         return False
 
 
+def inject_touch(serial: str, action: str, nx: float, ny: float) -> bool:
+    """流式触摸注入：action ∈ down|move|up，nx/ny 为相对视频帧的归一化坐标。"""
+    session = active_session(serial)
+    if session is None:
+        return False
+    try:
+        return session.inject_touch(action, nx, ny)
+    except Exception:  # noqa: BLE001
+        logger.debug("mirror inject_touch failed", exc_info=True)
+        return False
+
+
 def inject_long_press(serial: str, x: int, y: int, duration_ms: int = 800) -> bool:
     session = active_session(serial)
     if session is None:
@@ -823,6 +835,23 @@ class MirrorSession:
         if getattr(server, "control_sock", None) is None:
             return None
         return server
+
+    # 流式触摸：前端 pointerdown/move/up 直接映射为 INJECT_TOUCH_EVENT（nx,ny 相对视频帧）
+    TOUCH_ACTIONS = {"down": 0, "up": 1, "move": 2}  # AMOTION_EVENT_ACTION_{DOWN,UP,MOVE}
+
+    def inject_touch(self, action: str, nx: float, ny: float) -> bool:
+        server = self._injector()
+        if server is None:
+            return False
+        code = self.TOUCH_ACTIONS.get(str(action))
+        if code is None:
+            return False
+        video_w, video_h = self.video_size()
+        if video_w <= 0 or video_h <= 0:
+            return False
+        x = int(round(min(max(float(nx), 0.0), 1.0) * (video_w - 1)))
+        y = int(round(min(max(float(ny), 0.0), 1.0) * (video_h - 1)))
+        return bool(server.inject_touch(code, x, y, video_w, video_h))
 
     def inject_tap(self, x: int, y: int) -> bool:
         server = self._injector()

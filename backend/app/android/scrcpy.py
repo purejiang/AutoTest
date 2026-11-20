@@ -1173,6 +1173,12 @@ class ScrcpyServer:
         geometry = self.geometry
         return int(geometry.width or 0), int(geometry.height or 0)
 
+    def inject_touch(self, action: int, x: int, y: int, video_w: int, video_h: int) -> bool:
+        """流式触摸：单条 INJECT_TOUCH_EVENT（down/move/up），调用方负责时序。"""
+        if video_w <= 0 or video_h <= 0:
+            return False
+        return self.send_control(build_inject_touch(action, x, y, video_w, video_h))
+
     def inject_tap(self, x: int, y: int, video_w: int | None = None, video_h: int | None = None) -> bool:
         w, h = (int(video_w), int(video_h)) if video_w and video_h else self.video_size()
         if w <= 0 or h <= 0:

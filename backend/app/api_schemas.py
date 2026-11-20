@@ -78,6 +78,15 @@ class SwipeRequest(ApiModel):
         return self
 
 
+class TouchStreamRequest(ApiModel):
+    """流式触摸（镜像拖动）：pointerdown/move/up 逐条下发，坐标相对视频帧归一化。"""
+
+    action: Literal["down", "move", "up"]
+    nx: float = Field(ge=0.0, le=1.0)
+    ny: float = Field(ge=0.0, le=1.0)
+    pointer_id: int = Field(default=0, ge=-3, le=16)
+
+
 class KeyRequest(ApiModel):
     key: str | None = None
     keycode: int | None = None

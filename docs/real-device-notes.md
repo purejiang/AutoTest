@@ -63,7 +63,8 @@
 | 镜像开启（scrcpy control） | **4~40ms** | 坐标：先按 `crop_rect` 逆变换到视频帧坐标，screen_size 必须**精确等于**当前视频尺寸，否则 server 静默丢弃事件 |
 | 镜像未开（uiautomator2 兜底） | 200ms~1.2s | 脚本执行仍走 u2（需要可访问性语义） |
 | key / text（control） | 4~14ms | text 单条 ≤300 字符自动切片 |
-| swipe | 约等于 `duration_ms` + 30ms | 按 duration 分配 MOVE 间隔，与原生手指滑动一致 |
+| swipe（一次性 API） | 约等于 `duration_ms` + 30ms | 按 duration 分配 MOVE 间隔，与原生手指滑动一致 |
+| **镜像页拖动（流式）** | **单条消息 3~5ms** | `POST /touch` 逐条下发 down/move/up：按下即生效、移动实时跟手（不再等松手） |
 
 同时修掉两处隐藏的每次请求开销：
 - `get_driver()` 曾**每次请求**都做一次 adb 枚举 + u2 存活 RPC（195ms）→ 改为存活结果 2s TTL 缓存（0ms）；
@@ -71,6 +72,17 @@
 - `uiautomator2.app_current()` 5.4s → adb dumpsys 0.13s（见 §3）。
 
 前端渲染：canvas 的 `devicePixelRatio` 上限 1.5（Retina 下 4 倍像素的 drawImage 在集显机器上吃帧时间）。
+
+**流式触摸（v1.1 修复）**：旧实现把整段手势缓存在浏览器里、松手才发一条 `/swipe`，导致"按住拖动过程中
+手机毫无反应"。现改为：
+- `pointerdown` → 立即 `POST /touch {action:"down"}`（设备马上有按下反馈）
+- `pointermove` → 持续 `{"action":"move"}`；前端**同一时刻只允许一条在飞、只保留最新位置**，避免请求堆积
+- `pointerup` → 等 in-flight 结束后发 `{"action":"up"}`，后端把整段手势归并成**一条**录制事件
+  （tap / long_press / swipe / drag，按位移与时长判定），录制与转脚本语义不变
+- 无镜像会话（无 control socket）时 `/touch` 返回 `UNSUPPORTED`，前端自动回落到"松手后一次性手势"，
+  并在状态行提示一次，不影响无镜像场景
+真机验证：down+up = 点击（2/2 正确）、down+move…+up 能把设置页从「我的设备/WLAN」滚到「锁屏/显示与亮度」、
+录制得到 `key → swipe → tap` 三条事件并成功转脚本。
 
 ## 4. 脚本编写最佳实践（真机踩出来的）
 
