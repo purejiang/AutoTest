@@ -1,0 +1,486 @@
+/* AutoTest 全局样式：只做 reset / 布局 / 少量业务通用类 */
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Helvetica Neue', Arial, sans-serif;
+  background: #f5f6f8;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+pre,
+.mono {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* ---------------- 主框架 ---------------- */
+.app-logo {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px;
+  color: #fff;
+  font-weight: 600;
+  font-size: 18px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.app-logo .app-logo-sub {
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.6;
+  letter-spacing: 0;
+}
+
+.app-header {
+  height: 64px;
+  padding: 0 20px;
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.app-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.app-content {
+  padding: 16px;
+  height: calc(100vh - 64px);
+  overflow: auto;
+}
+
+.app-loading {
+  height: 100%;
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------------- 通用页面 ---------------- */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.page-fill {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.muted {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.small-text {
+  font-size: 12px;
+}
+
+.pre-block {
+  margin: 0;
+  padding: 8px 10px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.code-text {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* ---------------- 设备页 ---------------- */
+.device-row {
+  cursor: pointer;
+}
+
+.device-row-selected > td {
+  background: #e6f4ff !important;
+}
+
+.device-serial {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+}
+
+.devices-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(380px, 2fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1200px) {
+  .devices-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.mirror-host {
+  min-height: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0b0b;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mirror-host .ant-empty-description {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.key-button-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.mirror-status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.logcat-pre {
+  margin: 0;
+  padding: 10px;
+  background: #111;
+  color: #d7d7d7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  height: 100%;
+  overflow: auto;
+  border-radius: 6px;
+}
+
+.hierarchy-title {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hierarchy-title:hover {
+  color: #1677ff;
+}
+
+.hierarchy-bounds {
+  margin-left: 6px;
+  color: rgba(0, 0, 0, 0.35);
+}
+
+/* ---------------- 脚本编辑器三栏 ---------------- */
+.editor-layout {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-col {
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-left {
+  width: 300px;
+  flex: 0 0 300px;
+}
+
+.editor-center {
+  flex: 1 1 auto;
+  min-width: 360px;
+  overflow: auto;
+  background: transparent;
+  border: none;
+}
+
+.editor-right {
+  width: 440px;
+  flex: 0 0 440px;
+}
+
+.editor-col-header {
+  padding: 8px 10px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #fafafa;
+  flex: 0 0 auto;
+}
+
+.editor-col-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.editor-center-card {
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.node-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid #f7f7f7;
+}
+
+.node-item:hover {
+  background: #f5f5f5;
+}
+
+.node-item.selected {
+  background: #e6f4ff;
+  border-left-color: #1677ff;
+}
+
+.node-item .node-index {
+  width: 22px;
+  text-align: right;
+  color: rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.node-item .node-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.node-item-icon {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.node-item-tools {
+  display: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.node-item:hover .node-item-tools,
+.node-item.selected .node-item-tools {
+  display: flex;
+}
+
+.target-editor {
+  width: 100%;
+}
+
+.target-editor .ant-space {
+  width: 100%;
+}
+
+.json-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.json-editor-host {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid #f0f0f0;
+}
+
+.json-editor-host .cm-editor {
+  height: 100%;
+  font-size: 12px;
+}
+
+.json-editor-host .cm-scroller {
+  overflow: auto;
+}
+
+.validation-list {
+  max-height: 180px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-top: 1px solid #f0f0f0;
+  background: #fff;
+}
+
+.validation-item {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.validation-item:hover {
+  background: #fafafa;
+}
+
+/* ---------------- 运行详情 ---------------- */
+.event-list {
+  max-height: 460px;
+  overflow: auto;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.event-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+  border-bottom: 1px dashed #f0f0f0;
+}
+
+.event-seq {
+  color: rgba(0, 0, 0, 0.35);
+  min-width: 50px;
+  text-align: right;
+  flex: 0 0 auto;
+}
+
+.event-time {
+  color: rgba(0, 0, 0, 0.35);
+  flex: 0 0 auto;
+}
+
+.event-payload {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.step-row-failed > td {
+  background: #fff1f0 !important;
+}
+
+.artifact-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.artifact-card {
+  width: 132px;
+}
+
+.artifact-name {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recording-event-low > td {
+  background: #fff7e6 !important;
+}
+
+.resume-check-pre {
+  max-height: 220px;
+}
+
+/* ---------------- 设置页 ---------------- */
+.settings-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 0 16px;
+}
+
+.maintenance-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}

@@ -263,6 +263,21 @@ RecorderSession 需实现：`before_pointer() -> dict|None`、`handle(kind, payl
   只依赖 types/api.ts 与 api/client.ts，不 import fe-core 的 features；fe-core 在 /devices 页给 mirror 留挂载点；
 - 录制工具条（开始/暂停/停止/事件数）在 mirror 页，调 §7.4 REST。
 
+## 12.1 运行期补充约定（集成期定稿）
+
+- **鉴权范围**：`security.token` 在 v1 只用于镜像 WS（`/ws/mirror/{serial}?token=`）校验；REST 端点不做鉴权
+  （默认仅绑 127.0.0.1）。REST 鉴权与 CORS 收紧闭源进 v1.1。
+- **data_dir 生效时机**：`runtime.data_dir` / `runtime.artifacts_dir` 修改后**重启进程生效**（DB 引擎在 lifespan
+  早期打开，不热切换）。设置页需给出提示文案。
+- **fake 设备**：`GET /api/devices` 仅在「无真实在线设备」或「环境变量 `AUTOTEST_FAKE_DEVICE=1`」时包含 `fake-1`
+  （列表项带 `"fake": true`）；`get_driver("fake-*")` 显式传参始终可用，供联调/测试。
+- **环境变量层**（优先级最高）：`AUTOTEST_DATA_DIR` / `AUTOTEST_ARTIFACTS_DIR` / `AUTOTEST_ADB` /
+  `AUTOTEST_HOST` / `AUTOTEST_PORT` / `AUTOTEST_TOKEN` / `AUTOTEST_SCRCPY_JAR` / `AUTOTEST_CONFIG`。
+  优先级：默认 < 配置文件 < DB settings < 环境变量。
+- **ScreenRecorder 产物**：设备端 `screenrecord` 录 mp4 → SIGINT 收尾 → `adb pull` → 校验 ftyp/moov → 清理设备端临时文件；
+  `stop() -> (Path, size)`，失败不留损坏文件（报 DEVICE_UNAVAILABLE）。
+- **录制工具条唯一入口**：镜像面板内（`RecordingBar`）；设备页不再放第二个录制入口。
+
 ## 13. v1 不做（明确出界）
 
 冷恢复/检查点、双帧一致性校验、元素吸附、图像模板匹配、OCR、批量执行、run_events 归档、

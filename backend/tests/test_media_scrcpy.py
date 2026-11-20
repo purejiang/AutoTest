@@ -1,0 +1,480 @@
+"""无真机测试：jar 校验 / server 参数 / start_server 全链路（假 adb + 假 scrcpy server TCP）。
+
+假 server 在本机 localhost 监听（代替 adb forward 的隧道），按 raw/meta 协议发送
+12 字节头帧；不需要真机、不需要 adb、不联网。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import socket
+import struct
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+from app.android import scrcpy
+from app.errors import ApiError
+from tests.test_media_h264 import annexb, build_idr, build_pps, build_sps
+
+PORTRAIT_SPS = build_sps(1080, 1920)
+PPS = build_pps()
+KEYFRAME = annexb(PORTRAIT_SPS, PPS, build_idr())
+
+
+# ---------------------------------------------------------------- 工具
+def make_jar(tmp_path: Path, data: bytes = b"fake-scrcpy-server-jar") -> tuple[Path, Path]:
+    jar = tmp_path / scrcpy.JAR_NAME
+    jar.write_bytes(data)
+    lock = {
+        "version": scrcpy.SCRCPY_VERSION,
+        "url": "https://example.invalid/scrcpy-server.jar",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "size": len(data),
+        "fetched_at": "2026-01-01T00:00:00+00:00",
+    }
+    lock_path = tmp_path / scrcpy.LOCK_NAME
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    return jar, lock_path
+
+
+class FakeScrcpyServer(threading.Thread):
+    """模拟 scrcpy server：监听端口，按 mode 发 stream 头 + 帧。"""
+
+    def __init__(self, port: int, mode: str, *, silent: bool = False) -> None:
+        super().__init__(daemon=True)
+        self.port = port
+        self.mode = mode
+        self.silent = silent
+        self.stop_event = threading.Event()
+        self.connections: list[socket.socket] = []
+        self.error: Exception | None = None
+
+    def run(self) -> None:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            listener.bind(("127.0.0.1", self.port))
+            listener.listen(4)
+            listener.settimeout(0.2)
+            while not self.stop_event.is_set():
+                try:
+                    conn, _addr = listener.accept()
+                except TimeoutError:
+                    continue
+                self.connections.append(conn)
+                self._serve(conn)
+        except Exception as exc:  # noqa: BLE001 - 测试线程失败在断言里暴露
+            self.error = exc
+        finally:
+            for conn in self.connections:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+            listener.close()
+
+    def _serve(self, conn: socket.socket) -> None:
+        _send_stream(conn, self.mode, silent=self.silent, stop_event=self.stop_event)
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self.join(timeout=2)
+
+
+def _send_stream(conn: socket.socket, mode: str, *, silent: bool, stop_event: threading.Event) -> None:
+    if silent:
+        while not stop_event.is_set():
+            time.sleep(0.02)
+        return
+
+    def _send(data: bytes) -> None:
+        conn.sendall(data)
+
+    try:
+        if mode != "raw":
+            device_name = b"fake-device"
+            codec_id = int.from_bytes(b"h264", "big")
+            _send(struct.pack(">Q", len(device_name)) + device_name)
+            _send(struct.pack(">III", codec_id, 1080, 1920))
+            if mode == "meta_dummy":
+                _send(b"\x00")
+        _send(scrcpy.pack_frame(0, KEYFRAME))
+        pts = 30_000
+        while not stop_event.is_set():
+            time.sleep(0.02)
+            _send(scrcpy.pack_frame(pts, annexb(b"\x41\x01\x02\x03")))
+            pts += 30_000
+    except OSError:
+        return
+
+
+class FakeScrcpyConnector(threading.Thread):
+    """reverse 模式的 server 端替身：主动连接 host 监听端口并发送流。"""
+
+    def __init__(self, port: int, mode: str = "raw", *, silent: bool = False) -> None:
+        super().__init__(daemon=True)
+        self.port = port
+        self.mode = mode
+        self.silent = silent
+        self.stop_event = threading.Event()
+        self.conn: socket.socket | None = None
+
+    def run(self) -> None:
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and not self.stop_event.is_set():
+            try:
+                self.conn = socket.create_connection(("127.0.0.1", self.port), timeout=1.0)
+                break
+            except OSError:
+                time.sleep(0.02)
+        if self.conn is None:
+            return
+        _send_stream(self.conn, self.mode, silent=self.silent, stop_event=self.stop_event)
+        try:
+            self.conn.close()
+        except OSError:
+            pass
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self.join(timeout=2)
+
+
+class FakeProcess:
+    def __init__(self, thread: FakeScrcpyServer | None = None, *, dead: bool = False, stderr_text: str = "") -> None:
+        self.thread = thread
+        self.dead = dead
+        self.stderr_text = stderr_text
+        self.terminated = False
+
+    def poll(self):
+        if self.dead:
+            return 1
+        if self.thread is None:
+            return 1
+        return None if self.thread.is_alive() else 0
+
+    def terminate(self) -> None:
+        self.terminated = True
+        if self.thread is not None:
+            self.thread.stop()
+
+    def kill(self) -> None:
+        self.terminate()
+
+    def wait(self, timeout=None):
+        if self.thread is not None:
+            self.thread.join(timeout)
+        return 0
+
+
+class FakeAdbOps:
+    """adbd 替身：forward 只记录端口，start_process 在本机起假 server。"""
+
+    def __init__(self, *, reject_raw: bool = False, silent: bool = False) -> None:
+        self.reject_raw = reject_raw
+        self.silent = silent
+        self.push_calls: list[tuple[str, str]] = []
+        self.forward_calls: list[tuple[str, str]] = []
+        self.removed_forwards: list[str] = []
+        self.reverse_calls: list[tuple[str, str]] = []
+        self.commands: list[str] = []
+        self.processes: list[FakeProcess] = []
+        self.port: int | None = None
+        self.devices = [{"serial": "fake-1", "state": "device"}]
+
+    # ---- 契约 §14.1 形状
+    def push(self, local: Path, remote: str) -> None:
+        self.push_calls.append((str(local), remote))
+
+    def forward(self, local: str, remote: str) -> None:
+        self.forward_calls.append((local, remote))
+        self.port = int(local.split(":")[1])
+
+    def remove_forward(self, local: str) -> None:
+        self.removed_forwards.append(local)
+
+    def reverse(self, remote: str, local: str) -> None:
+        self.reverse_calls.append((remote, local))
+
+    def remove_reverse(self, remote: str) -> None:
+        pass
+
+    def list_devices(self):
+        return [dict(item) for item in self.devices]
+
+    def shell_text(self, command: str, timeout: float = 10.0) -> str:
+        return "Physical size: 1080x1920\n"
+
+    def start_process(self, command: str) -> FakeProcess:
+        self.commands.append(command)
+        if self.reject_raw and "send_device_meta=false" in command:
+            proc = FakeProcess(dead=True, stderr_text="java.lang.IllegalArgumentException: Unknown option: send_device_meta")
+            self.processes.append(proc)
+            return proc
+        mode = "raw" if "send_device_meta=false" in command else "meta"
+        assert self.port is not None, "forward() must be called before start_process()"
+        thread = FakeScrcpyServer(self.port, mode, silent=self.silent)
+        thread.start()
+        proc = FakeProcess(thread)
+        self.processes.append(proc)
+        return proc
+
+
+def make_cfg(tmp_path: Path, **overrides) -> scrcpy.ServerConfig:
+    jar, _lock = make_jar(tmp_path)
+    values = dict(
+        jar_path=jar,
+        max_size=800,
+        max_fps=30,
+        video_bit_rate=4_000_000,
+        stream_mode="raw",
+        connect_timeout_s=3.0,
+        handshake_timeout_s=1.0,
+        first_frame_timeout_s=2.0,
+    )
+    values.update(overrides)
+    return scrcpy.ServerConfig(**values)
+
+
+# ---------------------------------------------------------------- verify_jar
+def test_verify_jar_ok(tmp_path) -> None:
+    jar, lock = make_jar(tmp_path)
+    info = scrcpy.verify_jar(scrcpy.ServerConfig(jar_path=jar))
+    assert info["version"] == scrcpy.SCRCPY_VERSION
+    assert info["sha256"] == hashlib.sha256(b"fake-scrcpy-server-jar").hexdigest()
+    assert info["size"] == len(b"fake-scrcpy-server-jar")
+    assert lock.exists()
+
+
+def test_verify_jar_missing_jar(tmp_path) -> None:
+    cfg = scrcpy.ServerConfig(jar_path=tmp_path / "nope.jar")
+    with pytest.raises(ApiError) as exc:
+        scrcpy.verify_jar(cfg)
+    assert exc.value.code == "SCRCPY_FAILED"
+    assert "未就位" in exc.value.message
+    assert exc.value.status_code == 502
+
+
+def test_verify_jar_missing_lock(tmp_path) -> None:
+    jar = tmp_path / scrcpy.JAR_NAME
+    jar.write_bytes(b"data")
+    with pytest.raises(ApiError) as exc:
+        scrcpy.verify_jar(scrcpy.ServerConfig(jar_path=jar))
+    assert exc.value.code == "SCRCPY_FAILED"
+    assert "lock" in exc.value.message.lower()
+
+
+def test_verify_jar_sha_mismatch(tmp_path) -> None:
+    jar, lock = make_jar(tmp_path)
+    jar.write_bytes(b"tampered")
+    with pytest.raises(ApiError) as exc:
+        scrcpy.verify_jar(scrcpy.ServerConfig(jar_path=jar))
+    assert exc.value.code == "SCRCPY_FAILED"
+    assert "校验失败" in exc.value.message
+    assert exc.value.details["expected_sha256"] != exc.value.details["actual_sha256"]
+
+
+def test_verify_jar_env_override(tmp_path, monkeypatch) -> None:
+    jar, _ = make_jar(tmp_path)
+    monkeypatch.setenv("AUTOTEST_SCRCPY_JAR", str(jar))
+    info = scrcpy.verify_jar()
+    assert info["jar"] == str(jar)
+
+
+# ---------------------------------------------------------------- 参数构造
+def test_build_server_args_contract(tmp_path) -> None:
+    cfg = make_cfg(tmp_path)
+    args = scrcpy.build_server_args(cfg, "raw")
+    assert args[0] == scrcpy.SCRCPY_VERSION
+    joined = " ".join(args)
+    for expected in (
+        "audio=false",
+        "video=true",
+        "video_codec=h264",
+        "log_level=info",
+        "max_size=800",
+        "max_fps=30",
+        "video_bit_rate=4000000",
+        "tunnel_forward=true",
+        "control=false",
+        f"socket={cfg.socket_name}",
+        "send_device_meta=false",
+        "send_codec_meta=false",
+        "send_dummy_byte=false",
+    ):
+        assert expected in joined
+    command = scrcpy.build_server_command(cfg, "raw")
+    assert command.startswith(f"CLASSPATH={scrcpy.REMOTE_JAR_PATH} app_process / ")
+    assert scrcpy.SERVER_CLASS in command
+    assert command.endswith(" ".join(args))
+
+
+def test_build_server_args_includes_crop_and_control(tmp_path) -> None:
+    cfg = make_cfg(tmp_path, crop="800:1600:100:200", control=True)
+    joined = " ".join(scrcpy.build_server_args(cfg, "meta"))
+    assert "crop=800:1600:100:200" in joined
+    assert "control=true" in joined
+    assert "send_device_meta=false" not in joined
+
+
+def test_socket_name_is_unique_and_prefixed() -> None:
+    first = scrcpy.default_socket_name()
+    second = scrcpy.default_socket_name()
+    assert first.startswith(scrcpy.SOCKET_PREFIX)
+    assert first != second
+    assert str(__import__("os").getpid()) in first
+
+
+def test_server_config_validation(tmp_path) -> None:
+    jar, _ = make_jar(tmp_path)
+    with pytest.raises(ApiError) as exc:
+        scrcpy.ServerConfig(jar_path=jar, max_fps=0)
+    assert exc.value.code == "INVALID_ARGUMENT"
+    with pytest.raises(ApiError):
+        scrcpy.ServerConfig(jar_path=jar, crop="1:2:3")
+    with pytest.raises(ApiError):
+        scrcpy.ServerConfig(jar_path=jar, codec="h265")
+    with pytest.raises(ApiError):
+        scrcpy.ServerConfig(jar_path=jar, socket_name="bad name!")
+    with pytest.raises(ApiError):
+        scrcpy.ServerConfig(jar_path=jar, stream_mode="weird")
+
+
+# ---------------------------------------------------------------- ensure_device_online
+def test_ensure_device_online_ok() -> None:
+    ops = FakeAdbOps()
+    info = scrcpy.ensure_device_online("fake-1", ops)
+    assert info["serial"] == "fake-1"
+
+
+def test_ensure_device_online_missing() -> None:
+    ops = FakeAdbOps()
+    with pytest.raises(ApiError) as exc:
+        scrcpy.ensure_device_online("other", ops)
+    assert exc.value.code == "DEVICE_UNAVAILABLE"
+    assert exc.value.status_code == 503
+
+
+def test_ensure_device_online_offline() -> None:
+    ops = FakeAdbOps()
+    ops.devices = [{"serial": "fake-1", "state": "offline"}]
+    with pytest.raises(ApiError) as exc:
+        scrcpy.ensure_device_online("fake-1", ops)
+    assert exc.value.code == "DEVICE_UNAVAILABLE"
+
+
+# ---------------------------------------------------------------- start_server 全链路
+def test_start_server_raw_mode(tmp_path) -> None:
+    cfg = make_cfg(tmp_path)
+    ops = FakeAdbOps()
+    server = scrcpy.start_server("fake-1", cfg, ops=ops)
+    try:
+        assert server.stream_mode == "raw"
+        assert server.process_alive()
+        assert (server.geometry.width, server.geometry.height) == (1080, 1920)
+        assert server.geometry.codec == "avc1.64001F"
+        assert server.geometry.sps == PORTRAIT_SPS
+        assert server.geometry.pps == PPS
+        first_pts, first_payload = server.first_frame
+        assert first_pts == 0
+        assert first_payload == KEYFRAME
+        # 推送/forward 参数符合契约
+        assert ops.push_calls[0] == (str(cfg.jar_path), scrcpy.REMOTE_JAR_PATH)
+        assert ops.forward_calls[0] == (f"tcp:{server.local_port}", f"localabstract:{cfg.socket_name}")
+        # server 参数
+        assert "audio=false" in ops.commands[0] and "video=true" in ops.commands[0]
+        assert server.request_keyframe() is False  # control 默认关闭
+    finally:
+        server.stop()
+    assert ops.removed_forwards == [f"tcp:{server.local_port}"]
+    assert not server.process_alive()
+
+
+def test_start_server_falls_back_to_meta_mode(tmp_path) -> None:
+    cfg = make_cfg(tmp_path, stream_mode="auto")
+    ops = FakeAdbOps(reject_raw=True)
+    server = scrcpy.start_server("fake-1", cfg, ops=ops)
+    try:
+        assert server.stream_mode == "meta"
+        assert (server.geometry.width, server.geometry.height) == (1080, 1920)
+        assert len(ops.commands) == 2
+        assert "send_device_meta=false" in ops.commands[0]
+        assert "send_device_meta=false" not in ops.commands[1]
+        # 第一次失败的 forward 也被清理
+        assert len(ops.removed_forwards) == 1
+    finally:
+        server.stop()
+    assert len(ops.removed_forwards) == 2
+
+
+def test_start_server_first_frame_timeout_cleans_up(tmp_path) -> None:
+    cfg = make_cfg(tmp_path, stream_mode="raw", first_frame_timeout_s=0.2)
+    ops = FakeAdbOps(silent=True)
+    with pytest.raises(ApiError) as exc:
+        scrcpy.start_server("fake-1", cfg, ops=ops)
+    assert exc.value.code == "SCRCPY_FAILED"
+    assert "首帧超时" in exc.value.message
+    # 清理：进程被 terminate、forward 被 remove、没有登记活跃 server
+    assert all(proc.terminated for proc in ops.processes)
+    assert ops.removed_forwards
+    assert scrcpy.active_servers() == []
+
+
+def test_start_server_all_modes_fail(tmp_path) -> None:
+    cfg = make_cfg(tmp_path, stream_mode="auto", first_frame_timeout_s=0.15)
+    ops = FakeAdbOps(silent=True)
+    with pytest.raises(ApiError) as exc:
+        scrcpy.start_server("fake-1", cfg, ops=ops)
+    assert exc.value.code == "SCRCPY_FAILED"
+    assert len(exc.value.details["attempts"]) == 3
+    assert [item["mode"] for item in exc.value.details["attempts"]] == ["raw", "meta", "meta_dummy"]
+
+
+def test_start_server_requires_jar(tmp_path) -> None:
+    cfg = scrcpy.ServerConfig(jar_path=tmp_path / "missing.jar")
+    with pytest.raises(ApiError) as exc:
+        scrcpy.start_server("fake-1", cfg, ops=FakeAdbOps())
+    assert exc.value.code == "SCRCPY_FAILED"
+
+
+def test_stop_server_idempotent(tmp_path) -> None:
+    cfg = make_cfg(tmp_path)
+    server = scrcpy.start_server("fake-1", cfg, ops=FakeAdbOps())
+    server.stop()
+    server.stop()  # 幂等
+    assert scrcpy.active_servers() == []
+
+
+def test_reverse_mode_accepts_socket(tmp_path) -> None:
+    cfg = make_cfg(tmp_path, tunnel_forward=False, stream_mode="raw")
+    ops = FakeAdbOps()
+    # reverse 模式下 server 主动连本机端口：用假 server 监听该端口
+    original_reverse = ops.reverse
+
+    def reverse(remote: str, local: str) -> None:
+        original_reverse(remote, local)
+        port = int(local.split(":")[1])
+        thread = FakeScrcpyConnector(port, "raw")
+        thread.start()
+        ops._reverse_thread = thread  # type: ignore[attr-defined]
+
+    ops.reverse = reverse  # type: ignore[method-assign]
+
+    def start_process(command: str) -> FakeProcess:
+        ops.commands.append(command)
+        return FakeProcess(ops._reverse_thread)  # type: ignore[attr-defined]
+
+    ops.start_process = start_process  # type: ignore[method-assign]
+    server = scrcpy.start_server("fake-1", cfg, ops=ops)
+    try:
+        assert server.stream_mode == "raw"
+        assert ops.reverse_calls
+        assert (server.geometry.width, server.geometry.height) == (1080, 1920)
+    finally:
+        server.stop()
+        ops._reverse_thread.stop()  # type: ignore[attr-defined]

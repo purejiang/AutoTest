@@ -22,6 +22,17 @@ _FILE_LAYER: dict[str, Any] = {}
 _DB_LAYER: dict[str, Any] = {}
 _EFFECTIVE: dict[str, Any] | None = None
 
+# 环境变量层（优先级最高，运维/CI/测试隔离用）
+ENV_MAP: dict[str, str] = {
+    "AUTOTEST_DATA_DIR": "runtime.data_dir",
+    "AUTOTEST_ARTIFACTS_DIR": "runtime.artifacts_dir",
+    "AUTOTEST_ADB": "adb.path",
+    "AUTOTEST_HOST": "server.host",
+    "AUTOTEST_PORT": "server.port",
+    "AUTOTEST_TOKEN": "security.token",
+    "AUTOTEST_SCRCPY_JAR": "scrcpy.jar",
+}
+
 # ---------------------------------------------------------------- defaults
 DEFAULTS: dict[str, Any] = {
     "adb.path": "",
@@ -153,13 +164,22 @@ def reload_file_layer() -> None:
     set_file_layer(load_file_layer())
 
 
+def _env_layer() -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for env_key, cfg_key in ENV_MAP.items():
+        raw = os.getenv(env_key)
+        if raw is not None and raw != "":
+            out[cfg_key] = raw
+    return out
+
+
 def effective() -> dict[str, Any]:
     with _LOCK:
         global _EFFECTIVE
         if _EFFECTIVE is None:
             merged: dict[str, Any] = dict(DEFAULTS)
-            # 优先级：defaults < file < db
-            for layer in (_FILE_LAYER, _DB_LAYER):
+            # 优先级：defaults < file < db < env
+            for layer in (_FILE_LAYER, _DB_LAYER, _env_layer()):
                 for key, value in layer.items():
                     merged[key] = _coerce(key, value) if key in DEFAULTS else value
             _EFFECTIVE = merged
@@ -171,6 +191,8 @@ def get(key: str, default: Any = None) -> Any:
 
 
 def source_of(key: str) -> str:
+    if key in _env_layer():
+        return "env"
     if key in _DB_LAYER:
         return "db"
     if key in _FILE_LAYER:

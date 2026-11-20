@@ -1,0 +1,821 @@
+"""执行引擎（契约 §3/§5/§9/§14.4）。
+
+线程模型：
+- `start_run()` 把 run 提交到模块级 ThreadPoolExecutor(max_workers=2)（幂等）；
+- 主循环在池线程里跑；每个节点再放进一个 **daemon 线程**执行，主循环按 20ms 轮询
+  节点超时 / stop 强切（stop 后最多等 stop_grace_s，默认 5s）；
+- 引擎线程自身绝不无限阻塞：节点线程可被放弃（daemon），最终状态一定落库。
+
+状态机：
+    queued → running → (paused ⇄ running) → succeeded | failed | stopped
+    stop 请求期间 DB 显示 stopping，结束后 stopped。
+    aborted 留给"运行被外部撤销"场景（当前实现只在 run 行被删除时静默结束）。
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any
+
+from ..db import session_scope
+from ..errors import ApiError
+from ..events import RunEventBus
+from ..logs import logger
+from ..models import Run, StepResult, now_iso
+from . import controls, executors
+from .context import (
+    BudgetExceeded,
+    NonRetryableError,
+    RunContext,
+    RunFailed,
+    RunSnapshot,
+    RunStopped,
+    StepTimeout,
+    TotalTimeout,
+    default_limits,
+)
+
+# ---------------------------------------------------------------- 跨模块缝合线
+try:  # pragma: no cover - 取决于 be-core device_registry 是否已落地
+    from ..services.device_registry import acquire, get_driver, release
+
+    HAS_DEVICE_REGISTRY = True
+except Exception as _registry_import_error:  # noqa: BLE001 - be-core 未落地时退化
+    logger.warning(
+        "app.services.device_registry unavailable (%s); using FakeDriver fallback",
+        _registry_import_error,
+    )
+    HAS_DEVICE_REGISTRY = False
+
+    def acquire(serial: str, purpose: str, ref_id: Any) -> None:  # type: ignore[misc]
+        return None
+
+    def release(serial: str, purpose: str, ref_id: Any) -> None:  # type: ignore[misc]
+        return None
+
+    def get_driver(serial: str | None = None):  # type: ignore[misc]
+        from ..android.driver import FakeDriver
+
+        if serial and str(serial).startswith("fake"):
+            return FakeDriver(str(serial))
+        raise ApiError(
+            "DEVICE_UNAVAILABLE",
+            f"device registry unavailable (serial={serial})",
+            {"serial": serial},
+        )
+
+
+# ---------------------------------------------------------------- 线程池
+_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="autotest-run")
+_ACTIVE_LOCK = threading.RLock()
+_ACTIVE: dict[int, Future] = {}
+
+TERMINAL_STATUSES = frozenset({"succeeded", "failed", "aborted", "stopped", "interrupted"})
+_ACTIVE_STATUSES = frozenset({"queued", "running", "paused", "stopping"})
+
+
+def start_run(run_id: int) -> None:
+    """提交运行到线程池；幂等（同一 run 已排队/运行中则忽略）。"""
+    run_id = int(run_id)
+    with _ACTIVE_LOCK:
+        future = _ACTIVE.get(run_id)
+        if future is not None and not future.done():
+            return
+        _ACTIVE[run_id] = _EXECUTOR.submit(_run_guarded, run_id)
+
+
+def is_active(run_id: int) -> bool:
+    with _ACTIVE_LOCK:
+        future = _ACTIVE.get(int(run_id))
+        return future is not None and not future.done()
+
+
+def active_run_ids() -> list[int]:
+    with _ACTIVE_LOCK:
+        return [rid for rid, future in _ACTIVE.items() if not future.done()]
+
+
+def wait_for_idle(timeout_s: float = 10.0) -> bool:
+    """等待所有已提交运行结束（测试 / 优雅退出用）。"""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if not active_run_ids():
+            return True
+        time.sleep(0.02)
+    return not active_run_ids()
+
+
+def _run_guarded(run_id: int) -> None:
+    try:
+        _run(run_id)
+    except BaseException:  # _run 内部已兜底，这里是最后一道保险
+        logger.exception("run %s crashed", run_id)
+    finally:
+        with _ACTIVE_LOCK:
+            _ACTIVE.pop(int(run_id), None)
+
+
+# ---------------------------------------------------------------- 运行入口
+def _run(run_id: int) -> None:
+    data = _load_run_data(run_id)
+    if data is None:
+        logger.warning("run %s not found; skip", run_id)
+        return
+    if data["status"] != "queued":
+        logger.info("run %s already %s; skip", run_id, data["status"])
+        return
+    serial = str(data["device_serial"] or "auto")
+    try:
+        snapshot = RunSnapshot.from_data(data["script_snapshot"] or {}, script_id=data["script_id"])
+    except Exception as exc:  # 脚本快照损坏
+        _finish_early_failure(run_id, serial, "VALIDATION_ERROR", f"invalid script snapshot: {exc}")
+        return
+
+    _update_run(run_id, status="running", started_at=now_iso(), error=None)
+    control = controls.create_control(run_id, debug=data["debug"] or {})
+    try:
+        driver = get_driver(serial)
+    except ApiError as exc:
+        _finish_early_failure(run_id, serial, exc.code, exc.message)
+        controls.cleanup(run_id)
+        return
+    except Exception as exc:
+        logger.exception("run %s failed to get driver for %s", run_id, serial)
+        _finish_early_failure(run_id, serial, "DEVICE_UNAVAILABLE", str(exc))
+        controls.cleanup(run_id)
+        return
+
+    limits = default_limits()
+    ctx = RunContext(
+        run_id=run_id,
+        driver=driver,
+        script=snapshot,
+        variables=dict(data["variables"] or {}),
+        controls=control,
+        limits=limits,
+    )
+    ctx.debug = dict(data["debug"] or {})
+    ctx.on_pause = lambda entered: _on_pause_change(ctx, entered)
+
+    _safe_emit(
+        run_id,
+        "run_started",
+        {
+            "script_id": data["script_id"],
+            "script_name": snapshot.name,
+            "device_serial": serial,
+            "total_steps": len(snapshot.steps),
+        },
+    )
+    _safe_emit(run_id, "run_state", {"status": "running", "step_index": 0})
+
+    summary: dict[str, Any] = {}
+    status = "failed"
+    error: dict[str, Any] | None = None
+    try:
+        summary = run_script_with_context(ctx)
+        status = str(summary.get("status") or "succeeded")
+        error = summary.get("error")
+    except RunStopped as exc:
+        status = "stopped"
+        summary = getattr(exc, "summary", None) or {}
+        error = {"code": "STOPPED", "message": str(exc) or "stopped"}
+    except RunFailed as exc:
+        status = "failed"
+        summary = getattr(exc, "summary", None) or {}
+        error = dict(exc.error)
+    except BaseException as exc:  # noqa: BLE001 - 绝不能让 run 卡在 running
+        logger.exception("run %s failed unexpectedly", run_id)
+        status = "failed"
+        summary = getattr(exc, "summary", None) or summary
+        error = {"code": "INTERNAL", "message": f"{type(exc).__name__}: {exc}"}
+    finally:
+        ended_at = now_iso()
+        duration_ms = ctx.active_elapsed_ms()
+        final_summary = {
+            "passed_steps": int(summary.get("passed_steps", 0)),
+            "failed_steps": int(summary.get("failed_steps", 0)),
+            "skipped_steps": int(summary.get("skipped_steps", 0)),
+            "duration_ms": duration_ms,
+            "total_steps": len(snapshot.steps),
+            "status": status,
+        }
+        _update_run(
+            run_id,
+            status=status,
+            ended_at=ended_at,
+            error=error,
+            summary=final_summary,
+        )
+        if error is not None:
+            _safe_emit(run_id, "error", error)
+        _safe_emit(
+            run_id,
+            "run_finished",
+            {
+                "status": status,
+                "duration_ms": duration_ms,
+                "passed_steps": final_summary["passed_steps"],
+                "failed_steps": final_summary["failed_steps"],
+                "skipped_steps": final_summary["skipped_steps"],
+            },
+        )
+        _safe_emit(run_id, "run_state", {"status": status})
+        try:
+            release(serial, "run", str(run_id))
+        except Exception:  # 释放占用失败不能影响最终状态
+            logger.exception("run %s failed to release device %s", run_id, serial)
+        controls.cleanup(run_id)
+
+
+def _finish_early_failure(
+    run_id: int,
+    serial: str,
+    code: str,
+    message: str,
+) -> None:
+    """运行还没进入主循环就失败（脚本损坏 / 取 driver 失败）：落库最终态 + 事件。"""
+    error = {"code": code, "message": message}
+    summary = {"passed_steps": 0, "failed_steps": 0, "skipped_steps": 0, "duration_ms": 0}
+    _update_run(run_id, status="failed", ended_at=now_iso(), error=error, summary=summary)
+    _safe_emit(run_id, "error", error)
+    _safe_emit(
+        run_id,
+        "run_finished",
+        {
+            "status": "failed",
+            "duration_ms": 0,
+            "passed_steps": 0,
+            "failed_steps": 0,
+            "skipped_steps": 0,
+        },
+    )
+    _safe_emit(run_id, "run_state", {"status": "failed"})
+    try:
+        release(serial, "run", str(run_id))
+    except Exception:  # pragma: no cover
+        logger.exception("run %s failed to release device %s", run_id, serial)
+
+
+def _on_pause_change(ctx: RunContext, entered: bool) -> None:
+    control = ctx.controls
+    if control is None:
+        return
+    if entered:
+        step_id = control.paused_at_step_id or ctx.current_step_id
+        reason = control.pause_reason or "user"
+        _update_run(ctx.run_id, status="paused", current_step_id=step_id)
+        _safe_emit(ctx.run_id, "run_paused", {"reason": reason, "at_step_id": step_id})
+        return
+    if control.stop_event.is_set():
+        return
+    warnings = list(control.resume_warnings or [])
+    control.resume_warnings = []
+    resume_kind = "debug" if (control.pause_reason or "") in ("step_mode", "breakpoint") else "hot"
+    control.pause_reason = "user"
+    _update_run(ctx.run_id, status="running")
+    _safe_emit(ctx.run_id, "run_resumed", {"resume_kind": resume_kind, "warnings": warnings})
+
+
+# ---------------------------------------------------------------- 主循环
+def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
+    """顺序执行 ctx.script 的节点；返回 summary。root 与 sub_script 子上下文共用本函数。"""
+    steps = list(ctx.script.steps)
+    index_by_id = {step.id: pos for pos, step in enumerate(steps)}
+    control = ctx.controls
+    summary: dict[str, Any] = {"status": "succeeded", "error": None}
+    # 每个节点"最近一次"结果：goto 重入后以最新一次为准（重试/跳转恢复成功不算最终失败）
+    outcomes: dict[str, str] = {}
+    retry_used: dict[str, int] = {}
+    index = 0
+    last_error: dict[str, Any] | None = None
+
+    try:
+        while index < len(steps):
+            if ctx.should_stop():
+                raise RunStopped("stop requested")
+
+            step = steps[index]
+            ctx.step_index = index
+            ctx.current_step_id = step.id
+            if control is not None:
+                control.current_step_id = step.id
+            _update_run_progress(ctx.run_id, step.id, index)
+
+            try:
+                ctx.check_total_timeout()
+            except RunFailed as exc:
+                # 总时长保护环触发：把当前节点记为 failed（TOTAL_TIMEOUT），便于 UI 定位
+                last_error = dict(exc.error)
+                outcomes[step.id] = "failed"
+                _record_attempt(ctx, step, index, "failed", 0, now_iso(), 0, exc.error, None)
+                _safe_emit(ctx.run_id, "error", last_error)
+                raise
+
+            ctx.wait_if_paused()
+            if ctx.should_stop():
+                raise RunStopped("stop requested")
+            # 调试 run_from：暂停中被请求则立刻跳转，运行中则在节点边界生效
+            jump_index = _consume_run_from(ctx, index_by_id, retry_used, steps)
+            if jump_index is not None:
+                index = jump_index
+                continue
+
+            if not bool(getattr(step, "enabled", True)):
+                _record_skipped(ctx, step, index, "disabled")
+                outcomes[step.id] = "skipped"
+                index += 1
+                continue
+
+            # breakpoint：命中则进入干预模式，等待 resume/step
+            breakpoints = list(control.debug.get("breakpoints") or []) if control is not None else []
+            if step.id in breakpoints:
+                controls.request_pause(ctx.run_id, reason="breakpoint", at_step_id=step.id)
+                ctx.wait_if_paused()
+                if ctx.should_stop():
+                    raise RunStopped("stop requested")
+                jump_index = _consume_run_from(ctx, index_by_id, retry_used, steps)
+                if jump_index is not None:
+                    index = jump_index
+                    continue
+
+            # when 条件
+            when = getattr(step, "when", None)
+            if when is not None:
+                met = executors.wait_condition(
+                    ctx,
+                    when.target,
+                    when.state,
+                    int(when.timeout_ms),
+                )
+                if not met:
+                    if when.mode == "optional":
+                        _record_skipped(ctx, step, index, "when_not_met")
+                        outcomes[step.id] = "skipped"
+                        index += 1
+                        continue
+                    when_error = {
+                        "code": "WHEN_NOT_MET",
+                        "message": f"when require not met (state={when.state}) "
+                        f"within {when.timeout_ms} ms",
+                    }
+                    last_error = when_error
+                    _record_attempt(
+                        ctx, step, index, "failed", 0, now_iso(), 0, when_error, None
+                    )
+                    outcomes[step.id] = "failed"
+                    failed_index = index
+                    index = _handle_on_fail(ctx, step, index, index_by_id, steps, retry_used, summary)
+                    if index is not None:
+                        continue
+                    _skip_remaining(ctx, steps, failed_index + 1, outcomes)
+                    raise RunFailed(when_error["code"], when_error["message"], step_id=step.id)
+
+            ctx.sleep_interruptible(int(getattr(step, "delay_before_ms", 0) or 0))
+
+            retry_count, retry_interval = _retry_policy(ctx, step)
+            attempts = 0
+            fail_error: dict[str, Any] | None = None
+            fail_output: dict[str, Any] | None = None
+            step_duration = 0
+
+            while True:
+                attempts += 1
+                try:
+                    ctx.check_step_budget()
+                    ctx.check_total_timeout()
+                except RunFailed as exc:
+                    last_error = dict(exc.error)
+                    _record_attempt(ctx, step, index, "failed", attempts, now_iso(), 0, exc.error, None)
+                    outcomes[step.id] = "failed"
+                    raise
+                ctx.wait_if_paused()
+                if ctx.should_stop():
+                    raise RunStopped("stop requested")
+                _safe_emit(
+                    ctx.run_id,
+                    "step_started",
+                    {
+                        "step_id": step.id,
+                        "name": step.name,
+                        "type": step.type,
+                        "index": index,
+                        "attempt": attempts,
+                    },
+                )
+                started_iso = now_iso()
+                started_active = ctx.active_elapsed_ms()
+                timeout_ms = _step_timeout(ctx, step)
+                ctx.begin_step(timeout_ms)
+                try:
+                    output = _execute_step_with_timeout(ctx, step, timeout_ms)
+                except RunStopped:
+                    step_duration = max(0, ctx.active_elapsed_ms() - started_active)
+                    stop_error = {"code": "STOPPED", "message": "run stopped"}
+                    _record_attempt(
+                        ctx, step, index, "failed", attempts, started_iso, step_duration, stop_error, None
+                    )
+                    _safe_emit(ctx.run_id, "error", stop_error)
+                    raise
+                except BaseException as exc:  # noqa: BLE001 - 统一转 step error
+                    step_duration = max(0, ctx.active_elapsed_ms() - started_active)
+                    step_error = _error_from_exception(exc)
+                    fail_output = _output_from_exception(exc)
+                    retryable = not isinstance(
+                        exc, (NonRetryableError, RunFailed, RunStopped)
+                    )
+                    if retryable and retry_used.get(step.id, 0) < retry_count:
+                        retry_used[step.id] = retry_used.get(step.id, 0) + 1
+                        _safe_emit(
+                            ctx.run_id,
+                            "step_retry",
+                            {"step_id": step.id, "attempt": attempts, "error": step_error},
+                        )
+                        ctx.sleep_interruptible(retry_interval)
+                        continue
+                    fail_error = step_error
+                    last_error = step_error
+                    _record_attempt(
+                        ctx, step, index, "failed", attempts, started_iso, step_duration, step_error, fail_output
+                    )
+                    outcomes[step.id] = "failed"
+                    break
+                else:
+                    step_duration = max(0, ctx.active_elapsed_ms() - started_active)
+                    retry_used[step.id] = 0
+                    ctx.sleep_interruptible(int(getattr(step, "delay_after_ms", 0) or 0))
+                    _record_attempt(
+                        ctx, step, index, "passed", attempts, started_iso, step_duration, None, output
+                    )
+                    outcomes[step.id] = "passed"
+                    break
+                finally:
+                    ctx.end_step()
+
+            if fail_error is None:
+                # 成功：进入下一节点；step_mode 在每个节点后暂停等待 debug step/continue
+                index += 1
+                if control is not None and bool(control.debug.get("step_mode")):
+                    controls.request_pause(ctx.run_id, reason="step_mode", at_step_id=step.id)
+                    ctx.wait_if_paused()
+                    if ctx.should_stop():
+                        raise RunStopped("stop requested")
+                continue
+
+            # 失败：on_fail 策略
+            next_index = _handle_on_fail(
+                ctx,
+                step,
+                index,
+                index_by_id,
+                steps,
+                retry_used,
+                summary,
+                fail_error,
+            )
+            if next_index is not None:
+                index = next_index
+                continue
+            error_code = (fail_error or {}).get("code", "STEP_FAILED")
+            error_message = (fail_error or {}).get("message", "step failed")
+            _skip_remaining(ctx, steps, index + 1, outcomes)
+            raise RunFailed(str(error_code), str(error_message), step_id=step.id)
+    except RunStopped as exc:
+        exc.summary = _apply_outcomes(summary, outcomes)  # type: ignore[attr-defined]
+        raise
+    except RunFailed as exc:
+        exc.summary = _apply_outcomes(summary, outcomes)  # type: ignore[attr-defined]
+        raise
+
+    _apply_outcomes(summary, outcomes)
+    status = "failed" if summary["failed_steps"] > 0 else "succeeded"
+    summary["status"] = status
+    summary["error"] = last_error if status == "failed" else None
+    return summary
+
+
+def _handle_on_fail(
+    ctx: RunContext,
+    step: Any,
+    index: int,
+    index_by_id: dict[str, int],
+    steps: list[Any],
+    retry_used: dict[str, int],
+    summary: dict[str, Any],
+    fail_error: dict[str, Any] | None = None,
+) -> int | None:
+    """返回下一个要执行的 index（continue/goto）；返回 None 表示 abort。"""
+    on_fail = getattr(step, "on_fail", None)
+    action = on_fail.action if on_fail is not None else ctx.script.parsed.settings.on_fail
+    if action == "continue":
+        _safe_emit(
+            ctx.run_id,
+            "log",
+            {"level": "info", "message": f"on_fail=continue after step {step.id}"},
+        )
+        return index + 1
+    if action == "goto":
+        goto_id = getattr(on_fail, "target_id", None)
+        target_index = index_by_id.get(str(goto_id)) if goto_id else None
+        if target_index is None:
+            return None
+        reset_retry_used(retry_used, steps, target_index)
+        _safe_emit(
+            ctx.run_id,
+            "log",
+            {"level": "info", "message": f"on_fail=goto {goto_id} after step {step.id}"},
+        )
+        return target_index
+    return None
+
+
+def reset_retry_used(retry_used: dict[str, int], steps: list[Any], from_index: int) -> None:
+    """goto 重入：重置目标节点及其后的 retry 计数。"""
+    for step in steps[max(0, int(from_index)) :]:
+        retry_used.pop(step.id, None)
+
+
+def _consume_run_from(
+    ctx: RunContext,
+    index_by_id: dict[str, int],
+    retry_used: dict[str, int],
+    steps: list[Any],
+) -> int | None:
+    """消费 pending run_from；返回目标 index（同时重置目标及其后的 retry 计数）。"""
+    if ctx.controls is None:
+        return None
+    step_id = controls.consume_run_from(ctx.run_id)
+    if step_id is None:
+        return None
+    target_index = index_by_id.get(str(step_id))
+    if target_index is None:
+        _safe_emit(
+            ctx.run_id,
+            "log",
+            {"level": "warn", "message": f"run_from target not found: {step_id}"},
+        )
+        return None
+    reset_retry_used(retry_used, steps, target_index)
+    return target_index
+
+
+def _retry_policy(ctx: RunContext, step: Any) -> tuple[int, int]:
+    retry = getattr(step, "retry", None)
+    if retry is None:
+        retry = ctx.script.parsed.defaults.retry or ctx.script.parsed.settings.retry
+    if retry is None:
+        return 0, 1000
+    return max(0, int(retry.count)), max(0, int(retry.interval_ms))
+
+
+def _step_timeout(ctx: RunContext, step: Any) -> int:
+    raw = getattr(step, "timeout_ms", None)
+    if raw is None:
+        raw = ctx.script.parsed.settings.default_timeout_ms
+    if raw is None:
+        raw = ctx.limits.get("default_timeout_ms", 8000)
+    low = int(ctx.limits.get("step_min_timeout_ms", 100) or 100)
+    high = min(int(ctx.limits.get("step_max_timeout_ms", 600_000) or 600_000), 600_000)
+    return max(low, min(int(raw), high))
+
+
+def _execute_step_with_timeout(ctx: RunContext, step: Any, timeout_ms: int) -> dict[str, Any]:
+    """在 daemon 线程里执行节点；主循环轮询节点超时与 stop 强切。"""
+    box: dict[str, Any] = {}
+    done = threading.Event()
+
+    def _target() -> None:
+        try:
+            box["result"] = executors.execute_step(ctx, step)
+        except BaseException as exc:  # noqa: BLE001 - 原样交给主循环判定
+            box["error"] = exc
+        finally:
+            done.set()
+
+    worker = threading.Thread(
+        target=_target,
+        name=f"autotest-step-{ctx.run_id}-{getattr(step, 'id', '?')}",
+        daemon=True,
+    )
+    worker.start()
+    started = time.monotonic()
+    paused_total = 0.0
+    paused_since: float | None = None
+    stop_since: float | None = None
+    grace = ctx.stop_grace_s
+    while True:
+        if done.wait(0.02):
+            break
+        now = time.monotonic()
+        control = ctx.controls
+        paused = control is not None and not control.pause_event.is_set()
+        if paused:
+            if paused_since is None:
+                paused_since = now
+        elif paused_since is not None:
+            paused_total += now - paused_since
+            paused_since = None
+        if ctx.should_stop():
+            if stop_since is None:
+                stop_since = now
+            elif now - stop_since >= grace:
+                raise RunStopped("stop requested; step force-cut")
+        active = now - started - paused_total
+        if paused_since is not None:
+            active -= now - paused_since
+        if active * 1000.0 >= timeout_ms:
+            raise StepTimeout(f"step {getattr(step, 'id', '?')} timed out after {timeout_ms} ms")
+    error = box.get("error")
+    if error is not None:
+        raise error
+    result = box.get("result")
+    return result if isinstance(result, dict) else {}
+
+
+def _error_from_exception(exc: BaseException) -> dict[str, Any]:
+    if isinstance(exc, StepTimeout):
+        return {"code": "STEP_TIMEOUT", "message": str(exc)}
+    if isinstance(exc, executors.AssertionFailed):
+        return {"code": "ASSERTION_FAILED", "message": str(exc)}
+    if isinstance(exc, executors.SubScriptDepthExceeded):
+        return {"code": "SUB_SCRIPT_DEPTH_EXCEEDED", "message": str(exc)}
+    if isinstance(exc, executors.SubScriptFailed):
+        return {"code": "SUB_SCRIPT_FAILED", "message": str(exc)}
+    if isinstance(exc, executors.ShellCommandFailed):
+        return {"code": "SHELL_EXIT_CODE", "message": str(exc)}
+    if isinstance(exc, executors.TargetNotFound):
+        return {"code": "TARGET_NOT_FOUND", "message": str(exc)}
+    if isinstance(exc, NonRetryableError):
+        return {"code": "STEP_ERROR", "message": str(exc)}
+    if isinstance(exc, RunFailed):
+        return dict(exc.error)
+    return {"code": "STEP_ERROR", "message": f"{type(exc).__name__}: {exc}"}
+
+
+def _output_from_exception(exc: BaseException) -> dict[str, Any] | None:
+    output = getattr(exc, "output", None)
+    return output if isinstance(output, dict) else None
+
+
+# ---------------------------------------------------------------- DB / 事件
+def _load_run_data(run_id: int) -> dict[str, Any] | None:
+    with session_scope() as session:
+        run = session.get(Run, int(run_id))
+        if run is None:
+            return None
+        return {
+            "id": int(run.id),
+            "script_id": run.script_id,
+            "script_name": run.script_name,
+            "script_snapshot": run.script_snapshot,
+            "device_serial": run.device_serial,
+            "variables": dict(run.variables or {}),
+            "debug": dict(run.debug or {}),
+            "status": run.status,
+        }
+
+
+def _update_run(run_id: int, **fields: Any) -> None:
+    try:
+        with session_scope() as session:
+            run = session.get(Run, int(run_id))
+            if run is None:
+                return
+            for key, value in fields.items():
+                setattr(run, key, value)
+    except Exception:  # 状态落库失败不能打断运行
+        logger.exception("failed to update run %s", run_id)
+
+
+def _update_run_progress(run_id: int, step_id: str, step_index: int) -> None:
+    _update_run(run_id, current_step_id=step_id, step_index=int(step_index))
+
+
+def _safe_emit(run_id: int, event_type: str, payload: dict[str, Any]) -> None:
+    try:
+        RunEventBus.emit(run_id, event_type, payload)
+    except Exception:
+        logger.exception("failed to emit %s for run %s", event_type, run_id)
+
+
+def _record_attempt(
+    ctx: RunContext,
+    step: Any,
+    index: int,
+    status: str,
+    attempts: int,
+    started_iso: str,
+    duration_ms: int,
+    error: dict[str, Any] | None,
+    output: dict[str, Any] | None,
+) -> int:
+    step_result_id = 0
+    try:
+        with session_scope() as session:
+            row = StepResult(
+                run_id=ctx.run_id,
+                step_id=step.id,
+                step_name=step.name,
+                step_type=step.type,
+                step_index=int(index),
+                status=status,
+                attempts=int(attempts),
+                started_at=started_iso,
+                ended_at=now_iso(),
+                duration_ms=int(duration_ms),
+                error=error,
+                output=output,
+            )
+            session.add(row)
+            session.flush()
+            step_result_id = int(row.id)
+    except Exception:
+        logger.exception("failed to record step result run=%s step=%s", ctx.run_id, step.id)
+
+    if status == "failed" and _should_screenshot(ctx, step):
+        try:
+            ctx.save_screenshot(f"{step.id}-fail", step_result_id or None)
+        except Exception:
+            logger.exception("failed to save failure screenshot run=%s step=%s", ctx.run_id, step.id)
+
+    payload: dict[str, Any] = {
+        "step_id": step.id,
+        "status": status,
+        "duration_ms": int(duration_ms),
+        "attempts": int(attempts),
+    }
+    if error is not None:
+        payload["error"] = error
+    if output is not None:
+        payload["output"] = output
+    _safe_emit(ctx.run_id, "step_finished", payload)
+    return step_result_id
+
+
+def _record_skipped(ctx: RunContext, step: Any, index: int, reason: str) -> None:
+    error = {"code": reason.upper(), "message": reason}
+    try:
+        with session_scope() as session:
+            session.add(
+                StepResult(
+                    run_id=ctx.run_id,
+                    step_id=step.id,
+                    step_name=step.name,
+                    step_type=step.type,
+                    step_index=int(index),
+                    status="skipped",
+                    attempts=0,
+                    started_at=None,
+                    ended_at=now_iso(),
+                    duration_ms=0,
+                    error=error,
+                    output={"reason": reason},
+                )
+            )
+    except Exception:
+        logger.exception("failed to record skipped step run=%s step=%s", ctx.run_id, step.id)
+    _safe_emit(ctx.run_id, "step_skipped", {"step_id": step.id, "reason": reason})
+
+
+def _skip_remaining(
+    ctx: RunContext,
+    steps: list[Any],
+    from_index: int,
+    outcomes: dict[str, str],
+) -> None:
+    """on_fail=abort 时把剩余节点记为 skipped(after_fail)，UI/报告可完整展示。"""
+    for pos in range(max(0, int(from_index)), len(steps)):
+        step = steps[pos]
+        reason = "disabled" if not bool(getattr(step, "enabled", True)) else "after_fail"
+        _record_skipped(ctx, step, pos, reason)
+        outcomes[step.id] = "skipped"
+
+
+def _apply_outcomes(summary: dict[str, Any], outcomes: dict[str, str]) -> dict[str, Any]:
+    summary["passed_steps"] = sum(1 for value in outcomes.values() if value == "passed")
+    summary["failed_steps"] = sum(1 for value in outcomes.values() if value == "failed")
+    summary["skipped_steps"] = sum(1 for value in outcomes.values() if value == "skipped")
+    return summary
+
+
+def _should_screenshot(ctx: RunContext, step: Any) -> bool:
+    if not bool(getattr(step, "screenshot_on_fail", False)):
+        return False
+    return bool(ctx.script.parsed.settings.screenshot_on_fail)
+
+
+# 让子脚本执行器可以拿到共享异常类型（测试/诊断用）
+__all__ = [
+    "BudgetExceeded",
+    "TotalTimeout",
+    "acquire",
+    "active_run_ids",
+    "get_driver",
+    "is_active",
+    "release",
+    "run_script_with_context",
+    "start_run",
+    "wait_for_idle",
+]

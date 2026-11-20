@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AutoTest 运行报告 - {{ run['script_name'] or ('run-' ~ run['id']) }}</title>
+  <style>
+    :root {
+      --bg: #0f1419; --panel: #1a2129; --panel-2: #212b35; --text: #e6edf3;
+      --muted: #8b98a5; --border: #2c3742; --accent: #4f8cff;
+      --passed: #2ea043; --failed: #e5534b; --skipped: #8b949e; --error: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 32px; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif; font-size: 14px; line-height: 1.55;
+    }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    h2 { margin: 28px 0 12px; font-size: 16px; color: var(--text); }
+    .meta { color: var(--muted); font-size: 13px; }
+    .meta span { margin-right: 18px; white-space: nowrap; }
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px;
+      font-weight: 600; color: #fff; background: var(--skipped);
+    }
+    .badge.passed { background: var(--passed); }
+    .badge.failed, .badge.error { background: var(--failed); }
+    .badge.aborted, .badge.stopped, .badge.interrupted { background: var(--error); }
+    .badge.running, .badge.paused, .badge.queued, .badge.stopping { background: var(--accent); }
+    .cards { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+    .card {
+      min-width: 120px; padding: 12px 16px; background: var(--panel);
+      border: 1px solid var(--border); border-radius: 10px;
+    }
+    .card .label { color: var(--muted); font-size: 12px; }
+    .card .value { font-size: 22px; font-weight: 700; margin-top: 2px; }
+    .card.passed .value { color: var(--passed); }
+    .card.failed .value { color: var(--failed); }
+    .card.skipped .value { color: var(--skipped); }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; }
+    th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; background: var(--panel-2); }
+    tr:last-child td { border-bottom: none; }
+    tr.row-failed td { background: rgba(229, 83, 75, 0.08); }
+    tr.row-error td { background: rgba(210, 153, 34, 0.08); }
+    .status { font-weight: 600; font-size: 12px; text-transform: uppercase; }
+    .status.passed { color: var(--passed); }
+    .status.failed { color: var(--failed); }
+    .status.error { color: var(--error); }
+    .status.skipped { color: var(--skipped); }
+    .type { color: var(--muted); font-size: 12px; }
+    .error-text { color: #ff9d97; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+    .shots { display: flex; flex-wrap: wrap; gap: 14px; }
+    .shot {
+      width: 220px; padding: 10px; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .shot img { width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; }
+    .shot .caption { margin-top: 6px; font-size: 12px; color: var(--muted); word-break: break-word; }
+    .empty { color: var(--muted); }
+    footer { margin-top: 36px; color: var(--muted); font-size: 12px; }
+    code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{{ run['script_name'] or ('运行 #' ~ run['id']) }}</h1>
+    <div class="meta">
+      <span>运行 ID：<code>{{ run['id'] }}</code></span>
+      <span>设备：<code>{{ run['device_serial'] or '-' }}</code></span>
+      <span>状态：<span class="badge {{ run['status'] }}">{{ run['status'] }}</span></span>
+      <span>开始：{{ run['started_at'] or '-' }}</span>
+      <span>结束：{{ run['ended_at'] or '-' }}</span>
+      <span>耗时：{{ '%.2f'|format(summary['duration_ms'] / 1000) }}s</span>
+    </div>
+  </header>
+
+  <section class="cards">
+    <div class="card passed"><div class="label">通过</div><div class="value">{{ summary['passed_steps'] }}</div></div>
+    <div class="card failed"><div class="label">失败</div><div class="value">{{ summary['failed_steps'] }}</div></div>
+    <div class="card skipped"><div class="label">跳过</div><div class="value">{{ summary['skipped_steps'] }}</div></div>
+    <div class="card"><div class="label">错误</div><div class="value">{{ summary['error_steps'] }}</div></div>
+    <div class="card"><div class="label">总步骤</div><div class="value">{{ summary['total_steps'] }}</div></div>
+  </section>
+
+  {% if run['error'] %}
+  <h2>运行错误</h2>
+  <div class="card failed">
+    <div class="error-text">{{ run['error'] }}</div>
+  </div>
+  {% endif %}
+
+  <h2>步骤明细</h2>
+  {% if steps %}
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>名称</th><th>类型</th><th>状态</th>
+        <th>耗时</th><th>尝试</th><th>错误</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for step in steps %}
+      <tr class="row-{{ step['status'] }}">
+        <td>{{ step['index'] }}</td>
+        <td>
+          {{ step['name'] }}
+          <div class="type"><code>{{ step['step_id'] }}</code></div>
+        </td>
+        <td class="type">{{ step['type'] }}</td>
+        <td><span class="status {{ step['status'] }}">{{ step['status'] }}</span></td>
+        <td>{{ step['duration_ms'] }}ms</td>
+        <td>{{ step['attempts'] }}</td>
+        <td class="error-text">{{ step['error'] or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">没有步骤结果。</p>
+  {% endif %}
+
+  <h2>失败截图</h2>
+  {% if failed_shots %}
+  <div class="shots">
+    {% for shot in failed_shots %}
+    <div class="shot">
+      <img src="{{ shot['file'] }}" alt="失败截图：{{ shot['step_name'] }}" />
+      <div class="caption">{{ shot['step_name'] }}{% if shot['message'] %} - {{ shot['message'] }}{% endif %}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">没有失败截图。</p>
+  {% endif %}
+
+  {% if include_video %}
+  <h2>视频</h2>
+  {% if videos %}
+  <ul>
+    {% for video in videos %}
+    <li><a href="{{ video['file'] }}">{{ video['name'] }}</a></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">没有视频产物。</p>
+  {% endif %}
+  {% endif %}
+
+  <footer>AutoTest 报告 · 生成时间 {{ generated_at }} · junit.xml / steps.json 见报告包</footer>
+</body>
+</html>
