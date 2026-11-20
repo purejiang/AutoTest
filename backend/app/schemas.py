@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -64,7 +64,7 @@ class Target(StrictModel):
     y: int | None = None
 
     @model_validator(mode="after")
-    def _check(self) -> "Target":
+    def _check(self) -> Target:
         if self.by == "point":
             if self.x is None or self.y is None:
                 raise ValueError("point target requires x and y")
@@ -93,7 +93,7 @@ class OnFail(StrictModel):
     target_id: str | None = None
 
     @model_validator(mode="after")
-    def _check(self) -> "OnFail":
+    def _check(self) -> OnFail:
         if self.action == "goto" and not self.target_id:
             raise ValueError("on_fail.goto requires target_id")
         return self
@@ -149,7 +149,7 @@ class KeyParams(StrictModel):
     keycode: int | None = None
 
     @model_validator(mode="after")
-    def _check(self) -> "KeyParams":
+    def _check(self) -> KeyParams:
         if self.key is None and self.keycode is None:
             raise ValueError("key or keycode required")
         return self
@@ -164,7 +164,7 @@ class WaitParams(StrictModel):
     interval_ms: int = Field(default=350, ge=100, le=5000)
 
     @model_validator(mode="after")
-    def _check(self) -> "WaitParams":
+    def _check(self) -> WaitParams:
         if self.mode == "sleep":
             if self.ms is None:
                 raise ValueError("sleep wait requires ms")
@@ -191,7 +191,7 @@ class AssertParams(StrictModel):
     value: str | None = None
 
     @model_validator(mode="after")
-    def _check(self) -> "AssertParams":
+    def _check(self) -> AssertParams:
         if self.kind in ("exists", "not_exists", "text_contains") and self.target is None:
             raise ValueError(f"assert kind={self.kind} requires target")
         if self.kind in ("text_contains", "foreground") and not self.value:
@@ -227,7 +227,7 @@ class _StepBase(StrictModel):
     tags: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _check_id(self) -> "_StepBase":
+    def _check_id(self) -> _StepBase:
         if not STEP_ID_RE.match(self.id):
             raise ValueError("step id must match [A-Za-z0-9_-]{1,64}")
         return self
@@ -294,20 +294,7 @@ class ScreenshotStep(_StepBase):
 
 
 Step = Annotated[
-    Union[
-        ClickStep,
-        LongClickStep,
-        SwipeStep,
-        DragStep,
-        InputStep,
-        KeyStep,
-        WaitStep,
-        AppStep,
-        ShellStep,
-        AssertStep,
-        SubScriptStep,
-        ScreenshotStep,
-    ],
+    ClickStep | LongClickStep | SwipeStep | DragStep | InputStep | KeyStep | WaitStep | AppStep | ShellStep | AssertStep | SubScriptStep | ScreenshotStep,
     Field(discriminator="type"),
 ]
 

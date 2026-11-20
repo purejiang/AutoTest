@@ -61,7 +61,7 @@ class HierarchyNode:
     clickable: bool = False
     enabled: bool = True
     visible: bool = True
-    children: list["HierarchyNode"] = field(default_factory=list)
+    children: list[HierarchyNode] = field(default_factory=list)
 
     # ---- 便捷方法
     @property
@@ -69,7 +69,7 @@ class HierarchyNode:
         x1, y1, x2, y2 = self.bounds
         return (x1 + x2) // 2, (y1 + y2) // 2
 
-    def iter_nodes(self) -> Iterator["HierarchyNode"]:
+    def iter_nodes(self) -> Iterator[HierarchyNode]:
         yield self
         for child in self.children:
             yield from child.iter_nodes()
@@ -89,7 +89,7 @@ class HierarchyNode:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "HierarchyNode":
+    def from_dict(cls, data: dict[str, Any]) -> HierarchyNode:
         return cls(
             class_name=data.get("class_name", ""),
             text=data.get("text", ""),

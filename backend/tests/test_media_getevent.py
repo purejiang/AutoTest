@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.android import getevent
-from app.android.getevent import AbsAxis, GeteventParser, KeyEvent, TouchSample, TouchDevice
+from app.android.getevent import AbsAxis, GeteventParser, KeyEvent, TouchDevice, TouchSample
 
 TOUCH_DEV = "/dev/input/event2"
 KEY_DEV = "/dev/input/event0"

@@ -29,7 +29,7 @@ class PointRequest(ApiModel):
     ny: float | None = None
 
     @model_validator(mode="after")
-    def _check(self) -> "PointRequest":
+    def _check(self) -> PointRequest:
         has_abs = self.x is not None or self.y is not None
         has_norm = self.nx is not None or self.ny is not None
         if has_abs and has_norm:
@@ -61,7 +61,7 @@ class SwipeRequest(ApiModel):
     duration_ms: int = Field(default=300, ge=50, le=10_000)
 
     @model_validator(mode="after")
-    def _check(self) -> "SwipeRequest":
+    def _check(self) -> SwipeRequest:
         absolute = [self.x1, self.y1, self.x2, self.y2]
         normalized = [self.nx1, self.ny1, self.nx2, self.ny2]
         if any(v is not None for v in absolute) and any(v is not None for v in normalized):
@@ -83,7 +83,7 @@ class KeyRequest(ApiModel):
     keycode: int | None = None
 
     @model_validator(mode="after")
-    def _check(self) -> "KeyRequest":
+    def _check(self) -> KeyRequest:
         if self.key is None and self.keycode is None:
             raise ValueError("key or keycode required")
         return self

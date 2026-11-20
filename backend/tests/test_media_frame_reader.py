@@ -104,7 +104,7 @@ def test_reader_rejects_absurd_payload_length() -> None:
 
 def test_reader_stream_headers_device_meta_v5() -> None:
     # v5：固定 64 字节 UTF-8 设备名（NUL 补齐，无长度前缀）
-    device_name = "Pixel 9 Pro".encode()
+    device_name = b"Pixel 9 Pro"
     header = (
         device_name.ljust(scrcpy.DEVICE_NAME_FIELD_LENGTH, b"\x00")
         + scrcpy.pack_frame(123, annexb(build_sps(), build_pps(), build_idr()))
