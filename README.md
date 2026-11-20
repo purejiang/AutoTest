@@ -26,25 +26,42 @@
 - Android platform-tools（adb）—— macOS 常见路径 `~/Library/Android/sdk/platform-tools/adb`，Windows `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`
 - 手机开 USB 调试并授权（`adb devices` 能看到 `device`）
 
-### 安装
+### 启动（一键，推荐）
+
+**只开一个进程、一个端口**，前端由后端直接托管，首次运行会自动装依赖并构建：
 
 ```bash
 # macOS / Linux
-git clone <repo> AutoTest && cd AutoTest
-sh scripts/setup.sh          # uv sync + npm install + 下载 scrcpy-server + 环境自检
+sh scripts/start.sh            # 加 --open 自动开浏览器；--port 9000 换端口
+
+# macOS 还可以：Finder 里双击项目根目录的「启动AutoTest.command」
 
 # Windows (PowerShell)
-powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Open
 ```
 
-### 启动
+浏览器打开 **http://127.0.0.1:8787** ，终端窗口关掉即停止。
+
+首次运行脚本会自动完成：装 uv（若缺）→ Python 3.12 + 后端依赖 → 前端依赖 + 构建 → 下载 scrcpy-server → 启动。
+也可以先手动跑一次 `sh scripts/setup.sh`（Windows `scripts\setup.ps1`）做完整安装 + 环境自检。
+
+### 开发模式（改代码热更新）
 
 ```bash
-# 一条命令同时起后端(8787) + 前端(5173)，Ctrl+C 一起退出
-sh scripts/dev.sh            # Windows: scripts\dev.ps1
+sh scripts/dev.sh            # 后端 8787(--reload) + 前端 5173(Vite HMR)，Ctrl+C 一起退出
+# Windows: powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
 ```
 
-打开 http://127.0.0.1:5173 。生产用法：`sh scripts/build.sh` 后只跑后端，前端静态资源由后端托管在 http://127.0.0.1:8787 。
+开发时访问 http://127.0.0.1:5173 （Vite 代理 `/api`、`/ws` 到 8787）。
+
+### 其他常用命令
+
+```bash
+sh scripts/start.sh --rebuild      # 改过前端代码后重新构建并启动
+cd backend && uv run pytest -q     # 后端测试（无需真机）
+cd backend && uv run python ../scripts/check_env.py   # 环境自检（adb/设备/端口/jar）
+sh scripts/build.sh --pack         # 打包成单文件可执行程序（PyInstaller → backend/dist/autotest）
+```
 
 ### 使用流程
 
