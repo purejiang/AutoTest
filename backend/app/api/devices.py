@@ -86,6 +86,25 @@ def _network_fn(action: str) -> Any | None:
     return None
 
 
+def _try_mirror(serial: str, method: str, **kwargs: Any) -> bool:
+    """镜像页操作快路径：优先走 scrcpy control socket（实测 ~10-40ms，u2 注入 ~160ms+）。
+
+    无活跃镜像会话 / 无 control socket / 发送失败 → 返回 False，调用方回落 u2 注入。
+    """
+    try:
+        from .. import mirror as mirror_mod  # 局部导入：避免无镜像依赖时的启动开销
+    except Exception:  # pragma: no cover - mirror 模块缺失时直接回落
+        return False
+    func = getattr(mirror_mod, method, None)
+    if func is None:
+        return False
+    try:
+        return bool(func(serial, **kwargs))
+    except Exception:  # noqa: BLE001 - 快路径异常一律回落
+        logger.debug("mirror fast path %s failed for %s", method, serial, exc_info=True)
+        return False
+
+
 def _device_call(serial: str, fn: Any, *args: Any, **kwargs: Any) -> Any:
     """设备交互统一包装：设备层异常 -> DEVICE_UNAVAILABLE（不让 500 漏给前端）。"""
     try:
@@ -407,7 +426,8 @@ def tap(
     x, y = _resolve_point(serial, payload)
     manual_run_id = _manual_state(serial, session)
     pre = hooks.on_before_pointer(serial)
-    _device_call(serial, driver.click, x, y)
+    if not _try_mirror(serial, "inject_tap", x=x, y=y):
+        _device_call(serial, driver.click, x, y)
     _after_action(serial, "tap", {"x": x, "y": y, "duration_ms": 0}, pre, manual_run_id)
     return _control_response(serial, "tap", x=x, y=y)
 
@@ -422,7 +442,8 @@ def long_press(
     x, y = _resolve_point(serial, payload)
     manual_run_id = _manual_state(serial, session)
     pre = hooks.on_before_pointer(serial)
-    _device_call(serial, driver.long_press, x, y, int(payload.duration_ms))
+    if not _try_mirror(serial, "inject_long_press", x=x, y=y, duration_ms=int(payload.duration_ms)):
+        _device_call(serial, driver.long_press, x, y, int(payload.duration_ms))
     _after_action(
         serial,
         "long_press",
@@ -443,7 +464,8 @@ def swipe(
     x1, y1, x2, y2 = _resolve_swipe(serial, payload)
     manual_run_id = _manual_state(serial, session)
     duration = int(payload.duration_ms)
-    _device_call(serial, driver.swipe, x1, y1, x2, y2, duration)
+    if not _try_mirror(serial, "inject_swipe", x1=x1, y1=y1, x2=x2, y2=y2, duration_ms=duration):
+        _device_call(serial, driver.swipe, x1, y1, x2, y2, duration)
     _after_action(
         serial,
         "swipe",
@@ -471,7 +493,8 @@ def press_key(
         except ValueError as exc:
             raise ApiError("INVALID_ARGUMENT", str(exc), {"key": key_name}) from exc
     manual_run_id = _manual_state(serial, session)
-    _device_call(serial, driver.key, code)
+    if not _try_mirror(serial, "inject_key", keycode=code):
+        _device_call(serial, driver.key, code)
     _after_action(serial, "key", {"key": key_name, "keycode": code}, None, manual_run_id)
     return _control_response(serial, "key", key=key_name, keycode=code)
 
@@ -484,9 +507,12 @@ def input_text(
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     manual_run_id = _manual_state(serial, session)
+    # 快路径：scrcpy control 注入文本；clear_first 走 u2（control 没有清空语义）
     if payload.clear_first:
         _device_call(serial, driver.clear_text)
-    _device_call(serial, driver.input_text, payload.text)
+        _device_call(serial, driver.input_text, payload.text)
+    elif not _try_mirror(serial, "inject_text", text=payload.text):
+        _device_call(serial, driver.input_text, payload.text)
     _after_action(
         serial, "input", {"text": payload.text, "clear_first": bool(payload.clear_first)}, None, manual_run_id
     )

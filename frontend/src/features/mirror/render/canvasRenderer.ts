@@ -157,7 +157,10 @@ export class CanvasRenderer {
     const availableWidth = container.clientWidth
     const availableHeight = container.clientHeight
     if (!availableWidth || !availableHeight) return
-    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+    // DPR 上限 1.5：Retina(2x) 下画布像素是 CSS 的 4 倍，1436×3200 的 drawImage 在集显机器上
+    // 会明显吃掉帧时间；1.5 在清晰度与流畅度之间取平衡。
+    const rawDpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+    const dpr = Math.min(1.5, Math.max(1, rawDpr))
     const scale = Math.min(availableWidth / videoWidth, availableHeight / videoHeight)
     const cssWidth = Math.max(1, Math.round(videoWidth * scale))
     const cssHeight = Math.max(1, Math.round(videoHeight * scale))

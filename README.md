@@ -62,6 +62,7 @@ sh scripts/dev.sh            # Windows: scripts\dev.ps1
 | 失败重试 · 失败截图 · on_fail abort/continue/goto | ✅ 实测 |
 | 暂停 = 干预模式（暂停期手动控制 + `manual_intervention` 留痕）· 预检 · 热恢复 | ✅ 实测 |
 | scrcpy 实时镜像（718×1600 / avc1.64002A / 首帧 IDR+SPS+PPS） | ✅ 后端 WS 收帧实测 |
+| 镜像页操作直连 scrcpy control 通道（**点击端到端 4~40ms**） | ✅ 真机实测，坐标 3/3 落点正确 |
 | web 录制 → 转脚本 → 回放 | ✅ 实测 succeeded |
 | 物理录制（触摸设备探测 + 事件解析 + 标定字段） | ✅ 探测实测（标定精度待回归） |
 | 设备录屏 mp4（可播放）· 报告 zip（HTML+JUnit+截图）· 产物直链 | ✅ 实测 |

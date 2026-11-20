@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 import xml.etree.ElementTree as ET
 from typing import Any
 
@@ -92,9 +93,22 @@ class U2Driver:
 
     # ------------------------------------------------------------ 设备信息
     def alive(self) -> bool:
-        """设备是否可用；无设备/连接失败返回 False（不抛）。"""
+        """设备是否可用；无设备/连接失败返回 False（不抛）。
+
+        快路径用 `adb get-state`（实测 ~20ms）；u2 的 window_size RPC 要 ~195ms，
+        而 alive() 在每次 API 请求的依赖解析里都会调，必须廉价。
+        """
         if self._closed:
             return False
+        try:
+            result = adb.run_adb(["-s", self.serial, "get-state"], timeout_s=2)
+            state = (getattr(result, "stdout", "") or "").strip().lower()
+            if state == "device":
+                return True
+            if state in ("offline", "unauthorized", "unknown", "no", "bootloader"):
+                return False
+        except Exception:
+            logger.debug("adb get-state failed for %s", self.serial, exc_info=True)
         try:
             device = self._device()
             device.window_size()
@@ -103,8 +117,17 @@ class U2Driver:
             logger.debug("U2Driver.alive(%s) -> False: %s", self.serial, exc)
             return False
 
+    _INFO_TTL_S = 5.0
+
     def info(self) -> DeviceInfo:
-        return self._call("info", self._info_impl)
+        """设备信息：进程内 5s TTL 缓存（3 次 RPC ≈ 580ms，列表/预检会频繁用到）。"""
+        now = time.monotonic()
+        cached = getattr(self, "_info_cache", None)
+        if cached is not None and now - cached[0] < self._INFO_TTL_S:
+            return cached[1]
+        result = self._call("info", self._info_impl)
+        self._info_cache = (now, result)
+        return result
 
     def _info_impl(self) -> DeviceInfo:
         device = self._device()

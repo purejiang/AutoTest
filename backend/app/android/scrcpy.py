@@ -87,6 +87,86 @@ CODEC_FOURCC: dict[int, str] = {
 # 默认 control=false；没有 control socket 时 request_keyframe 只记 debug 日志。
 CONTROL_REQUEST_KEYFRAME = 17
 
+# ---- 输入注入（v5.0.1 app/src/control_msg.h/c 逐字节核对，全部大端）----
+# type=0 INJECT_KEYCODE:      [1B type][1B action][u32 keycode][u32 repeat][u32 meta]           = 14B
+# type=1 INJECT_TEXT:         [1B type][u32 len][utf8...]                                       = 5+len
+# type=2 INJECT_TOUCH_EVENT:  [1B type][1B action][u64 pointer_id][i32 x][i32 y]
+#                             [u16 screen_w][u16 screen_h][u16 pressure][u32 action_button][u32 buttons] = 32B
+#   ⚠️ server PositionMapper.map(): position.screen_size 必须**精确等于当前视频帧尺寸**，
+#      否则事件被静默丢弃；x/y 是**视频帧坐标系**（server 内部再逆变换到设备像素）。
+# type=3 INJECT_SCROLL_EVENT: [1B type][i32 x][i32 y][u16 w][u16 h][i16 hscroll][i16 vscroll][u32 buttons] = 21B
+CONTROL_INJECT_KEYCODE = 0
+CONTROL_INJECT_TEXT = 1
+CONTROL_INJECT_TOUCH_EVENT = 2
+CONTROL_INJECT_SCROLL_EVENT = 3
+
+MOTION_DOWN = 0
+MOTION_UP = 1
+MOTION_MOVE = 2
+
+POINTER_ID_GENERIC_FINGER = 0xFFFFFFFFFFFFFFFE  # -2，见 control_msg.h SC_POINTER_ID_GENERIC_FINGER
+_INJECT_TEXT_MAX = 300  # SC_CONTROL_MSG_INJECT_TEXT_MAX_LENGTH
+
+
+def build_inject_touch(
+    action: int,
+    x: int,
+    y: int,
+    video_w: int,
+    video_h: int,
+    pointer_id: int = POINTER_ID_GENERIC_FINGER,
+    pressure: float = 1.0,
+    action_button: int = 0,
+    buttons: int = 0,
+) -> bytes:
+    buf = bytearray(32)
+    buf[0] = CONTROL_INJECT_TOUCH_EVENT
+    buf[1] = action & 0xFF
+    buf[2:10] = int(pointer_id & 0xFFFFFFFFFFFFFFFF).to_bytes(8, "big")
+    buf[10:14] = int(x).to_bytes(4, "big", signed=True)
+    buf[14:18] = int(y).to_bytes(4, "big", signed=True)
+    buf[18:20] = int(max(0, min(65535, video_w))).to_bytes(2, "big")
+    buf[20:22] = int(max(0, min(65535, video_h))).to_bytes(2, "big")
+    buf[22:24] = int(max(0.0, min(1.0, pressure)) * 65535).to_bytes(2, "big")
+    buf[24:28] = int(action_button).to_bytes(4, "big")
+    buf[28:32] = int(buttons).to_bytes(4, "big")
+    return bytes(buf)
+
+
+def build_inject_keycode(keycode: int, action: int = MOTION_DOWN, repeat: int = 0, metastate: int = 0) -> bytes:
+    buf = bytearray(14)
+    buf[0] = CONTROL_INJECT_KEYCODE
+    buf[1] = action & 0xFF
+    buf[2:6] = int(keycode).to_bytes(4, "big")
+    buf[6:10] = int(repeat).to_bytes(4, "big")
+    buf[10:14] = int(metastate).to_bytes(4, "big")
+    return bytes(buf)
+
+
+def build_inject_text(text: str) -> list[bytes]:
+    """INJECT_TEXT 单条 ≤300 字符，超长自动切片（按字符，避免拆坏 UTF-8）。"""
+    chunks: list[bytes] = []
+    for start in range(0, len(text), _INJECT_TEXT_MAX):
+        piece = text[start : start + _INJECT_TEXT_MAX]
+        data = piece.encode("utf-8")
+        chunks.append(bytes([CONTROL_INJECT_TEXT]) + len(data).to_bytes(4, "big") + data)
+    return chunks
+
+
+def build_inject_scroll(x: int, y: int, video_w: int, video_h: int, hscroll: float, vscroll: float) -> bytes:
+    buf = bytearray(21)
+    buf[0] = CONTROL_INJECT_SCROLL_EVENT
+    buf[1:5] = int(x).to_bytes(4, "big", signed=True)
+    buf[5:9] = int(y).to_bytes(4, "big", signed=True)
+    buf[9:11] = int(max(0, min(65535, video_w))).to_bytes(2, "big")
+    buf[11:13] = int(max(0, min(65535, video_h))).to_bytes(2, "big")
+    h = int(max(-1.0, min(1.0, hscroll)) * 32767)
+    v = int(max(-1.0, min(1.0, vscroll)) * 32767)
+    buf[13:15] = (h & 0xFFFF).to_bytes(2, "big")
+    buf[15:17] = (v & 0xFFFF).to_bytes(2, "big")
+    buf[17:21] = (0).to_bytes(4, "big")
+    return bytes(buf)
+
 # v5 12 字节帧头里的 u64 实际是 [flags 高位 + pts]（Streamer 反汇编确认）：
 #   PACKET_FLAG_SESSION   = 1<<63（session meta 伪包头：u32 flags|u32 width|u32 height）
 #   PACKET_FLAG_CONFIG    = 1<<62（codec config 包：payload 是 SPS/PPS，不是图像帧）
@@ -1076,6 +1156,85 @@ class ScrcpyServer:
             return self.process.poll() is None
         except Exception:  # noqa: BLE001 - fake process
             return True
+
+    def send_control(self, payload: bytes) -> bool:
+        """向 control socket 写一条控制消息（线程安全；失败返回 False 不抛）。"""
+        if self.control_sock is None:
+            return False
+        with self._lock:
+            try:
+                self.control_sock.sendall(payload)
+                return True
+            except OSError as exc:
+                logger.warning("scrcpy control send failed (%s): %s", self.serial, exc)
+                return False
+
+    def video_size(self) -> tuple[int, int]:
+        geometry = self.geometry
+        return int(geometry.width or 0), int(geometry.height or 0)
+
+    def inject_tap(self, x: int, y: int, video_w: int | None = None, video_h: int | None = None) -> bool:
+        w, h = (int(video_w), int(video_h)) if video_w and video_h else self.video_size()
+        if w <= 0 or h <= 0:
+            return False
+        if not self.send_control(build_inject_touch(MOTION_DOWN, x, y, w, h)):
+            return False
+        return self.send_control(build_inject_touch(MOTION_UP, x, y, w, h))
+
+    def inject_long_press(
+        self, x: int, y: int, duration_ms: int = 800, video_w: int | None = None, video_h: int | None = None
+    ) -> bool:
+        w, h = (int(video_w), int(video_h)) if video_w and video_h else self.video_size()
+        if w <= 0 or h <= 0:
+            return False
+        if not self.send_control(build_inject_touch(MOTION_DOWN, x, y, w, h)):
+            return False
+        time.sleep(max(0.1, min(10.0, duration_ms / 1000.0)))
+        return self.send_control(build_inject_touch(MOTION_UP, x, y, w, h))
+
+    def inject_swipe(
+        self,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        duration_ms: int = 300,
+        video_w: int | None = None,
+        video_h: int | None = None,
+    ) -> bool:
+        """DOWN → 若干 MOVE → UP，按 duration 分配移动间隔（scrcpy 原生滑动同款）。"""
+        w, h = (int(video_w), int(video_h)) if video_w and video_h else self.video_size()
+        if w <= 0 or h <= 0:
+            return False
+        duration_s = max(0.05, min(10.0, duration_ms / 1000.0))
+        steps = max(2, min(30, int(duration_s * 60)))
+        if not self.send_control(build_inject_touch(MOTION_DOWN, x1, y1, w, h)):
+            return False
+        step_sleep = duration_s / steps
+        for index in range(1, steps):
+            ratio = index / steps
+            mx = int(round(x1 + (x2 - x1) * ratio))
+            my = int(round(y1 + (y2 - y1) * ratio))
+            time.sleep(step_sleep)
+            if not self.send_control(build_inject_touch(MOTION_MOVE, mx, my, w, h)):
+                self.send_control(build_inject_touch(MOTION_UP, mx, my, w, h))
+                return False
+        time.sleep(step_sleep)
+        return self.send_control(build_inject_touch(MOTION_UP, x2, y2, w, h))
+
+    def inject_key(self, keycode: int) -> bool:
+        if not self.send_control(build_inject_keycode(int(keycode), MOTION_DOWN)):
+            return False
+        time.sleep(0.008)
+        return self.send_control(build_inject_keycode(int(keycode), MOTION_UP))
+
+    def inject_text(self, text: str) -> bool:
+        if not text:
+            return True
+        for chunk in build_inject_text(text):
+            if not self.send_control(chunk):
+                return False
+        return True
 
     def request_keyframe(self) -> bool:
         """请编码器尽快出 IDR；无 control socket 时返回 False（客户端等自然 IDR）。"""

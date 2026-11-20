@@ -244,11 +244,9 @@ def _real_item(device: dict[str, Any]) -> dict[str, Any]:
     for key, value in props.items():
         if value not in (None, "", 0):
             item[key] = value
-    info = _info_for(serial)
-    if info is not None:
-        for key, value in info.to_dict().items():
-            if value not in (None, ""):
-                item[key] = value
+    # 列表页**不**调用 driver.info()（3 次 u2 RPC ≈ 580ms，列表 5s 轮询一次会拖垮页面）。
+    # 品牌/型号/版本/分辨率/密度来自上面的 adb 批量 getprop（30ms，60s 缓存）；
+    # 需要权威 rotation/型号请看 GET /api/devices/{serial}/info。
     return _apply_runtime_fields(item, serial)
 
 
@@ -279,11 +277,27 @@ def fake_listing_enabled(online_real_count: int) -> bool:
     return online_real_count == 0
 
 
+_LIST_TTL_S = 1.2
+_LIST_CACHE: tuple[float, list[dict[str, Any]]] | None = None
+
+
 def list_devices(refresh: bool = False) -> list[dict[str, Any]]:
-    """§7.1 GET /api/devices 的 items：真机在前；无真机（或强制开关）时附带 fake 演示设备。"""
+    """§7.1 GET /api/devices 的 items：真机在前；无真机（或强制开关）时附带 fake 演示设备。
+
+    结果缓存 1.2s：前端列表页 5s 轮询 + 运行详情等多处调用，避免重复 adb 往返。
+    """
+    global _LIST_CACHE
+    if not refresh and _LIST_CACHE is not None and time.time() - _LIST_CACHE[0] < _LIST_TTL_S:
+        return [dict(item) for item in _LIST_CACHE[1]]
+    items = _list_devices_uncached(refresh)
+    _LIST_CACHE = (time.time(), items)
+    return [dict(item) for item in items]
+
+
+def _list_devices_uncached(refresh: bool) -> list[dict[str, Any]]:
     if refresh:
         with _LOCK:
-            dead = [serial for serial, driver in _DRIVERS.items() if not _alive(driver)]
+            dead = [serial for serial, driver in _DRIVERS.items() if not _alive(driver, serial)]
             for serial in dead:
                 _DRIVERS.pop(serial, None)
             _PROPS_CACHE.clear()
@@ -308,11 +322,27 @@ def list_devices(refresh: bool = False) -> list[dict[str, Any]]:
     return items
 
 
-def _alive(driver: Driver) -> bool:
+_ALIVE_TTL_S = 2.0
+_ALIVE_CACHE: dict[str, tuple[float, bool]] = {}
+
+
+def _alive(driver: Driver, serial: str | None = None) -> bool:
+    """带 TTL 的存活判断：避免每个 API 请求都付一次 alive() 往返。"""
+    key = serial or getattr(driver, "serial", "")
+    now = time.time()
+    if key:
+        with _LOCK:
+            cached = _ALIVE_CACHE.get(key)
+        if cached and now - cached[0] < _ALIVE_TTL_S:
+            return cached[1]
     try:
-        return bool(driver.alive())
+        value = bool(driver.alive())
     except Exception:
-        return False
+        value = False
+    if key:
+        with _LOCK:
+            _ALIVE_CACHE[key] = (now, value)
+    return value
 
 
 # ---------------------------------------------------------------- 驱动获取
@@ -332,7 +362,7 @@ def get_driver(serial: str | None = None) -> Driver:
     with _LOCK:
         cached = _DRIVERS.get(resolved)
     if cached is not None:
-        if _alive(cached):
+        if _alive(cached, resolved):
             return cached
         evict(resolved)
     factory = _u2_factory()
@@ -358,6 +388,7 @@ def evict(serial: str) -> None:
     """丢弃缓存（disconnect / driver 失效时调用）。fake 单例保留。"""
     with _LOCK:
         driver = _DRIVERS.pop(str(serial), None)
+        _ALIVE_CACHE.pop(str(serial), None)
     if driver is not None:
         try:
             driver.close()
@@ -436,7 +467,10 @@ def busy_purposes(serial: str) -> list[str]:
 # ---------------------------------------------------------------- 测试辅助
 def reset_for_tests() -> None:
     """清空缓存与占用表（pytest 每个用例独立状态）。"""
+    global _LIST_CACHE
     with _LOCK:
+        _LIST_CACHE = None
+        _ALIVE_CACHE.clear()
         drivers = list(_DRIVERS.values())
         _DRIVERS.clear()
         _FAKE_DRIVERS.clear()

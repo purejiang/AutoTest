@@ -186,6 +186,71 @@ def map_normalized(nx: float, ny: float, geometry: MirrorGeometry) -> tuple[int,
     return (min(max(x, 0), disp_w - 1), min(max(y, 0), disp_h - 1))
 
 
+# ---------------------------------------------------------------- 控制注入（快路径）
+def active_session(serial: str) -> MirrorSession | None:
+    with _SESSIONS_LOCK:
+        return _SESSIONS.get(str(serial))
+
+
+def inject_tap(serial: str, x: int, y: int) -> bool:
+    """设备像素坐标点击：有活跃镜像会话时走 scrcpy control socket（~10-20ms）。
+
+    返回 False 表示不可用（无会话/无 control socket/发送失败），调用方应回落 u2 注入。
+    """
+    session = active_session(serial)
+    if session is None:
+        return False
+    try:
+        return session.inject_tap(x, y)
+    except Exception:  # noqa: BLE001 - 快路径失败不能影响控制
+        logger.debug("mirror inject_tap failed, fallback to u2", exc_info=True)
+        return False
+
+
+def inject_long_press(serial: str, x: int, y: int, duration_ms: int = 800) -> bool:
+    session = active_session(serial)
+    if session is None:
+        return False
+    try:
+        return session.inject_long_press(x, y, duration_ms)
+    except Exception:  # noqa: BLE001
+        logger.debug("mirror inject_long_press failed", exc_info=True)
+        return False
+
+
+def inject_swipe(serial: str, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> bool:
+    session = active_session(serial)
+    if session is None:
+        return False
+    try:
+        return session.inject_swipe(x1, y1, x2, y2, duration_ms)
+    except Exception:  # noqa: BLE001
+        logger.debug("mirror inject_swipe failed", exc_info=True)
+        return False
+
+
+def inject_key(serial: str, keycode: int) -> bool:
+    session = active_session(serial)
+    if session is None:
+        return False
+    try:
+        return session.inject_key(keycode)
+    except Exception:  # noqa: BLE001
+        logger.debug("mirror inject_key failed", exc_info=True)
+        return False
+
+
+def inject_text(serial: str, text: str) -> bool:
+    session = active_session(serial)
+    if session is None:
+        return False
+    try:
+        return session.inject_text(text)
+    except Exception:  # noqa: BLE001
+        logger.debug("mirror inject_text failed", exc_info=True)
+        return False
+
+
 # ---------------------------------------------------------------- 订阅者
 @dataclass
 class Subscriber:
@@ -725,6 +790,76 @@ class MirrorSession:
         except Exception as exc:  # noqa: BLE001
             logger.debug("request_keyframe failed: %s", exc)
             return False
+
+    # ------------------------------------------------------------ 控制注入（镜像页操作快路径）
+    def video_size(self) -> tuple[int, int]:
+        """当前视频帧尺寸（control 消息的 screen_size 必须与它完全一致，否则被 server 丢弃）。
+
+        注意用 ``self._geometry``（MirrorGeometry，含 stream/natural/crop）；
+        ``self._video_geometry`` 可能是 scrcpy.VideoGeometry（r==�� 无 crop_rect），不能用于坐标换算。
+        """
+        geometry = self._geometry
+        return int(geometry.stream_width or 0), int(geometry.stream_height or 0)
+
+    def device_to_video(self, x: int, y: int) -> tuple[int, int]:
+        """设备像素（当前方向）→ 视频帧坐标（map_normalized 的逆变换）。"""
+        geometry = self._geometry
+        cx, cy, cw, ch = geometry.crop_rect()
+        if cw <= 0 or ch <= 0:
+            raise ValueError("mirror geometry is not ready")
+        nx = (float(x) - cx) / cw
+        ny = (float(y) - cy) / ch
+        nx = min(max(nx, 0.0), 1.0)
+        ny = min(max(ny, 0.0), 1.0)
+        video_w, video_h = self.video_size()
+        if video_w <= 0 or video_h <= 0:
+            raise ValueError("mirror video size is not ready")
+        return int(round(nx * video_w)), int(round(ny * video_h))
+
+    def _injector(self) -> scrcpy.ScrcpyServer | None:
+        server = self._server
+        if server is None or self._state != "running":
+            return None
+        if getattr(server, "control_sock", None) is None:
+            return None
+        return server
+
+    def inject_tap(self, x: int, y: int) -> bool:
+        server = self._injector()
+        if server is None:
+            return False
+        vx, vy = self.device_to_video(x, y)
+        vw, vh = self.video_size()
+        return bool(server.inject_tap(vx, vy, vw, vh))
+
+    def inject_long_press(self, x: int, y: int, duration_ms: int = 800) -> bool:
+        server = self._injector()
+        if server is None:
+            return False
+        vx, vy = self.device_to_video(x, y)
+        vw, vh = self.video_size()
+        return bool(server.inject_long_press(vx, vy, duration_ms, vw, vh))
+
+    def inject_swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> bool:
+        server = self._injector()
+        if server is None:
+            return False
+        vx1, vy1 = self.device_to_video(x1, y1)
+        vx2, vy2 = self.device_to_video(x2, y2)
+        vw, vh = self.video_size()
+        return bool(server.inject_swipe(vx1, vy1, vx2, vy2, duration_ms, vw, vh))
+
+    def inject_key(self, keycode: int) -> bool:
+        server = self._injector()
+        if server is None:
+            return False
+        return bool(server.inject_key(int(keycode)))
+
+    def inject_text(self, text: str) -> bool:
+        server = self._injector()
+        if server is None:
+            return False
+        return bool(server.inject_text(text))
 
     def map_normalized(self, nx: float, ny: float) -> tuple[int, int]:
         geometry = self._geometry
