@@ -19,6 +19,7 @@ import {
   Tooltip,
   Typography,
   type TableProps,
+  Radio,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -96,6 +97,7 @@ function coordText(event: RecordingEvent): string {
 
 interface ConvertFormValues {
   name?: string
+  target_mode?: 'point' | 'element'
 }
 
 export default function RecordingDetailPage() {
@@ -176,6 +178,7 @@ export default function RecordingDetailPage() {
     try {
       const result = await convertMutation.mutateAsync({
         name: values.name?.trim() || undefined,
+        target_mode: values.target_mode ?? 'point',
       })
       const warnings = Array.isArray(result.warnings) ? result.warnings : []
       if (warnings.length > 0) {
@@ -423,7 +426,12 @@ export default function RecordingDetailPage() {
         onOk={() => void handleConvert()}
         onCancel={() => setConvertOpen(false)}
       >
-        <Form key={convertName || 'convert-form'} form={convertForm} layout="vertical" initialValues={{ name: convertName }}>
+        <Form
+          key={convertName || 'convert-form'}
+          form={convertForm}
+          layout="vertical"
+          initialValues={{ name: convertName, target_mode: 'point' }}
+        >
           <Form.Item
             name="name"
             label="脚本名称"
@@ -431,6 +439,16 @@ export default function RecordingDetailPage() {
             extra="事件会按手势分类转换为 12 类节点，低置信度事件会带 warning 标注"
           >
             <Input placeholder="留空由后端自动命名" onPressEnter={() => void handleConvert()} />
+          </Form.Item>
+          <Form.Item
+            name="target_mode"
+            label="点击定位方式"
+            extra="坐标：只记绝对像素点，游戏/自绘界面等无障碍树不可靠时最稳；元素：优先用文本/资源 id 定位，界面稳定时更耐分辨率变化"
+          >
+            <Radio.Group optionType="button" buttonStyle="solid">
+              <Radio.Button value="point">绝对坐标（推荐）</Radio.Button>
+              <Radio.Button value="element">元素定位</Radio.Button>
+            </Radio.Group>
           </Form.Item>
         </Form>
         <Typography.Text type="secondary" className="small-text">

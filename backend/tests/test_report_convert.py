@@ -116,7 +116,9 @@ def test_events_to_script_is_valid_and_one_node_per_event() -> None:
         _event(7, "key", {"keycode": 3}),
         _event(8, "app", {"package": "com.example.fake", "action": "launch"}),
     ]
-    script, warnings = convert.events_to_script(events, "录制脚本", recording_id="rec_x")
+    script, warnings = convert.events_to_script(
+        events, "录制脚本", recording_id="rec_x", target_mode="element"
+    )
 
     result = validate_script(script)
     assert result["valid"] is True, result["errors"]
@@ -206,3 +208,35 @@ def test_events_to_script_flags_low_confidence() -> None:
     script, warnings = convert.events_to_script(events)
     assert script["steps"][0]["params"]["target"] == {"by": "point", "x": 540, "y": 710}
     assert any("置信度低" in warning for warning in warnings)
+
+
+# ---------------------------------------------------------------- 定位方式：默认坐标
+def test_events_to_script_defaults_to_point_mode() -> None:
+    """默认（point）：点击/长按只记绝对坐标（游戏/自绘 UI 唯一可靠写法）。"""
+    events = [
+        _event(1, "tap", {"x": 540, "y": 710, "duration_ms": 0, "node": _node_target()}),
+        _event(2, "long_press", {"x": 300, "y": 400, "duration_ms": 900, "node": _node_target(by="text", value="删除")}),
+        _event(3, "tap", {"x": 10, "y": 20, "duration_ms": 0}),
+    ]
+    script, warnings = convert.events_to_script(events, "坐标脚本")
+    steps = script["steps"]
+    assert [step["type"] for step in steps] == ["click", "long_click", "click"]
+    assert steps[0]["params"]["target"] == {"by": "point", "x": 540, "y": 710}
+    assert steps[1]["params"]["target"] == {"by": "point", "x": 300, "y": 400}
+    assert steps[1]["params"]["duration_ms"] == 900
+    assert steps[2]["params"]["target"] == {"by": "point", "x": 10, "y": 20}
+    assert any("绝对坐标" in warning for warning in warnings)
+    assert validate_script(script)["valid"] is True
+
+
+def test_point_mode_input_inserts_focus_click() -> None:
+    """point 模式下输入节点：目标改为「先点坐标聚焦，再输入」。"""
+    events = [
+        _event(1, "tap", {"x": 667, "y": 557, "duration_ms": 0, "node": _node_target(by="text", value="搜索")}),
+        _event(2, "input", {"text": "wlan", "node": _node_target(by="text", value="搜索")}),
+    ]
+    script, _warnings = convert.events_to_script(events, "输入脚本")
+    steps = script["steps"]
+    assert [step["type"] for step in steps] == ["click", "input"]
+    assert steps[1]["params"]["target"] is None
+    assert steps[1]["params"]["text"] == "wlan"

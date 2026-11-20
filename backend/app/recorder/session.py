@@ -1077,6 +1077,7 @@ def to_script(
     name: str | None = None,
     include_kinds: list[str] | None = None,
     exclude_seqs: list[int] | None = None,
+    target_mode: str | None = None,
 ) -> dict[str, Any]:
     """读录制事件 -> convert -> schemas.validate_script -> 建 Script(source='recorded')。"""
     recording_id = str(recording_id)
@@ -1104,12 +1105,21 @@ def to_script(
         ]
 
     script_name = (str(name).strip() if name else "") or recording_name or "录制脚本"
+    mode = str(target_mode or "").strip().lower()
+    if mode not in convert.TARGET_MODES:
+        try:
+            mode = str(config.get("recording.target_mode") or convert.TARGET_MODE_POINT).strip().lower()
+        except Exception:  # pragma: no cover
+            mode = convert.TARGET_MODE_POINT
+    if mode not in convert.TARGET_MODES:
+        mode = convert.TARGET_MODE_POINT
     script, warnings = convert.events_to_script(
         events,
         script_name,
         include_kinds=include_kinds,
         exclude_seqs=exclude_seqs,
         recording_id=recording_id,
+        target_mode=mode,
     )
     if not script.get("steps"):
         raise ApiError(

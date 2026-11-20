@@ -13,6 +13,7 @@ import {
   InputNumber,
   Popconfirm,
   Result,
+  Select,
   Skeleton,
   Space,
   Switch,
@@ -129,6 +130,13 @@ function SettingsForm() {
             >
               {entry.type === 'bool' ? (
                 <Switch />
+              ) : entry.type === 'enum' ? (
+                <Select
+                  options={(entry.options ?? []).map((option) => ({
+                    label: option.label,
+                    value: option.value,
+                  }))}
+                />
               ) : entry.type === 'int' ? (
                 <InputNumber
                   style={{ width: '100%' }}

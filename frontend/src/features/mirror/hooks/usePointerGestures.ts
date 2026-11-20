@@ -15,8 +15,6 @@ import { errorMessage, post } from '../lib/api'
 const TAP_MAX_MS = 500
 const LONG_PRESS_MS = 500
 const MOVE_THRESHOLD_PX = 10
-const WHEEL_DEBOUNCE_MS = 150
-const WHEEL_SWIPE_DURATION_MS = 220
 const UP_FLUSH_TIMEOUT_MS = 600
 // 流式触摸投递节拍：pointermove 只记位置（零 React 状态更新），由定时器按 8ms 投递，
 // 保证手机上收到的是**等间隔、连续**的移动采样（滚动量/惯性与真实手势一致）。
@@ -442,45 +440,10 @@ export function usePointerGestures(options: PointerGesturesOptions): {
     [finishGesture],
   )
 
-  // ---- 滚轮：上下滑动（保持一次性 swipe 语义，滚轮本身是离散的） ----
+  // ---- 滚轮：**不映射为设备滑动** ----
+  // 按用户要求：鼠标滚轮在镜像上只滚动页面/不做设备操作，避免误滑。
+  // （若要设备滚动，请用拖动/滑动；键盘也可翻页。）
   const wheelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const wheelAccumRef = useRef(0)
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas || !enabled) return
-    const onWheel = (event: WheelEvent): void => {
-      event.preventDefault()
-      wheelAccumRef.current += event.deltaY
-      if (wheelTimerRef.current !== null) return
-      wheelTimerRef.current = setTimeout(() => {
-        wheelTimerRef.current = null
-        const accum = wheelAccumRef.current
-        wheelAccumRef.current = 0
-        if (!Number.isFinite(accum) || Math.abs(accum) < 1) return
-        const rect = canvas.getBoundingClientRect()
-        if (rect.height <= 0) return
-        const cx = 0.5
-        const cy = 0.5
-        const ratio = Math.min(0.35, Math.max(0.08, Math.abs(accum) / 1200))
-        const dy = accum > 0 ? ratio : -ratio
-        void fire('swipe', {
-          nx1: cx,
-          ny1: Math.min(0.95, Math.max(0.05, cy + dy / 2)),
-          nx2: cx,
-          ny2: Math.min(0.95, Math.max(0.05, cy - dy / 2)),
-          duration_ms: WHEEL_SWIPE_DURATION_MS,
-        })
-      }, WHEEL_DEBOUNCE_MS)
-    }
-    canvas.addEventListener('wheel', onWheel, { passive: false })
-    return () => {
-      canvas.removeEventListener('wheel', onWheel)
-      if (wheelTimerRef.current !== null) {
-        clearTimeout(wheelTimerRef.current)
-        wheelTimerRef.current = null
-      }
-    }
-  }, [canvasRef, enabled, fire])
 
   // 卸载时清定时器
   useEffect(() => {

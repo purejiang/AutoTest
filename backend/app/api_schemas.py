@@ -186,6 +186,8 @@ class ToScriptRequest(ApiModel):
     name: str | None = None
     include_kinds: list[str] | None = None
     exclude_seqs: list[int] = Field(default_factory=list)
+    # 定位方式：point=绝对坐标（默认）| element=元素优先
+    target_mode: str | None = None
 
 
 # ---------------------------------------------------------------- 报告/维护/设置

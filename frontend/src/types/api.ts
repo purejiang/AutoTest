@@ -288,11 +288,13 @@ export interface Report {
 
 export interface SettingEntry {
   key: string
-  type: 'string' | 'int' | 'bool'
+  type: 'string' | 'int' | 'bool' | 'enum'
   title: string
   desc?: string
   min?: number
   max?: number
+  /** type='enum' 时的可选项 */
+  options?: Array<{ label: string; value: string }>
 }
 
 export interface SettingsResponse {

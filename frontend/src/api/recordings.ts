@@ -25,6 +25,8 @@ export interface ConvertRecordingPayload {
   name?: string
   include_kinds?: string[]
   exclude_seqs?: number[]
+  /** 定位方式：point=绝对坐标（默认，游戏/自绘界面最稳）| element=元素优先 */
+  target_mode?: 'point' | 'element'
 }
 
 /** to_script 响应在契约里未细化：兼容 {script_id}/{id}/{script} 三种形态。 */

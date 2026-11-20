@@ -346,6 +346,7 @@ def recording_to_script(
         name=payload.name,
         include_kinds=payload.include_kinds,
         exclude_seqs=payload.exclude_seqs,
+        target_mode=payload.target_mode,
     )
 
 

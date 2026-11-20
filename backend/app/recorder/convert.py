@@ -471,12 +471,24 @@ def _gap_delay_ms(previous_ts: float | None, current_ts: float | None) -> int:
     return max(0, min(_STEP_DELAY_MAX_MS, gap))
 
 
+TARGET_MODE_POINT = "point"
+TARGET_MODE_ELEMENT = "element"
+TARGET_MODES = (TARGET_MODE_POINT, TARGET_MODE_ELEMENT)
+
+
 def _convert_event(
     kind: str,
     payload: dict[str, Any],
     confidence: str,
+    target_mode: str = TARGET_MODE_POINT,
 ) -> tuple[str, str, str, dict[str, Any], str, dict[str, Any] | None] | None:
-    """返回 (type, name, description, params, rerun_safety, point_target_if_used)。"""
+    """返回 (type, name, description, params, rerun_safety, point_target_if_used)。
+
+    target_mode：
+    - ``point``（默认）：点击/长按一律记**绝对坐标**。游戏/自绘 UI、无障碍树不可靠时这是唯一可靠写法；
+      元素信息只写进 description 供人参考。
+    - ``element``：优先元素定位（text/resource_id…），失败退回坐标。
+    """
     step_type = classify(kind, payload)
     if step_type == "app":
         package = str(payload.get("package") or "").strip()
@@ -496,20 +508,29 @@ def _convert_event(
         safety = "destructive" if action in ("stop", "clear", "restart") else "safe"
         return step_type, name, description, params, safety, None
     if step_type == "click":
-        start = _point_target(*_point_pair(payload, ""))
-        target = _valid_target(payload.get("node") or payload.get("target"))
-        if target is None:
-            target = start
+        point = _point_target(*_point_pair(payload, ""))
+        element = _valid_target(payload.get("node") or payload.get("target"))
+        if target_mode == TARGET_MODE_POINT:
+            target = point or element
+        else:
+            target = element or point
         if target is None:
             return None
-        label = _target_label(target) or f"坐标 ({target.get('x')}, {target.get('y')})"
-        name = f"点击{label}"
+        if target.get("by") == "point":
+            label = f"{target.get('x')}, {target.get('y')}"
+            name = f"点击坐标 ({label})"
+        else:
+            label = _target_label(target) or f"坐标 ({target.get('x')}, {target.get('y')})"
+            name = f"点击{label}"
         params = {"target": target}
         safety = "safe"
     elif step_type == "long_click":
-        target = _valid_target(payload.get("node") or payload.get("target"))
-        if target is None:
-            target = _point_target(*_point_pair(payload, ""))
+        point = _point_target(*_point_pair(payload, ""))
+        element = _valid_target(payload.get("node") or payload.get("target"))
+        if target_mode == TARGET_MODE_POINT:
+            target = point or element
+        else:
+            target = element or point
         if target is None:
             return None
         duration = _clamp(payload.get("duration_ms"), 100, 10_000, 800)
@@ -573,12 +594,15 @@ def events_to_script(
     include_kinds: list[str] | None = None,
     exclude_seqs: Iterable[int] | None = None,
     recording_id: str | None = None,
+    target_mode: str = TARGET_MODE_POINT,
 ) -> tuple[dict[str, Any], list[str]]:
     """录制事件 -> 契约 §3 脚本。
 
     - 一事件一节点（**不**合并同点连续 tap，避免自创语义）；
     - include_kinds 白名单过滤（按 event.kind 原始值），exclude_seqs 排除指定 seq；
     - app 启动/切换事件会生成 app 节点（保证回放从同一界面开始）；
+    - target_mode=point（默认）：点击/长按记绝对坐标（游戏/自绘 UI 唯一可靠方式）；
+      target_mode=element：优先元素定位，失败退回坐标；
     - warnings 为面向用户的中文提示（坐标定位、低置信度、疑似滚动等）。
 
     返回 (script, warnings)，script 结构可通过 `schemas.validate_script()`。
@@ -620,7 +644,7 @@ def events_to_script(
 
         payload = _event_payload(event)
         confidence = str(_event_get(event, "confidence", CONFIDENCE_HIGH) or CONFIDENCE_HIGH)
-        converted = _convert_event(kind, payload, confidence)
+        converted = _convert_event(kind, payload, confidence, target_mode)
         if converted is None:
             skipped += 1
             continue
@@ -632,6 +656,36 @@ def events_to_script(
         if confidence == CONFIDENCE_LOW:
             low_confidence_nodes += 1
 
+        event_ts = _event_timestamp(event)
+
+        # point 模式下点击都是坐标定位：输入事件的目标（元素）在回放时未必可靠，
+        # 统一改为「先点击上一个触点坐标聚焦，再输入」。
+        if step_type == "input" and target_mode == TARGET_MODE_POINT:
+            if params.get("target") is not None:
+                params["target"] = None
+            if not steps or steps[-1]["type"] != "click":
+                focus_point = _point_target(*_point_pair(payload, ""))
+                if focus_point is not None:
+                    steps.append(
+                        {
+                            "id": f"s{len(steps) + 1}",
+                            "name": f"点击聚焦 ({focus_point['x']}, {focus_point['y']})",
+                            "type": "click",
+                            "description": "输入前点击聚焦（录制未带独立点击时自动补）",
+                            "enabled": True,
+                            "when": None,
+                            "timeout_ms": None,
+                            "delay_before_ms": _gap_delay_ms(previous_ts, event_ts) if steps else _FIRST_STEP_DELAY_MS,
+                            "delay_after_ms": 300,
+                            "retry": None,
+                            "on_fail": None,
+                            "screenshot_on_fail": True,
+                            "rerun_safety": "safe",
+                            "tags": ["auto-focus"],
+                            "params": {"target": focus_point},
+                        }
+                    )
+
         # 紧跟在「同目标点击」之后的输入：点击已经完成聚焦，输入节点不应再带 target，
         # 否则回放会二次点击（页面可能已跳转，目标消失 → 输入失败）。
         if step_type == "input" and steps and steps[-1]["type"] == "click":
@@ -641,7 +695,6 @@ def events_to_script(
                 params["target"] = None
                 description = (description + "；目标由上一节点点击聚焦").strip("；")
 
-        event_ts = _event_timestamp(event)
         delay = (
             _FIRST_STEP_DELAY_MS
             if not steps
@@ -688,13 +741,24 @@ def events_to_script(
         "steps": steps,
     }
 
+    if target_mode == TARGET_MODE_POINT and steps:
+        point_steps = sum(
+            1
+            for step in steps
+            if (step.get("params") or {}).get("target", {}) and (step["params"]["target"].get("by") == "point")
+        )
+        if point_steps:
+            warnings.append(
+                f"{point_steps} 个节点使用绝对坐标（按你的选择，坐标最可靠；换分辨率/布局变化时需重录）"
+            )
     delayed_steps = sum(1 for step in steps if int(step.get("delay_before_ms") or 0) > 0)
     if delayed_steps:
         warnings.append(f"已按录制时的操作间隔还原 {delayed_steps} 个节点的延迟（回放更接近人工节奏）")
     if skipped:
         warnings.append(f"{skipped} 个事件无法转换，已跳过")
-    if coordinate_nodes:
-        warnings.append(f"{coordinate_nodes} 个节点用坐标定位，建议补充元素选择器")
+    if coordinate_nodes and target_mode == TARGET_MODE_ELEMENT:
+        # 仅在「元素定位」模式下提示：point 模式本来就是用户要求的纯坐标写法
+        warnings.append(f"{coordinate_nodes} 个节点未能识别元素、退回坐标定位")
     if low_confidence_nodes:
         warnings.append(f"{low_confidence_nodes} 个节点置信度低（层级缺失/过期），建议运行前补充元素选择器")
     if swipe_count:
