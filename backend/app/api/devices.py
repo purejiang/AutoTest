@@ -90,6 +90,8 @@ def _network_fn(action: str) -> Any | None:
 
 # 进行中的流式手势（key=serial）：down 时建，up 时消费并归并为一条录制事件
 _TOUCH_GESTURES: dict[str, dict[str, Any]] = {}
+# 轨迹采样上限：60Hz 下 4s ≈ 240 点；再长的手势按等间隔抽稀
+_MAX_PATH_SAMPLES = 240
 _TOUCH_LOCK = threading.RLock()
 _SWIPE_MIN_DIST_PX = 10
 _TAP_MAX_MS = 500
@@ -477,6 +479,8 @@ def apply_stream_touch(
                 "sy": ny,
                 "last_x": nx,
                 "last_y": ny,
+                # 完整轨迹：回放时按真实轨迹（弧度/变速）走，而不是两点直线
+                "path": [(0, nx, ny)],
                 "pre": pre,
                 "manual_run_id": manual_run_id,
             }
@@ -493,6 +497,10 @@ def apply_stream_touch(
             if gesture is not None:
                 gesture["last_x"] = nx
                 gesture["last_y"] = ny
+                path = gesture.get("path")
+                if isinstance(path, list) and len(path) < _MAX_PATH_SAMPLES:
+                    elapsed_ms = int(round((time.monotonic() - float(gesture["started_at"])) * 1000))
+                    path.append((elapsed_ms, nx, ny))
         return {"ok": True, "serial": serial, "action": "move"}
 
     # up：收尾 + 归并录制事件
@@ -517,10 +525,24 @@ def apply_stream_touch(
             kind = "long_press" if duration_ms >= _TAP_MAX_MS else "tap"
         else:
             kind = "swipe" if duration_ms < _SWIPE_MAX_MS else "drag"
+    path_samples = gesture.get("path") if isinstance(gesture.get("path"), list) else []
     if kind in ("tap", "long_press") and start:
         event = {"x": start[0], "y": start[1], "duration_ms": duration_ms}
     elif start and end:
         event = {"x1": start[0], "y1": start[1], "x2": end[0], "y2": end[1], "duration_ms": duration_ms}
+        # 设备坐标轨迹（录制端归一化 → 设备像素），供回放按原轨迹重演
+        device_path: list[dict[str, int]] = []
+        for sample in path_samples:
+            try:
+                elapsed_ms, sx, sy = sample
+                mapped = _normalized_to_device(serial, float(sx), float(sy))
+                if mapped is None:
+                    continue
+                device_path.append({"x": int(mapped[0]), "y": int(mapped[1]), "dt_ms": int(elapsed_ms)})
+            except (TypeError, ValueError):
+                continue
+        if len(device_path) >= 2:
+            event["path"] = device_path
     else:
         event = {"nx": nx, "ny": ny, "duration_ms": duration_ms}
     _after_action(serial, kind, event, gesture.get("pre"), gesture.get("manual_run_id"))

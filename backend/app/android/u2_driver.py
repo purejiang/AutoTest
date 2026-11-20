@@ -271,6 +271,21 @@ class U2Driver:
         steps = max(5, int(round(max(0, int(duration_ms)) / 5.0)))
         self._call("swipe", device.swipe, int(x1), int(y1), int(x2), int(y2), steps=steps)
 
+    def swipe_path(self, points: list[tuple[int, int]], duration_ms: int = 300) -> None:
+        """按录制轨迹多点滑动：曲线/变速手势与录制一致（u2 swipe_points 按轨迹插值）。"""
+        pts = [(int(x), int(y)) for x, y in points]
+        if len(pts) < 2:
+            return
+        device = self._device()
+        duration = max(0.05, max(0, int(duration_ms)) / 1000.0)
+        swipe_points = getattr(device, "swipe_points", None)
+        if callable(swipe_points):
+            self._call("swipe_path", swipe_points, pts, duration)
+            return
+        # 老版本 u2 没有 swipe_points：降级为分段 short swipe（保持轨迹形状）
+        self._call("swipe_path_fallback", device.swipe, pts[0][0], pts[0][1], pts[-1][0], pts[-1][1],
+                   steps=max(5, len(pts)))
+
     def drag(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 1000) -> None:
         """拖拽（契约外扩展，actions.drag 优先使用；u2 drag duration 单位为秒）。"""
         device = self._device()

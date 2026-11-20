@@ -270,12 +270,20 @@ def _execute_gesture(ctx: RunContext, step: Any, default_duration: int) -> dict[
     start = _resolve(ctx, step.params.from_)
     end = _resolve(ctx, step.params.to)
     duration = int(getattr(step.params, "duration_ms", default_duration) or default_duration)
-    ctx.driver.swipe(start.x, start.y, end.x, end.y, duration_ms=duration)
-    return {
+    path = getattr(step.params, "path", None)
+    output: dict[str, Any] = {
         "from": _resolved_output(start),
         "to": _resolved_output(end),
         "duration_ms": duration,
     }
+    if path:
+        # 录制轨迹回放：按真实轨迹（含弧度/变速）重演，和录制时的手势一致
+        points = [(int(sample.x), int(sample.y)) for sample in path]
+        ctx.driver.swipe_path(points, duration_ms=duration)
+        output["path_points"] = len(points)
+        return output
+    ctx.driver.swipe(start.x, start.y, end.x, end.y, duration_ms=duration)
+    return output
 
 
 def execute_swipe(ctx: RunContext, step: Any) -> dict[str, Any]:

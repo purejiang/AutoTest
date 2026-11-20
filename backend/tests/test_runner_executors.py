@@ -97,6 +97,40 @@ def test_long_click_swipe_drag_use_driver_actions(runner_env, monkeypatch):
     assert drag_output["duration_ms"] == 1200
 
 
+def test_swipe_with_recorded_path_replays_exact_trajectory(runner_env, monkeypatch):
+    """录制轨迹：swipe 节点带 path 时按真实轨迹回放（不是两点直线）。"""
+    install_selectors(monkeypatch)
+    script = make_script(
+        [
+            make_step(
+                "s1",
+                "swipe",
+                {
+                    "from": {"by": "point", "x": 100, "y": 200},
+                    "to": {"by": "point", "x": 300, "y": 400},
+                    "duration_ms": 450,
+                    "path": [
+                        {"x": 100, "y": 200, "dt_ms": 0},
+                        {"x": 160, "y": 260, "dt_ms": 40},
+                        {"x": 220, "y": 340, "dt_ms": 90},
+                        {"x": 300, "y": 400, "dt_ms": 140},
+                    ],
+                },
+            )
+        ]
+    )
+    ctx = make_ctx(runner_env, script)
+    steps = RunSnapshot.from_data(script).parsed.steps
+
+    output = executors.execute_swipe(ctx, steps[0])
+
+    assert output["path_points"] == 4
+    call = runner_env.driver.calls_of("swipe_path")[-1]
+    assert call.kwargs["duration_ms"] == 450
+    assert call.kwargs["points"] == [(100, 200), (160, 260), (220, 340), (300, 400)]
+    assert not runner_env.driver.calls_of("swipe"), "带轨迹时不应再走直线 swipe"
+
+
 def test_input_interpolates_clear_and_types(runner_env, monkeypatch):
     install_selectors(monkeypatch)
     script = make_script(

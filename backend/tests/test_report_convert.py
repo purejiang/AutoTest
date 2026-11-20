@@ -240,3 +240,40 @@ def test_point_mode_input_inserts_focus_click() -> None:
     assert [step["type"] for step in steps] == ["click", "input"]
     assert steps[1]["params"]["target"] is None
     assert steps[1]["params"]["text"] == "wlan"
+
+
+def test_swipe_keeps_recorded_path_and_long_waits_are_not_truncated() -> None:
+    """录制保真：轨迹保留；相邻操作间隔 8s 也要还原（旧实现被截断成 3s）。"""
+    def event(seq: int, kind: str, payload: dict, created_at: str) -> dict:
+        return {"seq": seq, "kind": kind, "payload": payload, "confidence": "high", "created_at": created_at}
+
+    events = [
+        event(1, "tap", {"x": 100, "y": 100, "duration_ms": 50}, "2026-01-01T00:00:00.000+00:00"),
+        event(
+            2,
+            "swipe",
+            {
+                "from": {"x": 540, "y": 1800},
+                "to": {"x": 540, "y": 600},
+                "duration_ms": 300,
+                "path": [
+                    {"x": 540, "y": 1800, "dt_ms": 0},
+                    {"x": 520, "y": 1500, "dt_ms": 60},
+                    {"x": 560, "y": 1000, "dt_ms": 130},
+                    {"x": 540, "y": 600, "dt_ms": 200},
+                ],
+            },
+            "2026-01-01T00:00:00.000+00:00",
+        ),
+        event(3, "tap", {"x": 200, "y": 200, "duration_ms": 50}, "2026-01-01T00:00:08.000+00:00"),
+    ]
+    script, _warnings = convert.events_to_script(events, "轨迹脚本")
+    steps = script["steps"]
+    assert steps[1]["params"]["path"] == [
+        {"x": 540, "y": 1800, "dt_ms": 0},
+        {"x": 520, "y": 1500, "dt_ms": 60},
+        {"x": 560, "y": 1000, "dt_ms": 130},
+        {"x": 540, "y": 600, "dt_ms": 200},
+    ]
+    assert steps[2]["delay_before_ms"] == 8000
+    assert validate_script(script)["valid"] is True

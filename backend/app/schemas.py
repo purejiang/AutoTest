@@ -123,10 +123,20 @@ class LongClickParams(StrictModel):
     duration_ms: int = Field(default=800, ge=100, le=10_000)
 
 
+class GestureSample(StrictModel):
+    """录制轨迹采样点：x,y 设备像素，dt_ms 相对手势开始的毫秒偏移。"""
+
+    x: int
+    y: int
+    dt_ms: int = Field(ge=0, le=60_000)
+
+
 class _FromToParams(StrictModel):
     from_: Target = Field(alias="from")
     to: Target
     duration_ms: int = Field(default=300, ge=50, le=10_000)
+    # 录制轨迹（可选）：有则按真实轨迹回放（弧形/变速滑动与录制一致），无则两点直线 swipe
+    path: list[GestureSample] | None = None
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 

@@ -446,6 +446,9 @@ class WebRecorderSession(_BaseRecorder):
                 return None
             body["from"], body["to"] = start, end
             body["duration_ms"] = int(payload.get("duration_ms") or 0)
+            path = payload.get("path")
+            if isinstance(path, list) and len(path) >= 2:
+                body["path"] = path
             target, _node_confidence, _node_reason = convert.attribute_with_confidence(
                 driver, pre, start["x"], start["y"]
             )

@@ -49,7 +49,10 @@ _SKIP_KINDS: set[str] = set()
 
 # 回放时序：把录制事件之间的真实间隔还原成节点的 delay_before_ms，
 # 否则回放会「瞬间连点」，而页面动画/网络都没跟上（用户反馈「运行和操作不一样」）。
-_STEP_DELAY_MAX_MS = 3000
+# 步骤间隔还原上限：人类等加载/看界面可能是十几秒，不能截断成 3s（否则回放"太快"）
+_STEP_DELAY_MAX_MS = 15_000
+# 轨迹采样上限（与录制端一致）
+_MAX_GESTURE_PATH = 240
 _FIRST_STEP_DELAY_MS = 800
 
 # rerun_safety：录制出来的手势/输入/按键都按 safe 处理（契约 §3）
@@ -554,6 +557,25 @@ def _convert_event(
             name = f"拖拽 ({start.get('x')}, {start.get('y')}) → ({end.get('x')}, {end.get('y')})"
             safety = "safe"
         params = {"from": start, "to": end, "duration_ms": duration}
+        # 录制轨迹：回放时按原轨迹重演（弧形/变速滑动与录制一致）
+        raw_path = payload.get("path")
+        if isinstance(raw_path, list) and len(raw_path) >= 2:
+            samples: list[dict[str, int]] = []
+            for item in raw_path[:_MAX_GESTURE_PATH]:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    samples.append(
+                        {
+                            "x": int(item["x"]),
+                            "y": int(item["y"]),
+                            "dt_ms": max(0, int(item.get("dt_ms") or 0)),
+                        }
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if len(samples) >= 2:
+                params["path"] = samples
     elif step_type == "input":
         text = payload.get("text")
         if text is None:
