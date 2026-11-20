@@ -1,4 +1,8 @@
-/* 镜像面板样式：深色舞台，canvas contain 居中 */
+/* 镜像面板：舞台里只有设备屏幕；按钮在上、状态在下，全部在舞台之外。
+ *
+ * 设计取舍：一块深色“取景框”承载唯一主角——设备屏幕；周边全部压低对比度，
+ * 状态行用等宽数字并且固定高度，操作时不会出现任何文字位移或遮挡。
+ */
 
 .mirror-panel {
   display: flex;
@@ -11,18 +15,22 @@
 
 .mirror-panel:focus-visible {
   outline: 2px solid #1677ff;
-  outline-offset: 2px;
-  border-radius: 8px;
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+
+/* ---- 舞台之上：按钮区（不随状态变化，永远一行起） ---- */
+.mirror-above {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .mirror-toolbar {
-  padding: 4px 2px;
+  padding: 0;
 }
 
-.mirror-action-error {
-  margin: 0;
-}
-
+/* ---- 舞台：纯净的取景框，只有 screen ---- */
 .mirror-stage {
   position: relative;
   display: flex;
@@ -30,87 +38,187 @@
   justify-content: center;
   width: 100%;
   height: clamp(320px, 68vh, 820px);
-  background:
-    radial-gradient(circle at 50% 35%, #1c2230 0%, #0b0d12 70%),
-    #0b0d12;
-  border: 1px solid #2a2f3a;
-  border-radius: 10px;
+  background: #0a0c10;
+  border: 1px solid #23272f;
+  border-radius: 12px;
   overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
 }
 
+/* 圆形准星光标（环 + 中心点，热点在中心 13,13）；不支持时回退 crosshair */
 .mirror-canvas {
-  cursor: crosshair;
+  cursor:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26'><circle cx='13' cy='13' r='8.5' fill='none' stroke='black' stroke-opacity='0.55' stroke-width='4'/><circle cx='13' cy='13' r='8.5' fill='none' stroke='white' stroke-opacity='0.95' stroke-width='1.6'/><circle cx='13' cy='13' r='1.7' fill='white' stroke='black' stroke-opacity='0.45' stroke-width='1'/></svg>")
+      13 13,
+    crosshair;
   touch-action: none;
   user-select: none;
   -webkit-user-drag: none;
   -webkit-tap-highlight-color: transparent;
 }
 
-.mirror-overlay {
+/* 舞台占位（只有“还没画面”时出现）：不遮挡已有画面 */
+.mirror-placeholder {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(6, 8, 12, 0.55);
-  backdrop-filter: blur(1px);
-}
-
-.mirror-overlay-card {
-  display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  max-width: 640px;
-  padding: 24px 28px;
-  background: rgba(22, 26, 34, 0.94);
-  border: 1px solid #333b4a;
-  border-radius: 12px;
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  background: #0a0c10;
   text-align: center;
 }
 
-.mirror-overlay-title {
-  color: rgba(255, 255, 255, 0.88) !important;
-  font-size: 15px;
+.mirror-placeholder.is-busy {
+  background: rgba(10, 12, 16, 0.92);
 }
 
-.mirror-overlay-sub {
-  color: rgba(255, 255, 255, 0.55) !important;
-  font-size: 13px;
+.mirror-placeholder-title {
+  color: rgba(255, 255, 255, 0.86) !important;
+  font-size: 14px;
 }
 
-.mirror-overlay-hint {
-  color: rgba(255, 255, 255, 0.45) !important;
+.mirror-placeholder-sub {
+  color: rgba(255, 255, 255, 0.5) !important;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mirror-placeholder-error {
+  max-width: 520px;
+  color: #ff7875 !important;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.mirror-placeholder-hint {
+  max-width: 420px;
+  color: rgba(255, 255, 255, 0.38) !important;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ---- 舞台之下：固定高度状态行 ---- */
+.mirror-statusline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 24px;
+  min-width: 0;
+  padding: 0 2px;
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.mirror-statusline-strong {
+  color: rgba(0, 0, 0, 0.82);
+  font-weight: 500;
+}
+
+.mirror-statusline-item {
+  color: rgba(0, 0, 0, 0.55);
+  white-space: nowrap;
+}
+
+.mirror-statusline-serial {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+
+.mirror-statusline-warn {
+  color: #d46b08;
+}
+
+.mirror-statusline-muted {
+  color: rgba(0, 0, 0, 0.38);
+}
+
+.mirror-statusline-input {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: rgba(0, 0, 0, 0.72);
+}
+
+.mirror-statusline-hint {
   font-size: 12px;
 }
 
-.mirror-overlay-alert {
-  max-width: 480px;
-  text-align: left;
+.mirror-statusline-sep {
+  width: 1px;
+  height: 11px;
+  background: rgba(0, 0, 0, 0.12);
 }
 
-.mirror-typing-hint {
-  position: absolute;
-  right: 10px;
-  bottom: 10px;
-  max-width: 70%;
-  padding: 2px 10px;
-  color: rgba(255, 255, 255, 0.9);
+.mirror-statusline-spacer {
+  flex: 1;
+}
+
+/* 状态圆点：唯一带颜色的小元素，替代原来的彩色 Tag 文案 */
+.mirror-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #bfbfbf;
+  flex: none;
+}
+
+.mirror-dot-live {
+  background: #52c41a;
+  box-shadow: 0 0 0 3px rgba(82, 196, 26, 0.16);
+}
+
+.mirror-dot-busy {
+  background: #1677ff;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.16);
+}
+
+.mirror-dot-warn {
+  background: #faad14;
+  box-shadow: 0 0 0 3px rgba(250, 173, 20, 0.16);
+}
+
+.mirror-dot-error {
+  background: #ff4d4f;
+  box-shadow: 0 0 0 3px rgba(255, 77, 79, 0.16);
+}
+
+.mirror-dot-idle {
+  background: #d9d9d9;
+}
+
+/* 错误行：始终占位（无内容时透明），避免出现错误时把下面内容顶下去 */
+.mirror-errorline {
+  min-height: 18px;
+  color: #cf1322;
   font-size: 12px;
-  background: rgba(0, 0, 0, 0.62);
-  border-radius: 6px;
-  pointer-events: none;
+  line-height: 18px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.mirror-hint {
-  font-size: 12px;
-}
-
+/* ---- 录制条 ---- */
 .mirror-recording {
   width: 100%;
+}
+
+@media (max-width: 640px) {
+  .mirror-stage {
+    height: clamp(280px, 56vh, 620px);
+  }
+
+  .mirror-statusline-hint,
+  .mirror-statusline-serial {
+    display: none;
+  }
 }

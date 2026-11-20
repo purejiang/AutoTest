@@ -5,12 +5,12 @@
 // 无 WebCodecs：渲染引导页，不做截图轮询。
 
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Typography } from 'antd'
 import { useMirrorSession } from './hooks/useMirrorSession'
 import { usePointerGestures } from './hooks/usePointerGestures'
 import { useKeyboardInput } from './hooks/useKeyboardInput'
 import { MirrorToolbar } from './components/MirrorToolbar'
 import { MirrorStatusOverlay } from './components/MirrorStatusOverlay'
+import { MirrorStatusLine } from './components/MirrorStatusLine'
 import { RecordingBar } from './components/RecordingBar'
 import { UnsupportedNotice } from './components/UnsupportedNotice'
 import { maybeRunSelfTestInDev } from './dev/selfTest'
@@ -89,23 +89,22 @@ export default function MirrorPanel({
       onKeyDown={keyboard.onKeyDown}
       aria-label={`设备 ${serial} 镜像面板`}
     >
-      <MirrorToolbar serial={serial} session={session} inputBusy={gestures.busy} />
-
-      {actionError ? (
-        <Alert
-          className="mirror-action-error"
-          type="error"
-          showIcon
-          closable
-          message={actionError}
-          onClose={() => setActionError(null)}
-        />
-      ) : null}
-
       {!session.isSupported ? (
         <UnsupportedNotice />
       ) : (
         <>
+          {/* 工具栏（按钮）与录制条都在舞台之外，舞台里只放设备画面 */}
+          <div className="mirror-above">
+            <MirrorToolbar serial={serial} session={session} inputBusy={gestures.busy} />
+            {showRecordingBar ? (
+              <RecordingBar
+                serial={serial}
+                onDeviceChange={onDeviceChange}
+                disabled={!session.isSupported}
+              />
+            ) : null}
+          </div>
+
           <div className="mirror-stage" onClick={focusPanel}>
             <canvas
               ref={canvasRef}
@@ -113,27 +112,29 @@ export default function MirrorPanel({
               {...gestures.handlers}
               onPointerDown={handlePointerDown}
             />
+            {/* 占位层只在“还没出过画面”时出现，出过帧后永不遮挡设备屏幕 */}
             <MirrorStatusOverlay
               status={session.status}
               error={session.error}
               hello={session.hello}
               onStart={() => void session.startMirror()}
               onRetry={session.reconnect}
+              hasFrame={session.stats.decoded > 0}
             />
-            {keyboard.pendingText ? (
-              <div className="mirror-typing-hint">待发送输入：{keyboard.pendingText}</div>
-            ) : null}
           </div>
-          <Typography.Text type="secondary" className="mirror-hint">
-            点击画布聚焦后可直接键盘输入（回车发送文本，Esc / Backspace 返回）；拖拽 = swipe，长按 ≥500ms =
-            long_press，点击 = tap；滚轮 = 上下滑动。
-          </Typography.Text>
+
+          {/* 舞台下方：固定高度状态行（状态/分辨率/fps/丢帧/待发送输入）+ 错误行 */}
+          <MirrorStatusLine
+            serial={serial}
+            session={session}
+            pendingText={keyboard.pendingText}
+            busy={gestures.busy}
+          />
+          <div className="mirror-errorline" role="alert">
+            {actionError ?? session.error ?? ''}
+          </div>
         </>
       )}
-
-      {showRecordingBar ? (
-        <RecordingBar serial={serial} onDeviceChange={onDeviceChange} disabled={!session.isSupported} />
-      ) : null}
     </div>
   )
 }

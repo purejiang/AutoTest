@@ -1,7 +1,9 @@
-// 首帧/断流状态覆盖层：连接中 / 启动服务 / 等待关键帧 / 错误（带重试）。
-// 只在非 streaming 状态显示；streaming 时覆盖层整块移除，避免遮挡 pointer 事件。
+// 舞台占位层：**只在没有画面可显示时**出现（未启动 / 启动中 / 出错 / 从没收到过帧）。
+//
+// 一旦出过帧就永不再覆盖舞台——避免操作过程中状态在 streaming ↔ waiting-keyframe 之间
+// 抖动时，文字层反复盖住/移开设备画面（用户反馈的“文案动来动去”）。
 
-import { Alert, Button, Empty, Space, Spin, Typography } from 'antd'
+import { Button, Empty, Spin, Typography } from 'antd'
 import type { MirrorHelloInfo, MirrorUiStatus } from '../types'
 
 export interface MirrorStatusOverlayProps {
@@ -10,76 +12,62 @@ export interface MirrorStatusOverlayProps {
   hello: MirrorHelloInfo | null
   onStart: () => void
   onRetry: () => void
-}
-
-const TITLES: Record<MirrorUiStatus, string> = {
-  idle: '镜像未启动',
-  checking: '正在检查镜像状态…',
-  starting: '正在启动镜像服务…',
-  connecting: '正在连接镜像 WebSocket…',
-  'waiting-keyframe': '等待关键帧…',
-  streaming: '',
-  reconnecting: '连接断开，正在自动重连…',
-  error: '镜像出错',
+  /** 是否已经显示过画面（解码过帧）：true 时不再覆盖舞台 */
+  hasFrame: boolean
 }
 
 const SPINNING: MirrorUiStatus[] = ['checking', 'starting', 'connecting', 'waiting-keyframe', 'reconnecting']
 
-export function MirrorStatusOverlay({ status, error, hello, onStart, onRetry }: MirrorStatusOverlayProps) {
-  if (status === 'streaming') return null
+export function MirrorStatusOverlay({
+  status,
+  error,
+  hello,
+  onStart,
+  onRetry,
+  hasFrame,
+}: MirrorStatusOverlayProps) {
+  // 出过画面就不再遮挡：断流时宁可直接看到最后一帧（下方状态行会说明状态）
+  if (hasFrame || status === 'streaming') return null
+
   const spinning = SPINNING.includes(status)
   const showHello = hello && hello.width > 0 && hello.height > 0
 
   return (
-    <div className="mirror-overlay">
-      <div className="mirror-overlay-card">
-        {status === 'idle' ? (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={<span style={{ color: 'rgba(255,255,255,0.75)' }}>镜像服务未启动</span>}
-          />
-        ) : spinning ? (
-          <Spin size="large" />
-        ) : null}
+    <div className={`mirror-placeholder${spinning ? ' is-busy' : ''}`}>
+      {status === 'idle' ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={null} /> : null}
+      {spinning ? <Spin size="large" /> : null}
 
-        <Typography.Text className="mirror-overlay-title">{TITLES[status]}</Typography.Text>
+      <Typography.Text className="mirror-placeholder-title">
+        {status === 'idle'
+          ? '镜像未启动'
+          : status === 'error'
+            ? '镜像启动失败'
+            : status === 'reconnecting'
+              ? '连接断开，正在重连…'
+              : '正在准备画面…'}
+      </Typography.Text>
 
-        {showHello ? (
-          <Typography.Text className="mirror-overlay-sub">
-            {hello.width}×{hello.height}
-            {hello.rotation ? ` · 旋转 ${hello.rotation}°` : ''}
-            {hello.codec ? ` · ${hello.codec}` : ''}
-          </Typography.Text>
-        ) : null}
+      {error ? <Typography.Text className="mirror-placeholder-error">{error}</Typography.Text> : null}
+      {!error && showHello && status !== 'idle' ? (
+        <Typography.Text className="mirror-placeholder-sub">
+          {hello.width}×{hello.height}
+          {hello.codec ? ` · ${hello.codec}` : ''}
+        </Typography.Text>
+      ) : null}
 
-        {error ? (
-          <Alert
-            type={status === 'error' ? 'error' : 'warning'}
-            showIcon
-            message={error}
-            className="mirror-overlay-alert"
-          />
-        ) : null}
-
-        <Space>
-          {status === 'idle' ? (
-            <Button type="primary" onClick={onStart}>
-              启动镜像
-            </Button>
-          ) : null}
-          {status === 'error' || status === 'reconnecting' || status === 'waiting-keyframe' ? (
-            <Button type="primary" onClick={onRetry}>
-              重试
-            </Button>
-          ) : null}
-        </Space>
-
-        {status === 'idle' ? (
-          <Typography.Text className="mirror-overlay-hint">
-            启动后通过 scrcpy + WebCodecs 实时镜像；无 WebCodecs 的浏览器请改用物理录制。
-          </Typography.Text>
-        ) : null}
-      </div>
+      {status === 'idle' ? (
+        <Button type="primary" onClick={onStart}>
+          启动镜像
+        </Button>
+      ) : null}
+      {status === 'error' ? (
+        <Button onClick={onRetry}>重试</Button>
+      ) : null}
+      {status === 'idle' ? (
+        <Typography.Text className="mirror-placeholder-hint">
+          需要浏览器支持 WebCodecs（Chrome / Edge 新版）。不支持时可用“物理录制”。
+        </Typography.Text>
+      ) : null}
     </div>
   )
 }
