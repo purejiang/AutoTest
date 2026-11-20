@@ -53,6 +53,23 @@ sh scripts/dev.sh            # Windows: scripts\dev.ps1
 3. **运行页**：选择设备执行，实时看步骤/事件/截图；失败可暂停、干预、从节点重跑。
 4. **报告**：运行结束一键生成 zip，含 JUnit XML 与失败截图。
 
+## 已验证（真机 Xiaomi 23127PN0CC / Android 16 / 1200×2670）
+
+| 能力 | 状态 |
+|---|---|
+| 设备发现·信息·层级·截图·shell·logcat·应用列表 | ✅ 实测 |
+| 脚本执行（app/wait/click/assert/swipe/shell/screenshot/key） | ✅ 10 步 succeeded |
+| 失败重试 · 失败截图 · on_fail abort/continue/goto | ✅ 实测 |
+| 暂停 = 干预模式（暂停期手动控制 + `manual_intervention` 留痕）· 预检 · 热恢复 | ✅ 实测 |
+| scrcpy 实时镜像（718×1600 / avc1.64002A / 首帧 IDR+SPS+PPS） | ✅ 后端 WS 收帧实测 |
+| web 录制 → 转脚本 → 回放 | ✅ 实测 succeeded |
+| 物理录制（触摸设备探测 + 事件解析 + 标定字段） | ✅ 探测实测（标定精度待回归） |
+| 设备录屏 mp4（可播放）· 报告 zip（HTML+JUnit+截图）· 产物直链 | ✅ 实测 |
+| PyInstaller 单文件打包（36MB） | ✅ 实测可启动 |
+
+> 浏览器侧 WebCodecs 渲染、镜像落点准确性、Windows 全流程仍需回归，清单见
+> `docs/device-testing-checklist.md`；联调实测细节与踩坑见 `docs/real-device-notes.md`。
+
 ## 项目结构
 
 ```
@@ -108,3 +125,6 @@ cd frontend && npm run typecheck                # 类型检查
 - **镜像黑屏/报错**：确认 scrcpy-server jar 已下载（`sh scripts/setup.sh`），在设置页调小 `max_size`(如 800) 与码率。
 - **浏览器不支持 WebCodecs**（Firefox 旧版/Safari 旧版）：镜像页会提示；此时用**物理录制**模式（手机真实操作，通过 getevent 采集）。
 - **录制没有出现节点**：检查录制的设备是否就是操作的那台；物理录制需要先通过触摸设备确认与 2 点标定。
+- **运行时提示 409 DEVICE_BUSY**：设备被运行/录制占用；手动控制（含 shell）在运行中会被拒绝，暂停运行后即可操作（并会留痕）。
+- **断言失败但页面看着是对的**：优先用「前台包名」或 `text` 精确匹配；`text_contains` 容易命中包含关系的其它文案；
+  系统设置页可能跨进程（包名变化），详见 `docs/real-device-notes.md` 的脚本编写最佳实践。

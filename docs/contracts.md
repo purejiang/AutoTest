@@ -174,7 +174,7 @@ client→server：`{"kind":"ping"}`→`{"kind":"pong"}`；`{"kind":"ack","last_s
 
 ### 7.1 设备与手动控制（be-core）
 GET /api/devices；POST /api/devices/connect {address}；POST /api/devices/{serial}/disconnect；
-GET /api/devices/{serial}/info|hierarchy?raw=|screenshot(png)|apps?keyword=&type=|logcat?lines=200；
+GET /api/devices/{serial}/info|hierarchy?raw=|screenshot(png)|apps?keyword=&type=(all|system|third_party，`third` 为兼容别名)|logcat?lines=200；
   hierarchy 响应：`{"node": HierarchyNode, "raw": str|null}`（raw=true 时尽量给原始 XML，取不到为 null 并带 `"raw_unavailable"`）；
 POST /api/devices/{serial}/tap|long_press|swipe|key|text|app|shell；
 POST /api/devices/{serial}/screenrecord/start {name,bit_rate,time_limit_s} / stop；

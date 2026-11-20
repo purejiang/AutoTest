@@ -328,9 +328,14 @@ def list_apps(
     pkg_type: str = Query("third_party", alias="type"),
     driver: Driver = Depends(get_driver_or_503),
 ) -> dict[str, Any]:
-    flags = {"third_party": "-3", "system": "-s", "all": ""}
+    flags = {"third_party": "-3", "third": "-3", "system": "-s", "all": ""}  # "third" 为兼容别名
+    pkg_type = pkg_type.strip().lower()
     if pkg_type not in flags:
-        raise ApiError("INVALID_ARGUMENT", f"invalid type: {pkg_type}", {"allowed": sorted(flags)})
+        raise ApiError(
+            "INVALID_ARGUMENT",
+            f"invalid type: {pkg_type}",
+            {"allowed": ["all", "system", "third_party"]},
+        )
     command = "pm list packages" + (f" {flags[pkg_type]}" if flags[pkg_type] else "")
     result = _device_call(serial, driver.shell, command, 15)
     if int(getattr(result, "code", 0) or 0) != 0:
@@ -369,10 +374,22 @@ def run_shell(
     serial: str,
     payload: ShellRequest,
     driver: Driver = Depends(get_driver_or_503),
+    session: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    # shell 同属手动控制：run 占用 -> 409（paused 放行并留干预痕迹），与 tap/key/text 同口径
+    manual_run_id = _manual_state(serial, session)
     timeout_s = max(0.1, payload.timeout_ms / 1000.0)
     result = _device_call(serial, driver.shell, payload.command, timeout_s)
-    return {"code": int(result.code), "stdout": result.stdout or "", "stderr": result.stderr or ""}
+    body = {"code": int(result.code), "stdout": result.stdout or "", "stderr": result.stderr or ""}
+    if manual_run_id is not None:
+        event_payload = {
+            "command": payload.command,
+            "timeout_ms": int(payload.timeout_ms),
+            "code": int(result.code),
+        }
+        hooks.note_manual(serial, "shell", event_payload)
+        _emit_manual_intervention(serial, manual_run_id, "shell", event_payload)
+    return body
 
 
 # ---------------------------------------------------------------- 手动控制（录制挂钩 + 占用 + 坐标）

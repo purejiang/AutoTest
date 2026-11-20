@@ -179,7 +179,48 @@ class U2Driver:
         return self._call("dump_hierarchy", device.dump_hierarchy)
 
     def current_app(self) -> dict[str, Any]:
+        """当前前台应用：优先 adb dumpsys（实测 ~0.13s），u2 的 app_current 在部分 ROM 上要 ~5.4s。
+
+        真机基准（Xiaomi/Android 16）：dumpsys window 0.125s vs u2.app_current 5.4s；
+        前台判断被引擎大量使用（assert foreground / app 节点 / resume-check），必须走快路径。
+        """
+        try:
+            fast = self._current_app_adb()
+            if fast and fast.get("package"):
+                return fast
+        except Exception:  # adb 失败不致命，回落 u2
+            logger.debug("adb current_app failed for %s", self.serial, exc_info=True)
         return self._call("current_app", self._current_app_impl)
+
+    _FOCUS_RE = re.compile(
+        r"mCurrentFocus=Window\{[0-9a-fA-F]+ u\d+ (?P<pkg>[^\s/]+)/(?P<act>[^}\s]+)\}"
+    )
+    _RESUMED_RE = re.compile(
+        r"(?:topResumedActivity|mResumedActivity)=ActivityRecord\{[^}]*?\s(?P<pkg>[^\s/]+)/(?P<act>[^\s}]+)"
+    )
+
+    def _current_app_adb(self) -> dict[str, Any] | None:
+        result = adb.shell(
+            self.serial,
+            "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | head -2",
+            timeout_s=5,
+        )
+        text = result.stdout or ""
+        match = self._FOCUS_RE.search(text) or self._RESUMED_RE.search(text)
+        if not match:
+            result = adb.shell(
+                self.serial,
+                "dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | head -2",
+                timeout_s=5,
+            )
+            match = self._RESUMED_RE.search(result.stdout or "")
+            if not match:
+                return None
+        package = match.group("pkg")
+        activity = match.group("act")
+        if activity.startswith("."):
+            activity = f"{package}{activity}"
+        return {"package": package, "activity": activity}
 
     def _current_app_impl(self) -> dict[str, Any]:
         device = self._device()

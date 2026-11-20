@@ -680,9 +680,13 @@ class VideoFrameReader:
                 except ScrcpyProtocolError as exc:
                     logger.warning("failed to parse SPS: %s", exc)
                     continue
+                if self.session_size is not None:
+                    width, height = self.session_size
+                else:
+                    width, height = info.width, info.height
                 self.geometry = VideoGeometry(
-                    width=self.geometry.width or info.width,
-                    height=self.geometry.height or info.height,
+                    width=width,
+                    height=height,
                     rotation=self.geometry.rotation,
                     codec=info.codec,
                     sps=nal,
@@ -729,8 +733,11 @@ def default_socket_name() -> str:
 
 
 def default_scid() -> int:
-    """v5 ``scid``：随机正整数（派生 localabstract:scrcpy_<8位小写hex>）。"""
-    return secrets.randbelow(0xFFFFFFFF) + 1
+    """v5 ``scid``：随机正 int32（server 用 Integer.parseInt(...,16)，需 ≤0x7FFFFFFF）。
+
+    localabstract 名 = ``scrcpy_<scid 的 8 位小写 hex>``。
+    """
+    return secrets.randbelow(0x7FFFFFFF) + 1
 
 
 _CROP_RE = re.compile(r"^\d+:\d+:\d+:\d+$")
@@ -771,8 +778,8 @@ class ServerConfig:
             raise ApiError("UNSUPPORTED", f"仅支持 h264 镜像（收到 {self.codec}）")
         if not _SOCKET_RE.match(self.socket_name):
             raise ApiError("INVALID_ARGUMENT", f"非法 socket 名: {self.socket_name}")
-        if not (-1 <= int(self.scid) <= 0xFFFFFFFF):
-            raise ApiError("INVALID_ARGUMENT", f"非法 scid（-1 或 0..0xFFFFFFFF）: {self.scid}")
+        if not (-1 <= int(self.scid) <= 0x7FFFFFFF):
+            raise ApiError("INVALID_ARGUMENT", f"非法 scid（-1 或 0..0x7FFFFFFF）: {self.scid}")
         if self.stream_mode not in ("auto", "full", "meta", "raw"):
             raise ApiError("INVALID_ARGUMENT", f"非法 stream_mode: {self.stream_mode}")
 
@@ -791,7 +798,7 @@ class ServerConfig:
         """v5 server 实际监听的 localabstract 名。"""
         if int(self.scid) == -1:
             return "scrcpy"
-        return f"scrcpy_{int(self.scid) & 0xFFFFFFFF:08x}"
+        return f"scrcpy_{int(self.scid) & 0x7FFFFFFF:08x}"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -822,7 +829,7 @@ def build_server_args(cfg: ServerConfig, mode: str) -> list[str]:
         f"video_bit_rate={int(cfg.video_bit_rate)}",
         f"tunnel_forward={'true' if cfg.tunnel_forward else 'false'}",
         f"control={'true' if cfg.control else 'false'}",
-        f"scid={int(cfg.scid)}",
+        f"scid={int(cfg.scid) & 0x7FFFFFFF:08x}",  # v5 按 hex 解析 scid（int32 范围）
         "send_frame_meta=true",  # 契约 §6.2 的 12 字节头
     ]
     if cfg.crop:
@@ -1098,6 +1105,7 @@ class ScrcpyServer:
                 except OSError:
                     pass
             _terminate_process(self.process)
+            _kill_remote_server(self.ops, self.cfg)
             if self.cfg.tunnel_forward:
                 self.ops.remove_forward(self.forward_local)
             else:
@@ -1199,6 +1207,26 @@ def _process_failure(process: Any, context: str, log_lines: list[str] | None = N
     return ScrcpyStartupError(message)
 
 
+def _kill_remote_server(ops: AdbOps, cfg: ServerConfig) -> None:
+    """按本 session 的 scid 精确 kill 设备端 server（防 adb shell 断开后孤儿残留）。"""
+    scid_tag = f"scid={int(cfg.scid) & 0x7FFFFFFF:08x}"
+    try:
+        output = ops.shell_text("ps -A -o PID,ARGS", timeout=6.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("list device processes failed: %s", exc)
+        return
+    for line in (output or "").splitlines():
+        if "com.genymobile.scrcpy.Server" not in line or scid_tag not in line:
+            continue
+        pid = line.split()[0] if line.split() else ""
+        if pid.isdigit():
+            try:
+                ops.shell_text(f"kill -9 {pid}", timeout=5.0)
+                logger.info("killed orphan scrcpy server on device: pid=%s (%s)", pid, scid_tag)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("kill remote scrcpy server %s failed: %s", pid, exc)
+
+
 def _capture_crash_log(ops: AdbOps, limit: int = 2000) -> str:
     """启动失败时尽量抓一段设备端 crash log（best effort，不抛异常）。"""
     try:
@@ -1217,8 +1245,14 @@ def _remote_jar_size(ops: AdbOps) -> int | None:
     if not output or "No such file" in output or "No such file or directory" in output:
         return None
     parts = output.split()
+    # 标准 ls -l：-rw-r--r-- 1 shell shell 733930 2026-11-20 08:26 /path
+    if len(parts) >= 5 and parts[0][:1] in ("-", "d", "l"):
+        try:
+            return int(parts[4])
+        except ValueError:
+            pass
     for token in reversed(parts):
-        if token.isdigit() and int(token) > 1024:
+        if token.isdigit() and len(token) >= 4:
             return int(token)
     return None
 
@@ -1297,6 +1331,37 @@ def _accept_tcp(
         except OSError as exc:  # pragma: no cover - accept 中断
             raise ScrcpyStartupError(f"accept timeout: {exc}") from exc
     raise ScrcpyStartupError(f"{context}: accept timeout")
+
+
+def _device_socket_present(ops: AdbOps, cfg: ServerConfig) -> bool:
+    try:
+        output = ops.shell_text("cat /proc/net/unix", timeout=6.0)
+    except Exception:  # noqa: BLE001
+        return False
+    return cfg.device_socket_name in (output or "")
+
+
+def _wait_for_device_socket(
+    ops: AdbOps,
+    cfg: ServerConfig,
+    deadline: float,
+    process: Any,
+    log_lines: list[str] | None = None,
+) -> None:
+    """服务端 LocalServerSocket 就绪前不 connect（否则 adb forward 会先 accept 再 abort → EOF）。"""
+    while time.monotonic() < deadline:
+        try:
+            if process is not None and process.poll() is not None:
+                raise _process_failure(process, "wait device socket", log_lines)
+        except ScrcpyStartupError:
+            raise
+        except Exception:  # noqa: BLE001
+            pass
+        if _device_socket_present(ops, cfg):
+            logger.info("device localabstract socket ready: @%s", cfg.device_socket_name)
+            return
+        time.sleep(0.1)
+    raise ScrcpyStartupError(f"等待设备 socket 超时: localabstract:{cfg.device_socket_name}")
 
 
 def _attempt_modes(cfg: ServerConfig) -> list[str]:
@@ -1400,6 +1465,8 @@ def _start_attempt(serial: str, cfg: ServerConfig, ops: AdbOps, mode: str) -> Sc
         )
         process = ops.start_process(command)
         log_lines = _attach_process_log(process)
+        if cfg.tunnel_forward:
+            _wait_for_device_socket(ops, cfg, deadline, process, log_lines)
         # v5：先连 video；control=true 时 server 会 accept 第二个 socket，必须连上才出帧
         if cfg.tunnel_forward:
             video_sock = _connect_tcp(local_port, deadline, process, log_lines, "connect video socket")
@@ -1413,7 +1480,12 @@ def _start_attempt(serial: str, cfg: ServerConfig, ops: AdbOps, mode: str) -> Sc
         reader = VideoFrameReader(video_sock)
         video_sock.settimeout(float(cfg.handshake_timeout_s))
         if spec is not None:
-            stream_header = reader.read_stream_headers(spec)
+            try:
+                stream_header = reader.read_stream_headers(spec)
+            except ScrcpyDisconnected as exc:
+                if process is not None and process.poll() is not None:
+                    raise _process_failure(process, "stream handshake", log_lines) from exc
+                raise
             logger.info(
                 "scrcpy stream header: device=%r dummy_byte=%s codec=%s",
                 stream_header.device_name,
@@ -1480,6 +1552,7 @@ def _start_attempt(serial: str, cfg: ServerConfig, ops: AdbOps, mode: str) -> Sc
             except OSError:
                 pass
         _terminate_process(process)
+        _kill_remote_server(ops, cfg)
         if forwarded:
             if cfg.tunnel_forward:
                 try:

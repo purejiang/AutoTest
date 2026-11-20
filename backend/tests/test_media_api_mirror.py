@@ -69,7 +69,7 @@ class FakeReader:
 
 class FakeServer:
     def __init__(self, frames: list[tuple[int, bytes]] | None = None) -> None:
-        self.frames = frames or [(1, KEY_PAYLOAD), (2, SLICE_PAYLOAD)]
+        self.frames = frames or [(1, KEY_PAYLOAD), (2, SLICE_PAYLOAD), (3, KEY_PAYLOAD)]
         self.stop_event = threading.Event()
         self.geometry = VIDEO_GEOMETRY
         self.first_frame = self.frames[0]

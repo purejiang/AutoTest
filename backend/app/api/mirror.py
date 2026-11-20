@@ -168,7 +168,7 @@ async def _receive_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
             continue
         kind = message.get("kind")
         if kind == "ping":
-            _queue_control(sub, {"kind": "pong"})
+            session.push_control(sub, {"kind": "pong"})
         elif kind == "request_keyframe":
             session.request_keyframe()
             logger.debug("mirror ws requested keyframe for %s", session.serial)
@@ -176,26 +176,20 @@ async def _receive_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
             logger.debug("mirror ws ignored control message: %s", kind)
 
 
-def _queue_control(sub: Any, message: dict[str, Any]) -> None:
-    try:
-        sub.queue.put_nowait(message)
-    except asyncio.QueueFull:
-        try:
-            sub.queue.get_nowait()
-            sub.queue.put_nowait(message)
-        except (asyncio.QueueEmpty, asyncio.QueueFull):  # pragma: no cover
-            pass
-
-
 async def _send_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
-    """串行发送：hello 已发；之后二进制帧直接透传，控制消息发 JSON；无帧时周期性 stats。"""
+    """串行发送：控制消息（controls，优先）→ 二进制帧 → 空闲时周期性 stats。"""
     while True:
-        try:
-            item = await asyncio.wait_for(sub.queue.get(), timeout=5.0)
-        except TimeoutError:
-            stats = session.stats()
-            await websocket.send_json({"kind": "stats", **stats})
-            continue
+        if sub.controls:
+            item = sub.controls.popleft()
+        else:
+            try:
+                item = await asyncio.wait_for(sub.queue.get(), timeout=5.0)
+            except TimeoutError:
+                stats = session.stats()
+                await websocket.send_json({"kind": "stats", **stats})
+                continue
+            if item is mirror_module.WAKE_SENTINEL:
+                continue
         if item is None:  # session.stop() 的哨兵
             await websocket.close(code=1000)
             return

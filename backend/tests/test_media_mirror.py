@@ -34,9 +34,21 @@ def clean_sessions():
 
 
 def drain_queue(sub) -> list:
+    """只取二进制帧队列（跳过控制通道唤醒哨兵）。"""
     items = []
     while not sub.queue.empty():
-        items.append(sub.queue.get_nowait())
+        item = sub.queue.get_nowait()
+        if item is mirror.WAKE_SENTINEL:
+            continue
+        items.append(item)
+    return items
+
+
+def drain_outgoing(sub) -> list:
+    """取控制消息（优先）+ 二进制帧，供断言使用。"""
+    items = list(sub.controls)
+    sub.controls.clear()
+    items.extend(drain_queue(sub))
     return items
 
 
@@ -185,7 +197,7 @@ class FakeServer:
 
 
 def make_session(serial: str = "fake-1", *, frames=None) -> tuple[mirror.MirrorSession, list[FakeServer]]:
-    frames = frames or [(1, KEY_PAYLOAD), (2, SLICE_PAYLOAD), (3, SLICE_PAYLOAD)]
+    frames = frames or [(1, KEY_PAYLOAD), (2, SLICE_PAYLOAD), (3, SLICE_PAYLOAD), (4, KEY_PAYLOAD)]
     servers: list[FakeServer] = []
 
     def starter(_cfg):
@@ -264,9 +276,8 @@ async def test_backpressure_drops_to_next_idr_with_flush() -> None:
 
         session._ingest(5, KEY_PAYLOAD)  # 下一个 IDR → 清积压 + flush + 补发
         await asyncio.sleep(0.02)
-        items = drain_queue(sub)
-        assert items[0] == {"kind": "flush", "reason": "keyframe_drop"}
-        binaries = [item for item in items if isinstance(item, bytes)]
+        assert {"kind": "flush", "reason": "keyframe_drop"} in sub.controls
+        binaries = drain_queue(sub)
         assert binaries
         pts_us, size = scrcpy.unpack_frame_header(binaries[-1][:12])
         assert pts_us == 5
@@ -286,8 +297,8 @@ async def test_control_message_survives_full_queue() -> None:
         session._deliver_control(sub, {"kind": "config", "width": 1080})
         session._deliver_control(sub, {"kind": "error", "code": "X", "message": "test"})
         await asyncio.sleep(0.02)
-        items = drain_queue(sub)
-        assert {"kind": "error", "code": "X", "message": "test"} in items
+        assert {"kind": "config", "width": 1080} in sub.controls
+        assert {"kind": "error", "code": "X", "message": "test"} in sub.controls
     finally:
         session.stop()
 
@@ -337,8 +348,7 @@ async def test_restart_limit_reports_error(monkeypatch) -> None:
         await asyncio.sleep(0.05)
         assert len(calls) == mirror.MAX_RESTARTS_PER_WINDOW + 1  # 初次 + 3 次重启
         assert "自动重启超过" in (session.status()["error"] or "")
-        items = drain_queue(sub)
-        errors = [item for item in items if isinstance(item, dict) and item.get("kind") == "error"]
+        errors = [item for item in sub.controls if isinstance(item, dict) and item.get("kind") == "error"]
         assert errors and errors[0]["code"] == "SCRCPY_FAILED"
     finally:
         session.stop()
@@ -412,3 +422,127 @@ async def test_start_session_starter_failure_cleans_registry() -> None:
         mirror.start_session(serial, starter=starter, size_probe=lambda: NATURAL)
     assert exc.value.code == "SCRCPY_FAILED"
     assert mirror.get_session(serial) is None
+
+
+# ---------------------------------------------------------------- v5 CONFIG 包 / session meta
+async def test_config_packet_prepended_to_next_frame() -> None:
+    session, _servers = make_session()
+    session._state = "running"
+    session._device_size = NATURAL
+    session._video_geometry = VIDEO_GEOMETRY
+    sub = session.subscribe(maxsize=16)
+    config_payload = annexb(PORTRAIT_SPS, PPS)
+    try:
+        # CONFIG 包：更新 SPS/PPS + 广播 config，但不能当视频帧下发
+        config_info = scrcpy.FrameInfo(
+            pts_us=0,
+            size=len(config_payload),
+            config=True,
+            geometry=VIDEO_GEOMETRY,
+        )
+        session._ingest(0, config_payload, config_info)
+        await asyncio.sleep(0.02)
+        assert not [item for item in drain_queue(sub) if isinstance(item, bytes)]
+
+        # 下一视频帧：payload 前拼 in-band SPS/PPS
+        key_info = scrcpy.FrameInfo(
+            pts_us=42,
+            size=len(KEY_PAYLOAD),
+            keyframe=True,
+            geometry=VIDEO_GEOMETRY,
+        )
+        session._ingest(42, KEY_PAYLOAD, key_info)
+        await asyncio.sleep(0.02)
+        binaries = [item for item in drain_queue(sub) if isinstance(item, bytes)]
+        assert binaries
+        pts_us, size = scrcpy.unpack_frame_header(binaries[-1][:12])
+        assert pts_us == 42
+        assert binaries[-1][12:] == config_payload + KEY_PAYLOAD
+        assert size == len(config_payload) + len(KEY_PAYLOAD)
+    finally:
+        session.stop()
+
+
+async def test_session_meta_updates_geometry_without_frame() -> None:
+    session, _servers = make_session()
+    session._state = "running"
+    session._device_size = NATURAL
+    session._video_geometry = VIDEO_GEOMETRY
+    sub = session.subscribe(maxsize=16)
+    try:
+        rotated = scrcpy.VideoGeometry(
+            width=1920,
+            height=1080,
+            codec=VIDEO_GEOMETRY.codec,
+            sps=VIDEO_GEOMETRY.sps,
+            pps=VIDEO_GEOMETRY.pps,
+        )
+        session._video_geometry = rotated
+        meta_info = scrcpy.FrameInfo(
+            pts_us=0,
+            size=0,
+            session_meta=True,
+            geometry=rotated,
+        )
+        session._ingest(0, b"", meta_info)
+        await asyncio.sleep(0.02)
+        assert not drain_queue(sub)
+        configs = [item for item in sub.controls if isinstance(item, dict) and item.get("kind") == "config"]
+        assert configs
+        assert (session.geometry.stream_width, session.geometry.stream_height) == (1920, 1080)
+        assert session.geometry.rotation == 90
+    finally:
+        session.stop()
+
+
+async def test_adopt_server_seeds_codec_config_for_inband() -> None:
+    """启动自检消费掉的 CONFIG 包要在首帧前补发（真机 full 模式的实际情况）。"""
+    class Reader:
+        codec_config = annexb(PORTRAIT_SPS, PPS)
+        last_info = scrcpy.FrameInfo(
+            pts_us=7,
+            size=len(KEY_PAYLOAD),
+            keyframe=True,
+            geometry=VIDEO_GEOMETRY,
+        )
+
+    class Starter:
+        geometry = VIDEO_GEOMETRY
+        first_frame = (7, KEY_PAYLOAD)
+        reader = Reader()
+
+        def stop(self) -> None:
+            pass
+
+    session = mirror.MirrorSession("fake-seed", scrcpy.ServerConfig(), size_probe=lambda: NATURAL)
+    session._state = "running"
+    sub = session.subscribe(maxsize=8)
+    try:
+        session._adopt_server(Starter())
+        await asyncio.sleep(0.02)
+        binaries = [item for item in drain_queue(sub) if isinstance(item, bytes)]
+        assert binaries
+        assert binaries[-1][12:] == annexb(PORTRAIT_SPS, PPS) + KEY_PAYLOAD
+        assert session._pending_config == b""
+    finally:
+        session.stop()
+
+
+async def test_keyframe_flush_preserves_control_messages() -> None:
+    """背压补发 IDR 时清掉旧帧，但 pong/error 等控制消息不能丢。"""
+    session, _servers = make_session()
+    session._state = "running"
+    sub = session.subscribe(maxsize=3)
+    sub.awaiting_keyframe = False  # 模拟已在解码中的老订阅者
+    try:
+        session._deliver_frame_in_loop(sub, scrcpy.pack_frame(1, SLICE_PAYLOAD), False)
+        session._deliver_frame_in_loop(sub, scrcpy.pack_frame(2, SLICE_PAYLOAD), False)
+        session._deliver_frame_in_loop(sub, scrcpy.pack_frame(3, SLICE_PAYLOAD), False)
+        session._deliver_control_in_loop(sub, {"kind": "pong"})
+        session._deliver_frame_in_loop(sub, scrcpy.pack_frame(4, KEY_PAYLOAD), True)
+        assert {"kind": "pong"} in sub.controls
+        assert {"kind": "flush", "reason": "keyframe_drop"} in sub.controls
+        binaries = drain_queue(sub)
+        assert binaries and binaries[-1][12:] == KEY_PAYLOAD
+    finally:
+        session.stop()

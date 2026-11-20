@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
+import time
 from typing import Any
 
 from ..android.driver import DeviceInfo, Driver, FakeDriver
@@ -173,6 +175,63 @@ def _info_for(serial: str) -> DeviceInfo | None:
         return None
 
 
+
+# ---------------------------------------------------------------- 列表页快速信息（adb 批量 getprop，TTL 缓存）
+_PROPS_TTL_S = 60.0
+_PROPS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_WM_SIZE_RE = re.compile(r"(?:Override|Physical) size:\s*(\d+)x(\d+)")
+
+
+def _adb_device_props(serial: str) -> dict[str, Any]:
+    """一次 adb shell 批量取 brand/model/版本/sdk/分辨率/密度；失败返回 {}（列表不能因此 500）。
+
+    目的：`GET /api/devices` 首屏就能显示品牌与分辨率，而不必等 uiautomator2 首次连接（2~4s）。
+    真实 driver 已缓存时 `_info_for()` 会用更权威的值覆盖这里。
+    """
+    now = time.time()
+    with _LOCK:
+        cached = _PROPS_CACHE.get(serial)
+        if cached and now - cached[0] < _PROPS_TTL_S:
+            return dict(cached[1])
+    adb = _adb_module()
+    if adb is None:
+        return {}
+    command = (
+        "getprop ro.product.brand; getprop ro.product.model; "
+        "getprop ro.build.version.release; getprop ro.build.version.sdk; wm size; wm density"
+    )
+    try:
+        result = adb.shell(serial, command)
+        out = (result.stdout or "") if hasattr(result, "stdout") else str(result)
+    except Exception:
+        logger.debug("adb device props failed for %s", serial, exc_info=True)
+        return {}
+    lines = [line.strip() for line in out.splitlines() if line.strip()]
+    props: dict[str, Any] = {}
+    if lines:
+        props["brand"] = lines[0]
+    if len(lines) > 1:
+        props["model"] = lines[1]
+    if len(lines) > 2:
+        props["android_version"] = lines[2]
+    if len(lines) > 3 and lines[3].isdigit():
+        props["sdk"] = int(lines[3])
+    for line in lines[4:]:
+        match = _WM_SIZE_RE.search(line)
+        if match:
+            props["screen_width"] = int(match.group(1))
+            props["screen_height"] = int(match.group(2))
+        elif "density" in line:
+            digits = re.findall(r"\d+", line)
+            if digits:
+                props["density"] = int(digits[-1])
+    if not props.get("screen_width"):
+        props.pop("screen_width", None)
+    with _LOCK:
+        _PROPS_CACHE[serial] = (now, dict(props))
+    return props
+
+
 def _real_item(device: dict[str, Any]) -> dict[str, Any]:
     serial = str(device["serial"])
     item = _empty_item(serial, str(device.get("state") or "unknown"))
@@ -180,10 +239,16 @@ def _real_item(device: dict[str, Any]) -> dict[str, Any]:
     for key in ("model", "product", "device", "transport_id", "usb"):
         if device.get(key) not in (None, ""):
             item[key] = device[key]
+    # 首屏快速信息（一次 adb shell，60s 缓存）；driver 已缓存时下面会用权威值覆盖
+    props = _adb_device_props(serial)
+    for key, value in props.items():
+        if value not in (None, "", 0):
+            item[key] = value
     info = _info_for(serial)
     if info is not None:
         for key, value in info.to_dict().items():
-            item[key] = value
+            if value not in (None, ""):
+                item[key] = value
     return _apply_runtime_fields(item, serial)
 
 
@@ -221,6 +286,7 @@ def list_devices(refresh: bool = False) -> list[dict[str, Any]]:
             dead = [serial for serial, driver in _DRIVERS.items() if not _alive(driver)]
             for serial in dead:
                 _DRIVERS.pop(serial, None)
+            _PROPS_CACHE.clear()
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
     for device in _real_devices():

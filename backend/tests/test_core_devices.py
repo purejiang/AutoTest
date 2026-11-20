@@ -282,6 +282,34 @@ def test_paused_run_manual_key_and_text_emit_events(core_client) -> None:
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
 
 
+def test_paused_run_manual_shell_emits_manual_intervention(core_client) -> None:
+    support.insert_run(23, status="paused")
+    device_registry.acquire("fake-1", "run", "23")
+    try:
+        response = core_client.post(
+            "/api/devices/fake-1/shell", json={"command": "echo hello", "timeout_ms": 5000}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["code"] == 0
+    finally:
+        device_registry.release("fake-1", "run", "23")
+    events = _manual_intervention_events(23)
+    assert len(events) == 1
+    assert events[0].payload["kind"] == "shell"
+    assert events[0].payload["payload"] == {"command": "echo hello", "timeout_ms": 5000, "code": 0}
+
+
+def test_shell_blocked_while_run_active(core_client) -> None:
+    support.insert_run(24, status="running")
+    device_registry.acquire("fake-1", "run", "24")
+    try:
+        response = core_client.post("/api/devices/fake-1/shell", json={"command": "echo hello"})
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "DEVICE_BUSY"
+    finally:
+        device_registry.release("fake-1", "run", "24")
+
+
 def test_normal_manual_tap_emits_no_run_event(core_client) -> None:
     response = core_client.post("/api/devices/fake-1/tap", json={"x": 1, "y": 2})
     assert response.status_code == 200

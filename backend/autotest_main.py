@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import threading
 import time
 import webbrowser
@@ -24,16 +25,14 @@ def main() -> None:
 
     from app import config
 
-    overrides: dict[str, object] = {}
+    # CLI 覆盖走环境变量层（优先级最高，且不会被 lifespan 的 file 层 reload 覆盖）
     if args.data_dir:
-        overrides["runtime.data_dir"] = args.data_dir
+        os.environ["AUTOTEST_DATA_DIR"] = str(args.data_dir)
     if args.host:
-        overrides["server.host"] = args.host
+        os.environ["AUTOTEST_HOST"] = args.host
     if args.port:
-        overrides["server.port"] = args.port
-    if overrides:
-        # 运行时覆盖走"代码默认之上、DB 之下"的临时层：直接写入 DEFAULTS 不合适，用 file 层模拟
-        config.set_file_layer({**config.load_file_layer(), **overrides})
+        os.environ["AUTOTEST_PORT"] = str(args.port)
+    config.set_db_overrides({})  # 清缓存，确保读到环境变量层
 
     host = str(config.get("server.host") or "127.0.0.1")
     port = int(config.get("server.port") or 8787)
@@ -49,7 +48,10 @@ def main() -> None:
 
     import uvicorn
 
-    uvicorn.run("app.main:app", host=host, port=port, log_level="info")
+    # 冻结（PyInstaller）环境下不能用 "app.main:app" 字符串，直接传对象
+    from app.main import app as asgi_app
+
+    uvicorn.run(asgi_app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":

@@ -110,7 +110,9 @@ def test_reader_stream_headers_device_meta_v5() -> None:
         + scrcpy.pack_frame(123, annexb(build_sps(), build_pps(), build_idr()))
     )
     reader = scrcpy.VideoFrameReader(FakeSocket(header))
-    stream_header = reader.read_stream_headers(scrcpy.StreamHeaderSpec(device_meta=True))
+    stream_header = reader.read_stream_headers(
+        scrcpy.StreamHeaderSpec(device_meta=True, dummy_byte=False, stream_meta=False)
+    )
     assert stream_header.device_name == "Pixel 9 Pro"
     assert stream_header.dummy_byte is False
     pts, payload = reader.read_frame()
@@ -129,7 +131,7 @@ def test_reader_stream_headers_with_dummy_byte() -> None:
     )
     reader = scrcpy.VideoFrameReader(FakeSocket(header))
     stream_header = reader.read_stream_headers(
-        scrcpy.StreamHeaderSpec(device_meta=True, dummy_byte=True)
+        scrcpy.StreamHeaderSpec(device_meta=True, dummy_byte=True, stream_meta=False)
     )
     assert stream_header.dummy_byte is True
     assert stream_header.device_name == "phone"
@@ -142,7 +144,75 @@ def test_reader_stream_headers_with_dummy_byte() -> None:
 def test_reader_stream_headers_truncated() -> None:
     reader = scrcpy.VideoFrameReader(FakeSocket(b"name"))
     with pytest.raises(scrcpy.ScrcpyDisconnected):
-        reader.read_stream_headers(scrcpy.StreamHeaderSpec(device_meta=True))
+        reader.read_stream_headers(
+            scrcpy.StreamHeaderSpec(device_meta=True, dummy_byte=False, stream_meta=False)
+        )
+
+
+def test_v5_full_stream_headers_and_session_meta() -> None:
+    """v5 官方握手：dummy → 64B 名字 → u32 codec id → session meta 伪包头 → config → keyframe。"""
+    dummy = b"\x00"
+    name = b"demo-serial".ljust(scrcpy.DEVICE_NAME_FIELD_LENGTH, b"\x00")
+    codec_id = int.from_bytes(b"h264", "big")
+    session_meta = struct.pack(">III", 0x80000000, 1080, 2400)  # flags|width, height
+    config_payload = annexb(build_sps(1080, 2400), build_pps())
+    config_packet = struct.pack(
+        ">QI", scrcpy.PACKET_FLAG_CONFIG, len(config_payload)
+    ) + config_payload
+    keyframe = annexb(build_idr())
+    key_packet = struct.pack(
+        ">QI", scrcpy.PACKET_FLAG_KEY_FRAME | 5000, len(keyframe)
+    ) + keyframe
+    data = dummy + name + struct.pack(">I", codec_id) + session_meta + config_packet + key_packet
+    sock = FakeSocket(data, chunk=5)
+    reader = scrcpy.VideoFrameReader(sock)
+    header = reader.read_stream_headers(scrcpy.StreamHeaderSpec())
+    assert header.dummy_byte is True
+    assert header.device_name == "demo-serial"
+    assert header.codec == "h264"
+    # 第一个 read_frame 是 session meta（无 payload）
+    pts, payload = reader.read_frame()
+    assert (pts, payload) == (0, b"")
+    assert reader.last_info is not None
+    assert reader.last_info.session_meta is True
+    assert (reader.geometry.width, reader.geometry.height) == (1080, 2400)
+    assert reader.session_size == (1080, 2400)
+    # 第二个是 config 包（SPS/PPS）
+    pts, payload = reader.read_frame()
+    assert payload == config_payload
+    assert reader.last_info is not None
+    assert reader.last_info.config is True
+    assert reader.codec_config == config_payload
+    assert reader.geometry.codec == "avc1.64001F"
+    assert reader.geometry.sps is not None
+    # 第三个是关键帧（bit61 + 真实 pts）
+    pts, payload = reader.read_frame()
+    assert pts == 5000
+    assert payload == keyframe
+    assert reader.last_info is not None
+    assert reader.last_info.keyframe is True
+
+
+def test_session_meta_mid_stream_size_change() -> None:
+    """旋转：流中重新发 session meta（尺寸交换）。"""
+    first = struct.pack(">III", 0x80000000, 1080, 2400)
+    second = struct.pack(">III", 0x80000000, 2400, 1080)
+    frame = scrcpy.pack_frame(1, annexb(build_sps(2400, 1080), build_pps(), build_idr()))
+    reader = scrcpy.VideoFrameReader(FakeSocket(first + frame + second + frame))
+    reader.read_frame()
+    assert (reader.geometry.width, reader.geometry.height) == (1080, 2400)
+    reader.read_frame()
+    reader.read_frame()
+    assert (reader.geometry.width, reader.geometry.height) == (2400, 1080)
+
+
+def test_decode_session_meta_helper() -> None:
+    header = struct.pack(">III", 0x80000001, 720, 1280)
+    assert scrcpy.decode_session_meta(header) == (720, 1280, True)
+    header = struct.pack(">III", 0x80000000, 720, 1280)
+    assert scrcpy.decode_session_meta(header) == (720, 1280, False)
+    with pytest.raises(scrcpy.ScrcpyProtocolError):
+        scrcpy.decode_session_meta(scrcpy.pack_frame(1, b"xx")[:12])
 
 
 def test_reader_frame_header_flags_mask_pts() -> None:
@@ -221,3 +291,50 @@ def test_real_socketpair() -> None:
     finally:
         left.close()
         right.close()
+
+
+# ---------------------------------------------------------------- 真机抓包字节（v5.0.1 / Android 16，serial 已脱敏）
+REAL_DEVICE_NAME = "23127PN0CC"
+REAL_SPS_HEX = "6764001facb40b832f373505060506d0a135"
+REAL_PPS_HEX = "68ee06f2c0"
+REAL_CONFIG_HEX = "000000016764001facb40b832f373505060506d0a1350000000168ee06f2c0"
+REAL_SESSION = (358, 800)
+REAL_FIRST_PTS = 156396867456
+REAL_FIRST_HEAD_HEX = "0000000165b84f7175da5b80f282acd67cad5960196df794"
+
+
+def test_real_capture_v5_stream_layout() -> None:
+    """用真机抓到的字节（dummy/64B 名/codec/session meta/config/keyframe）回放解析。"""
+    dummy = b"\x00"
+    name = REAL_DEVICE_NAME.encode().ljust(scrcpy.DEVICE_NAME_FIELD_LENGTH, b"\x00")
+    codec_id = struct.pack(">I", int.from_bytes(b"h264", "big"))
+    width, height = REAL_SESSION
+    session_meta = struct.pack(">III", 0x80000000, width, height)
+    config_payload = bytes.fromhex(REAL_CONFIG_HEX)
+    config_packet = struct.pack(">QI", scrcpy.PACKET_FLAG_CONFIG, len(config_payload)) + config_payload
+    keyframe_payload = bytes.fromhex(REAL_FIRST_HEAD_HEX)
+    key_packet = (
+        struct.pack(">QI", scrcpy.PACKET_FLAG_KEY_FRAME | REAL_FIRST_PTS, len(keyframe_payload))
+        + keyframe_payload
+    )
+    reader = scrcpy.VideoFrameReader(FakeSocket(dummy + name + codec_id + session_meta + config_packet + key_packet))
+    header = reader.read_stream_headers(scrcpy.StreamHeaderSpec())
+    assert header.device_name == REAL_DEVICE_NAME
+    assert header.codec == "h264"
+    # session meta
+    assert reader.read_frame() == (0, b"")
+    assert reader.session_size == REAL_SESSION
+    # config = 真机 SPS+PPS（Annex B）
+    pts, payload = reader.read_frame()
+    assert payload == config_payload
+    assert reader.codec_config == config_payload
+    assert reader.geometry.sps.hex() == REAL_SPS_HEX
+    assert reader.geometry.pps.hex() == REAL_PPS_HEX
+    assert reader.geometry.codec == "avc1.64001F"
+    assert (reader.geometry.width, reader.geometry.height) == REAL_SESSION
+    # keyframe：pts 掩码 + bit61
+    pts, payload = reader.read_frame()
+    assert pts == REAL_FIRST_PTS
+    assert payload == keyframe_payload
+    assert reader.last_info is not None and reader.last_info.keyframe is True
+    assert reader.last_info.nals == (scrcpy.NAL_IDR,)

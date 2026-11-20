@@ -21,7 +21,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .android import scrcpy
@@ -30,6 +30,8 @@ from .logs import logger
 
 # 订阅者队列默认长度（≈ 1s@30fps 的一半，超过即认为消费慢）
 DEFAULT_SUBSCRIBER_QUEUE = 8
+# 控制消息与视频帧分两条通道：控制消息（pong/flush/config/error）优先且不参与丢帧背压
+WAKE_SENTINEL = object()
 # 断线重启节流：60s 内最多 3 次
 RESTART_WINDOW_S = 60.0
 MAX_RESTARTS_PER_WINDOW = 3
@@ -187,14 +189,21 @@ def map_normalized(nx: float, ny: float, geometry: MirrorGeometry) -> tuple[int,
 # ---------------------------------------------------------------- 订阅者
 @dataclass
 class Subscriber:
-    """一个 WS 消费者。``queue`` 只在所属 event loop 线程里操作。"""
+    """一个 WS 消费者。
+
+    - ``queue``：只放二进制视频帧（参与背压丢帧）；
+    - ``controls``：控制消息（dict）优先发送，不参与丢帧；
+    两者都只在所属 event loop 线程里操作。
+    """
 
     id: int
     loop: asyncio.AbstractEventLoop
     queue: asyncio.Queue
+    controls: deque = field(default_factory=deque)
     dropping: bool = False
     dropped: int = 0
     sent: int = 0
+    awaiting_keyframe: bool = True  # 新订阅者从下一个 IDR 开始收（保证解码器可启动）
 
 
 class MirrorSession:
@@ -231,6 +240,7 @@ class MirrorSession:
         self._video_geometry = scrcpy.VideoGeometry()
         self._last_sps: bytes | None = None
         self._pending_config: bytes = b""  # 等待拼到下一视频帧前的 in-band SPS/PPS
+        self._codec_config: bytes = b""  # 最近一次 CONFIG 包（SPS/PPS），新订阅者首帧补发
         self._geometry = MirrorGeometry(max_size=int(self.cfg.max_size))
         self._device_size: tuple[int, int] = (0, 0)
         self._crop = parse_crop(self.cfg.crop)
@@ -360,9 +370,15 @@ class MirrorSession:
         video_geometry = getattr(server, "geometry", None)
         if isinstance(video_geometry, scrcpy.VideoGeometry):
             self._video_geometry = video_geometry
+        # 启动自检阶段已消费掉的 CONFIG 包（SPS/PPS）：缓存下来拼到首帧前（in-band 参数集）
+        reader = getattr(server, "reader", None)
+        seed_config = getattr(reader, "codec_config", b"") if reader is not None else b""
+        if seed_config:
+            self._codec_config = seed_config
+            self._pending_config = seed_config
         first_frame = getattr(server, "first_frame", None)
         if first_frame:
-            self._ingest(*first_frame)
+            self._ingest(*first_frame, getattr(reader, "last_info", None))
 
     def _try_restart(self, reason: str) -> bool:
         gave_up = False
@@ -473,6 +489,7 @@ class MirrorSession:
         if info is not None and info.config:
             # v5 CONFIG 包 = SPS/PPS（in-band）：缓存并拼到下一个视频帧前面再下发前端
             if payload:
+                self._codec_config = payload
                 self._pending_config = payload
             if not geometry_changed and self._state in ("running", "starting"):
                 self._broadcast_control({"kind": "config", **self._hello_fields()})
@@ -574,6 +591,10 @@ class MirrorSession:
             sub.id = self._next_subscriber_id
             self._next_subscriber_id += 1
             self._subscribers[sub.id] = sub
+            running = self._state == "running"
+        if running:
+            # 新订阅者错过启动首帧：请求编码器尽快出 IDR，从干净状态开始解码
+            self.request_keyframe()
         return sub
 
     def unsubscribe(self, sub: Subscriber | None) -> None:
@@ -594,6 +615,18 @@ class MirrorSession:
 
     def _deliver_frame_in_loop(self, sub: Subscriber, binary: bytes, keyframe: bool) -> None:
         queue = sub.queue
+        if sub.awaiting_keyframe:
+            if not keyframe:
+                # 新订阅者先等 IDR，避免 P 帧引用未知参考帧
+                sub.dropped += 1
+                with self._lock:
+                    self._dropped += 1
+                return
+            sub.awaiting_keyframe = False
+            if self._codec_config and not binary[12:].startswith(self._codec_config):
+                # 首帧补 in-band SPS/PPS（前端 Annex B 直解需要参数集；避免重复拼接）
+                pts_us, _size = scrcpy.unpack_frame_header(binary[:12])
+                binary = scrcpy.pack_frame(pts_us, self._codec_config + binary[12:])
         if sub.dropping and not keyframe:
             sub.dropped += 1
             with self._lock:
@@ -611,18 +644,27 @@ class MirrorSession:
             self._dropped += 1
         sub.dropped += 1
         if keyframe:
+            # 清积压旧帧（丢弃到 IDR 边界）；flush 走控制通道（先于 IDR 送达），不占帧队列
             drained = 0
             while True:
                 try:
-                    queue.get_nowait()
-                    drained += 1
+                    item = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
+                if isinstance(item, (bytes, bytearray)):
+                    drained += 1
             with self._lock:
                 self._dropped += drained
             sub.dropped += drained
-            queue.put_nowait({"kind": "flush", "reason": "keyframe_drop"})
-            queue.put_nowait(binary)
+            sub.controls.append({"kind": "flush", "reason": "keyframe_drop"})
+            try:
+                queue.put_nowait(binary)
+            except asyncio.QueueFull:  # pragma: no cover - 极端竞态
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                queue.put_nowait(binary)
             sub.dropping = False
             sub.sent += 1
         else:
@@ -635,20 +677,18 @@ class MirrorSession:
         except RuntimeError:
             self.unsubscribe(sub)
 
-    def _deliver_control_in_loop(self, sub: Subscriber, message: dict[str, Any]) -> None:
+    def _deliver_control_in_loop(self, sub: Subscriber, message: dict[str, Any] | None) -> None:
+        sub.controls.append(message)
+        while len(sub.controls) > 64:  # 控制消息积压上限（极端慢消费者）
+            sub.controls.popleft()
         try:
-            sub.queue.put_nowait(message)
+            sub.queue.put_nowait(WAKE_SENTINEL)  # 唤醒正在等帧的发送循环
         except asyncio.QueueFull:
-            # 控制消息优先：丢一个旧帧腾位置
-            try:
-                sub.queue.get_nowait()
-                sub.dropped += 1
-            except asyncio.QueueEmpty:
-                pass
-            try:
-                sub.queue.put_nowait(message)
-            except asyncio.QueueFull:  # pragma: no cover - 竞态兜底
-                sub.dropping = True
+            pass  # 队列非空时发送循环不会睡死
+
+    def push_control(self, sub: Subscriber, message: dict[str, Any]) -> None:
+        """从订阅者所属 event loop 线程投递控制消息（与 _deliver_control 的区别：不跨线程）。"""
+        self._deliver_control_in_loop(sub, message)
 
     def _broadcast_control(self, message: dict[str, Any]) -> None:
         with self._lock:

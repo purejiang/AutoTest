@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import socket
 import struct
 import threading
@@ -272,6 +273,26 @@ class FakeAdbOps:
             )
         if "logcat -b crash" in command:
             return "--------- beginning of crash\n"
+        if "ps -A -o PID,ARGS" in command:
+            scid_hex = "00000000"
+            if self.commands:
+                match = re.search(r"scid=([0-9a-fA-F]+)", self.commands[-1])
+                if match:
+                    scid_hex = match.group(1)
+            return (
+                "12345 com.genymobile.scrcpy.Server 5.0.1 scid="
+                f"{scid_hex}\n"
+            )
+        if "/proc/net/unix" in command:
+            scid_hex = "00000000"
+            if self.commands:
+                match = re.search(r"scid=([0-9a-fA-F]+)", self.commands[-1])
+                if match:
+                    scid_hex = match.group(1)
+            return (
+                "0000000000000000: 00000002 00000000 00010000 0001 01 12079724 "
+                f"@scrcpy_{scid_hex}\n"
+            )
         return "Physical size: 1080x1920\n"
 
     def start_process(self, command: str) -> FakeProcess:
@@ -363,7 +384,7 @@ def test_verify_jar_env_override(tmp_path, monkeypatch) -> None:
 
 # ---------------------------------------------------------------- 参数构造
 def test_build_server_args_contract(tmp_path) -> None:
-    cfg = make_cfg(tmp_path)
+    cfg = make_cfg(tmp_path, control=True)
     args = scrcpy.build_server_args(cfg, "raw")
     assert args[0] == scrcpy.SCRCPY_VERSION
     joined = " ".join(args)
@@ -376,12 +397,12 @@ def test_build_server_args_contract(tmp_path) -> None:
         "max_fps=30",
         "video_bit_rate=4000000",
         "tunnel_forward=true",
-        "control=false",
-        f"scid={cfg.scid}",
-        "send_stream_meta=false",
+        "control=true",
+        f"scid={int(cfg.scid) & 0x7FFFFFFF:08x}",
         "send_frame_meta=true",
         "send_device_meta=false",
         "send_dummy_byte=false",
+        "send_stream_meta=false",
     ):
         assert expected in joined
     assert "send_codec_meta" not in joined  # v5 不存在该参数
@@ -392,6 +413,16 @@ def test_build_server_args_contract(tmp_path) -> None:
     assert command.endswith(" ".join(args))
 
 
+def test_build_server_args_full_handshake(tmp_path) -> None:
+    """v5 官方默认：dummy + device meta + codec/session meta 全开。"""
+    cfg = make_cfg(tmp_path)
+    joined = " ".join(scrcpy.build_server_args(cfg, "full"))
+    assert "send_device_meta=true" in joined
+    assert "send_dummy_byte=true" in joined
+    assert "send_stream_meta=true" in joined
+    assert "send_frame_meta=true" in joined
+
+
 def test_build_server_args_includes_crop_and_control(tmp_path) -> None:
     cfg = make_cfg(tmp_path, crop="800:1600:100:200", control=True)
     joined = " ".join(scrcpy.build_server_args(cfg, "meta"))
@@ -399,8 +430,7 @@ def test_build_server_args_includes_crop_and_control(tmp_path) -> None:
     assert "control=true" in joined
     assert "send_device_meta=true" in joined
     assert "send_dummy_byte=false" in joined
-    dummy_joined = " ".join(scrcpy.build_server_args(cfg, "meta_dummy"))
-    assert "send_dummy_byte=true" in dummy_joined
+    assert "send_stream_meta=true" in joined
 
 
 def test_device_socket_name_derived_from_scid(tmp_path) -> None:
@@ -411,6 +441,8 @@ def test_device_socket_name_derived_from_scid(tmp_path) -> None:
     assert scrcpy.ServerConfig(jar_path=jar).device_socket_name.startswith("scrcpy_")
     with pytest.raises(ApiError):
         scrcpy.ServerConfig(jar_path=jar, scid=-2)
+    with pytest.raises(ApiError):
+        scrcpy.ServerConfig(jar_path=jar, scid=0x80000000)
 
 
 def test_socket_name_is_unique_and_prefixed() -> None:
@@ -461,7 +493,7 @@ def test_ensure_device_online_offline() -> None:
 
 # ---------------------------------------------------------------- start_server 全链路
 def test_start_server_raw_mode(tmp_path) -> None:
-    cfg = make_cfg(tmp_path)
+    cfg = make_cfg(tmp_path, control=True)
     ops = FakeAdbOps()
     server = scrcpy.start_server("fake-1", cfg, ops=ops)
     try:
@@ -474,29 +506,66 @@ def test_start_server_raw_mode(tmp_path) -> None:
         first_pts, first_payload = server.first_frame
         assert first_pts == 0
         assert first_payload == KEYFRAME
-        # 推送/forward 参数符合契约
+        # 每次 start 前检查远端 jar（首次缺失 → push 一次）
+        assert any(cmd.startswith("ls -l") for cmd in ops.shell_calls)
         assert ops.push_calls[0] == (str(cfg.jar_path), scrcpy.REMOTE_JAR_PATH)
         assert ops.forward_calls[0] == (f"tcp:{server.local_port}", f"localabstract:{cfg.device_socket_name}")
         assert cfg.device_socket_name.startswith("scrcpy_")
-        # server 参数
-        assert "audio=false" in ops.commands[0] and "video=true" in ops.commands[0]
-        assert server.request_keyframe() is False  # control 默认关闭
+        # server 参数（v5 合法性）
+        command = ops.commands[0]
+        assert "audio=false" in command and "video=true" in command
+        assert f"scid={int(cfg.scid) & 0x7FFFFFFF:08x}" in command
+        assert "socket=" not in command
+        assert "send_codec_meta" not in command
+        # control socket 已连接 → 可以请求 keyframe
+        assert server.request_keyframe() is True
     finally:
         server.stop()
     assert ops.removed_forwards == [f"tcp:{server.local_port}"]
     assert not server.process_alive()
+    scid_tag = f"scid={int(cfg.scid) & 0x7FFFFFFF:08x}"
+    killed = [cmd for cmd in ops.shell_calls if cmd.startswith("kill -9 ")]
+    assert killed == ["kill -9 12345"], (scid_tag, ops.shell_calls)
 
 
-def test_start_server_falls_back_to_meta_mode(tmp_path) -> None:
-    cfg = make_cfg(tmp_path, stream_mode="auto")
-    ops = FakeAdbOps(reject_raw=True)
+def test_start_server_full_handshake_mode(tmp_path) -> None:
+    """v5 官方握手：session meta 提供尺寸，config 包提供 SPS/PPS。"""
+    cfg = make_cfg(tmp_path, stream_mode="full")
+    ops = FakeAdbOps()
     server = scrcpy.start_server("fake-1", cfg, ops=ops)
     try:
-        assert server.stream_mode == "meta"
+        assert server.stream_mode == "full"
+        assert (server.geometry.width, server.geometry.height) == (1080, 1920)
+        assert server.geometry.codec == "avc1.64001F"
+        assert server.geometry.sps == PORTRAIT_SPS
+        # control 已连：第二个 accept 成功
+        assert server.control_sock is not None
+    finally:
+        server.stop()
+
+
+def test_start_server_pushes_remote_jar_when_size_mismatch(tmp_path) -> None:
+    cfg = make_cfg(tmp_path)
+    ops = FakeAdbOps()
+    ops.remote_jar_size = 123  # 远端残留旧 jar
+    server = scrcpy.start_server("fake-1", cfg, ops=ops)
+    try:
+        assert len(ops.push_calls) == 1
+        assert ops.remote_jar_size == cfg.jar_path.stat().st_size
+    finally:
+        server.stop()
+
+
+def test_start_server_falls_back_to_raw_mode(tmp_path) -> None:
+    cfg = make_cfg(tmp_path, stream_mode="auto")
+    ops = FakeAdbOps(reject_full=True)
+    server = scrcpy.start_server("fake-1", cfg, ops=ops)
+    try:
+        assert server.stream_mode == "raw"
         assert (server.geometry.width, server.geometry.height) == (1080, 1920)
         assert len(ops.commands) == 2
-        assert "send_device_meta=false" in ops.commands[0]
-        assert "send_device_meta=true" in ops.commands[1]
+        assert "send_dummy_byte=true" in ops.commands[0]  # 第一次是 full
+        assert "send_device_meta=false" in ops.commands[1]  # 第二次退回 raw
         # 第一次失败的 forward 也被清理
         assert len(ops.removed_forwards) == 1
     finally:
@@ -511,6 +580,10 @@ def test_start_server_first_frame_timeout_cleans_up(tmp_path) -> None:
         scrcpy.start_server("fake-1", cfg, ops=ops)
     assert exc.value.code == "SCRCPY_FAILED"
     assert "首帧超时" in exc.value.message
+    assert exc.value.details["command"]
+    assert exc.value.details["scid"] == cfg.scid
+    assert "server_log_tail" in exc.value.details
+    assert "adb_stderr" in exc.value.details
     # 清理：进程被 terminate、forward 被 remove、没有登记活跃 server
     assert all(proc.terminated for proc in ops.processes)
     assert ops.removed_forwards
@@ -523,8 +596,8 @@ def test_start_server_all_modes_fail(tmp_path) -> None:
     with pytest.raises(ApiError) as exc:
         scrcpy.start_server("fake-1", cfg, ops=ops)
     assert exc.value.code == "SCRCPY_FAILED"
-    assert len(exc.value.details["attempts"]) == 3
-    assert [item["mode"] for item in exc.value.details["attempts"]] == ["raw", "meta", "meta_dummy"]
+    assert len(exc.value.details["attempts"]) == 2
+    assert [item["mode"] for item in exc.value.details["attempts"]] == ["full", "raw"]
 
 
 def test_start_server_requires_jar(tmp_path) -> None:
@@ -543,7 +616,7 @@ def test_stop_server_idempotent(tmp_path) -> None:
 
 
 def test_reverse_mode_accepts_socket(tmp_path) -> None:
-    cfg = make_cfg(tmp_path, tunnel_forward=False, stream_mode="raw")
+    cfg = make_cfg(tmp_path, tunnel_forward=False, stream_mode="raw", control=False)
     ops = FakeAdbOps()
     # reverse 模式下 server 主动连本机端口：用假 server 监听该端口
     original_reverse = ops.reverse

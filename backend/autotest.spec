@@ -17,7 +17,17 @@ if FE_DIST.exists():
 else:
     print("WARNING: frontend/dist 不存在，打包产物没有前端界面（先 npm run build）", file=sys.stderr)
 
-hiddenimports = [
+# 动态导入的子模块必须显式收集，否则冻结包里缺路由
+_dynamic = []
+for _path in ROOT.glob("app/**/*.py"):
+    if _path.name == "__init__.py":
+        continue
+    _mod = ".".join(_path.relative_to(ROOT).with_suffix("").parts)
+    _dynamic.append(_mod)
+for _pkg in ["app", "app.api", "app.services", "app.android", "app.runner", "app.recorder", "app.report", "app.capture"]:
+    _dynamic.append(_pkg)
+
+hiddenimports = _dynamic + [
     "uvicorn.logging",
     "uvicorn.loops",
     "uvicorn.loops.auto",
