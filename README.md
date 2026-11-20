@@ -52,11 +52,31 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Open
 ```bash
 sh scripts/save.sh "改了镜像布局"     # 一条命令提交当前改动
 sh scripts/save.sh --log             # 看最近提交（图形化）
+sh scripts/release.sh 0.1.1          # 发版：同步版本号 + 提交 + 打 tag
 ```
 
 git 会忽略：`backend/.venv`、`frontend/node_modules`、`frontend/dist`、`backend/dist`（打包产物）、
 `~/.autotest/data` 之外的数据文件、`__pycache__` 等；**会**跟踪 `backend/vendor/scrcpy-server-v5.0.1.jar`
 （734KB，保证离线可用）。仓库约 3MB。
+
+### 发版（打 tag）
+
+```bash
+sh scripts/release.sh 0.1.1        # 同步前后端版本号 → 提交 → 打 annotated tag v0.1.1
+sh scripts/release.sh              # 不填版本号 = 自动 patch +1（0.1.0 → 0.1.1）
+sh scripts/release.sh 0.2.0 --rebuild   # 顺带重建前端产物
+```
+
+版本号四处自动同步：`backend/pyproject.toml`、`backend/app/__init__.py`、`frontend/package.json`、
+`frontend/package-lock.json`。发版前要求工作区干净；tag 是**本地**的（仓库无远程，
+不会推送到任何地方）。打完后：
+
+```bash
+git tag -l                       # 看所有版本标签
+git show v0.1.1                  # 看该版本改了什么
+git reset --hard v0.1.0          # 回退到某个版本
+git bundle create autotest.bundle --all   # 备份整个仓库（含所有 tag）
+```
 
 常用：
 
@@ -65,7 +85,6 @@ git log --oneline --graph        # 历史
 git diff                         # 未提交的改动
 git diff HEAD~1 --stat           # 上一次提交改了什么
 git checkout <hash> -- <file>    # 把某文件恢复到某个版本
-git tag -l                       # 版本标签（当前 v0.1.0）
 ```
 
 ## 开发模式（改代码热更新）
