@@ -45,7 +45,30 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Open
 首次运行脚本会自动完成：装 uv（若缺）→ Python 3.12 + 后端依赖 → 前端依赖 + 构建 → 下载 scrcpy-server → 启动。
 也可以先手动跑一次 `sh scripts/setup.sh`（Windows `scripts\setup.ps1`）做完整安装 + 环境自检。
 
-### 开发模式（改代码热更新）
+### 版本管理（本地 git，无远程）
+
+仓库是**纯本地** git（`git remote -v` 为空），不联网、不推送。每次改动想留档时：
+
+```bash
+sh scripts/save.sh "改了镜像布局"     # 一条命令提交当前改动
+sh scripts/save.sh --log             # 看最近提交（图形化）
+```
+
+git 会忽略：`backend/.venv`、`frontend/node_modules`、`frontend/dist`、`backend/dist`（打包产物）、
+`~/.autotest/data` 之外的数据文件、`__pycache__` 等；**会**跟踪 `backend/vendor/scrcpy-server-v5.0.1.jar`
+（734KB，保证离线可用）。仓库约 3MB。
+
+常用：
+
+```bash
+git log --oneline --graph        # 历史
+git diff                         # 未提交的改动
+git diff HEAD~1 --stat           # 上一次提交改了什么
+git checkout <hash> -- <file>    # 把某文件恢复到某个版本
+git tag -l                       # 版本标签（当前 v0.1.0）
+```
+
+## 开发模式（改代码热更新）
 
 ```bash
 sh scripts/dev.sh            # 后端 8787(--reload) + 前端 5173(Vite HMR)，Ctrl+C 一起退出
@@ -123,6 +146,29 @@ scripts/          setup / dev / build / 环境自检 / scrcpy 下载
 - 配置文件：`~/.autotest/config.json`（或 `AUTOTEST_CONFIG` 指定），形如 `{"server": {"port": 8787}, "scrcpy": {"max_size": 1200}}`
 - 数据库层：设置页写入（优先级最高）
 - 数据目录：`~/.autotest/data`（`runtime.data_dir` 可改），含 DB、artifacts、reports、日志
+
+## 版本管理（本地 git，无远程）
+
+仓库是**纯本地** git（`git remote -v` 为空），不联网、不推送。每次改动想留档时：
+
+```bash
+sh scripts/save.sh "改了镜像布局"     # 一条命令提交当前改动
+sh scripts/save.sh --log             # 看最近提交（图形化）
+```
+
+git 会忽略：`backend/.venv`、`frontend/node_modules`、`frontend/dist`、`backend/dist`（打包产物）、
+`~/.autotest/data` 之外的数据文件、`__pycache__` 等；**会**跟踪 `backend/vendor/scrcpy-server-v5.0.1.jar`
+（734KB，保证离线可用）。仓库约 3MB。
+
+常用：
+
+```bash
+git log --oneline --graph        # 历史
+git diff                         # 未提交的改动
+git diff HEAD~1 --stat           # 上一次提交改了什么
+git checkout <hash> -- <file>    # 把某文件恢复到某个版本
+git tag -l                       # 版本标签（当前 v0.1.0）
+```
 
 ## 开发
 

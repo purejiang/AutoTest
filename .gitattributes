@@ -1,0 +1,26 @@
+# 统一换行符与二进制判定：保证 macOS / Windows 之间 checkout 一致
+* text=auto
+
+# 脚本：Unix 脚本必须 LF，PowerShell 用 CRLF（Windows 记事本也能正常显示）
+*.sh text eol=lf
+*.command text eol=lf
+*.ps1 text eol=crlf
+*.py text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+Makefile text eol=lf
+
+# 二进制：不要做任何换行转换
+*.jar binary
+*.png binary
+*.jpg binary
+*.webp binary
+*.mp4 binary
+*.db binary
+*.woff binary
+*.woff2 binary
