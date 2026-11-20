@@ -53,7 +53,7 @@ else
 fi
 
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "[release] 版本号必须是 X.Y.Z 形式（收到：$VERSION）" >&2
+  echo "[release] 版本号必须是 X.Y.Z 形式（收到：${VERSION}）" >&2
   exit 2
 fi
 TAG="v$VERSION"
@@ -65,11 +65,11 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 if [ "$DO_TAG" = "1" ] && git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-  echo "[release] tag $TAG 已存在，换个版本号（当前代码版本 $CURRENT）" >&2
+  echo "[release] tag $TAG 已存在，换个版本号（当前代码版本 ${CURRENT}）" >&2
   exit 1
 fi
 
-echo "==> 发版 $CURRENT -> $VERSION（tag: $([ "$DO_TAG" = 1 ] && echo "$TAG" || echo "跳过")）"
+echo "==> 发版 ${CURRENT} -> ${VERSION}（tag: $([ "$DO_TAG" = 1 ] && echo "$TAG" || echo "跳过")）"
 
 # ---- 1) 后端版本号（pyproject.toml + app/__init__.py）
 python3 - "$VERSION" <<'PY'
