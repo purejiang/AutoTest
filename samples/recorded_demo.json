@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "name": "录制结果示例（镜像操作录制转脚本）",
+  "notes": "演示录制产物格式：坐标定位 + 低置信度标记在 description 里；可在编辑器里替换成元素选择器提升稳定性。",
+  "variables": {},
+  "settings": {
+    "default_timeout_ms": 8000,
+    "on_fail": "abort",
+    "logcat": false,
+    "retry": null,
+    "screenshot_on_fail": true
+  },
+  "defaults": {
+    "retry": null
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "name": "点击「我的」",
+      "type": "click",
+      "description": "录制 seq=1 device=(972,2268) 置信度=high target=text:我的",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": null,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["recorded"],
+      "params": {
+        "target": {
+          "by": "text",
+          "value": "我的",
+          "index": 0
+        }
+      }
+    },
+    {
+      "id": "s2",
+      "name": "上滑",
+      "type": "swipe",
+      "description": "录制 seq=2 (960,2100)→(960,700) 400ms 置信度=high",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": null,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["recorded"],
+      "params": {
+        "from": {
+          "by": "point",
+          "x": 960,
+          "y": 2100
+        },
+        "to": {
+          "by": "point",
+          "x": 960,
+          "y": 700
+        },
+        "duration_ms": 400
+      }
+    },
+    {
+      "id": "s3",
+      "name": "点击坐标 (540,1320)",
+      "type": "click",
+      "description": "录制 seq=3 device=(540,1320) 置信度=medium（父节点不可点击，回退坐标）",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": null,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 1,
+        "interval_ms": 500
+      },
+      "on_fail": null,
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["recorded", "low-confidence"],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 540,
+          "y": 1320
+        }
+      }
+    },
+    {
+      "id": "s4",
+      "name": "长按列表项",
+      "type": "long_click",
+      "description": "录制 seq=4 device=(540,1620) 850ms 置信度=high target=resource_id:item_root",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": null,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": true,
+      "rerun_safety": "stateful",
+      "tags": ["recorded"],
+      "params": {
+        "target": {
+          "by": "resource_id",
+          "value": "com.example.app:id/item_root",
+          "index": 0
+        },
+        "duration_ms": 850
+      }
+    },
+    {
+      "id": "s5",
+      "name": "输入备注",
+      "type": "input",
+      "description": "录制 seq=5 文本长度=6 置信度=high",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": null,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["recorded"],
+      "params": {
+        "text": "测试备注",
+        "target": {
+          "by": "resource_id",
+          "value": "com.example.app:id/et_remark",
+          "index": 0
+        },
+        "clear_first": true
+      }
+    },
+    {
+      "id": "s6",
+      "name": "返回",
+      "type": "key",
+      "description": "录制 seq=6 key=back",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": null,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["recorded"],
+      "params": {
+        "key": "back"
+      }
+    }
+  ]
+}

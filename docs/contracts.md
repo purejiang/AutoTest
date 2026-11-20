@@ -267,3 +267,106 @@ RecorderSession 需实现：`before_pointer() -> dict|None`、`handle(kind, payl
 
 冷恢复/检查点、双帧一致性校验、元素吸附、图像模板匹配、OCR、批量执行、run_events 归档、
 pywebview 桌面壳、截图轮询降级。触发即回复"超范围，进 v1.1 清单"。
+
+## 14. 跨模块借用接口（并行开发的缝合线；实现方必须严格满足签名，调用方按签名 mock 测试）
+
+### 14.1 be-driver 对外暴露
+```python
+# app/android/selectors.py
+@dataclass
+class ResolvedTarget:
+    x: int; y: int
+    node: "HierarchyNode | None"   # point 定位时为 None
+    bounds: list[int]
+
+class TargetNotFound(Exception): ...   # str(e) 给用户看
+
+def resolve_target(driver, target: Target, timeout_ms: int = 0,
+                   poll_interval_ms: int = 350,
+                   should_abort=None) -> ResolvedTarget
+    # by=point 立即返回；元素定位轮询至 timeout_ms（0=只查一次）；should_abort()->bool 可打断
+
+def check_condition(driver, target: Target, state: str = "visible") -> bool
+    # 单次检查目标是否满足 state
+
+def wait_for(driver, target: Target, state: str, timeout_ms: int,
+             poll_interval_ms: int = 350, should_abort=None) -> bool
+    # 轮询等待；超时返回 False（不抛）
+```
+```python
+# app/android/adb.py
+def adb_path() -> str                    # config.find_adb 缓存
+def run_adb(args: list[str], timeout_s: float = 15) -> CommandResult
+def list_devices() -> list[dict]         # [{serial,state,meta...}]（detailed 状态）
+def forward(serial, local, remote) / remove_forward(serial, local)
+def push_file(serial, local, remote) / pull_file(serial, remote, local)
+def shell_bytes(serial, command) -> bytes   # exec-out，二进制安全
+```
+```python
+# app/android/u2_driver.py
+class U2Driver:                          # 实现 Driver 协议
+    def __init__(self, serial: str): ...
+def create_u2_driver(serial: str) -> U2Driver
+```
+```python
+# app/android/screen.py
+def screenshot_png(driver) -> bytes      # 带 PNG 头校验
+class ScreenRecorder:                    # exec-out screenrecord 流式拉取
+    def start(self, name: str, bit_rate: int, time_limit_s: int) -> None
+    def stop(self) -> tuple[Path, int]   # (mp4 路径, 大小)
+```
+
+### 14.2 be-core 对外暴露（services/device_registry.py）
+```python
+FAKE_PREFIX = "fake"
+def list_devices(refresh: bool = False) -> list[dict]     # 契约 §7.1 GET /api/devices 的 items
+def get_driver(serial: str | None = None) -> Driver
+    # serial=None/"auto" -> 唯一在线设备；serial 以 "fake" 开头 -> 注册表内 FakeDriver 单例
+def acquire(serial: str, purpose: "run" | "recording" | "mirror", ref_id: str) -> None
+    # 已被占用 -> raise ApiError("DEVICE_BUSY", ...)
+def release(serial: str, purpose: str, ref_id: str) -> None
+def occupancy(serial: str) -> list[dict]                  # [{purpose, ref_id}]
+def is_busy(serial: str) -> bool
+```
+> run 与 recording 互斥、mirror 与两者兼容；同 purpose 重复 acquire 同 ref 幂等。
+
+### 14.3 be-media 对外暴露（app/mirror.py）
+```python
+def map_normalized_to_device(serial: str, nx: float, ny: float) -> tuple[int, int] | None
+    # 无活跃镜像返回 None（调用方报 INVALID_ARGUMENT）
+def mirror_status(serial: str) -> dict                    # {active,width,height,rotation,...}
+```
+api/mirror.py：POST /api/devices/{serial}/mirror/start|stop、GET .../mirror/status、WS /ws/mirror/{serial}。
+
+### 14.4 be-runner 对外暴露
+```python
+# app/runner/engine.py
+def start_run(run_id: int) -> None          # 线程池里跑；幂等（已 running 忽略）
+# app/runner/controls.py
+def request_pause(run_id) / request_resume(run_id) / request_stop(run_id)
+def request_debug(run_id, action: str, step_id: str | None)
+def run_control_state(run_id) -> dict
+# app/events.py
+class RunEventBus:  @staticmethod emit(run_id, type, payload) -> int   # 返回 seq
+                    @staticmethod subscribe(run_id) -> asyncio.Queue   # WS 用
+                    @staticmethod replay(run_id, since_seq) -> list
+```
+
+### 14.5 be-report 对外暴露
+```python
+# app/recorder/session.py
+class WebRecorderSession:   # 实现 recorder.hooks.RecorderSessionLike
+    def __init__(self, recording_id: str, serial: str, driver_getter): ...
+class PhysicalRecorder:
+    def __init__(self, recording_id: str, serial: str, driver_getter): ...
+    def start(self) / stop(self)
+# app/report/builder.py
+def build_report(run_id: int, include_video: bool = False) -> dict   # {report_id,path,size,url}
+```
+
+### 14.6 集成规则
+- 所有跨模块 import 按上述签名写；对方文件暂不存在时**不阻塞自己开发**：测试里 monkeypatch/自建桩；
+- main.py（be-core）用动态路由发现：遍历 app.api 包内模块，把含 `router` 属性的自动 include；
+- 每人只跑自己的测试：`uv run pytest tests/test_<域>_*.py -q`；全量 pytest 由 Lead 在集成时跑；
+- 完成后向 Lead 发消息：改动文件清单 + 测试结果 + 已知坑。
+

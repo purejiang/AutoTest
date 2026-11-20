@@ -1,0 +1,363 @@
+{
+  "schema_version": 1,
+  "name": "登录并下单（示例）",
+  "notes": "示例脚本：启动应用 → 关闭可选弹窗 → 输入账号密码 → 登录断言 → 浏览商品 → 滑动 → 下单断言 → 截图。坐标/包名请按你的应用替换。",
+  "variables": {
+    "account": "13800000000",
+    "password": "123456",
+    "package": "com.example.shop"
+  },
+  "settings": {
+    "default_timeout_ms": 8000,
+    "on_fail": "abort",
+    "logcat": true,
+    "retry": null,
+    "screenshot_on_fail": true
+  },
+  "defaults": {
+    "retry": {
+      "count": 1,
+      "interval_ms": 1000
+    }
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "name": "启动应用",
+      "type": "app",
+      "description": "冷启动被测应用",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 20000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "abort"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "destructive",
+      "tags": ["setup"],
+      "params": {
+        "action": "launch",
+        "package": "{{package}}",
+        "activity": null
+      }
+    },
+    {
+      "id": "s2",
+      "name": "关闭更新提示（可选）",
+      "type": "click",
+      "description": "有更新弹窗就点“以后再说”，没有就跳过",
+      "enabled": true,
+      "when": {
+        "target": {
+          "by": "text",
+          "value": "以后再说"
+        },
+        "mode": "optional",
+        "timeout_ms": 3000,
+        "state": "visible"
+      },
+      "timeout_ms": 5000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 300,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "text",
+          "value": "以后再说",
+          "index": 0
+        }
+      }
+    },
+    {
+      "id": "s3",
+      "name": "填写账号",
+      "type": "input",
+      "description": "先点账号框聚焦，再清空输入",
+      "enabled": true,
+      "when": {
+        "target": {
+          "by": "resource_id",
+          "value": "com.example.shop:id/et_account"
+        },
+        "mode": "require",
+        "timeout_ms": 5000,
+        "state": "visible"
+      },
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 200,
+      "retry": {
+        "count": 1,
+        "interval_ms": 800
+      },
+      "on_fail": {
+        "action": "abort"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "text": "{{account}}",
+        "target": {
+          "by": "resource_id",
+          "value": "com.example.shop:id/et_account",
+          "index": 0
+        },
+        "clear_first": true
+      }
+    },
+    {
+      "id": "s4",
+      "name": "填写密码",
+      "type": "input",
+      "description": "密码输入不做回读校验（见契约 §4 已知限制）",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 200,
+      "retry": {
+        "count": 1,
+        "interval_ms": 800
+      },
+      "on_fail": {
+        "action": "abort"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "text": "{{password}}",
+        "target": {
+          "by": "resource_id",
+          "value": "com.example.shop:id/et_password",
+          "index": 0
+        },
+        "clear_first": true
+      }
+    },
+    {
+      "id": "s5",
+      "name": "点击登录",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 8000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 1000
+      },
+      "on_fail": {
+        "action": "abort"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["login"],
+      "params": {
+        "target": {
+          "by": "text",
+          "value": "登录",
+          "index": 0
+        }
+      }
+    },
+    {
+      "id": "s6",
+      "name": "断言登录成功",
+      "type": "assert",
+      "description": "首页元素出现即视为登录成功；断言失败不会重试点击动作",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 1500,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "abort"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["assert"],
+      "params": {
+        "kind": "foreground",
+        "value": "{{package}}"
+      }
+    },
+    {
+      "id": "s7",
+      "name": "打开第一个商品",
+      "type": "click",
+      "description": "列表页第一个商品项",
+      "enabled": true,
+      "when": {
+        "target": {
+          "by": "resource_id",
+          "value": "com.example.shop:id/item_title"
+        },
+        "mode": "require",
+        "timeout_ms": 8000,
+        "state": "visible"
+      },
+      "timeout_ms": 8000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 500,
+      "retry": null,
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "resource_id",
+          "value": "com.example.shop:id/item_title",
+          "index": 0
+        }
+      }
+    },
+    {
+      "id": "s8",
+      "name": "上滑查看详情",
+      "type": "swipe",
+      "description": "从屏幕中下向上滑 300px",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 5000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 500,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "from": {
+          "by": "point",
+          "x": 540,
+          "y": 1800
+        },
+        "to": {
+          "by": "point",
+          "x": 540,
+          "y": 1200
+        },
+        "duration_ms": 300
+      }
+    },
+    {
+      "id": "s9",
+      "name": "点击立即购买",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": {
+        "target": {
+          "by": "text_contains",
+          "value": "立即购买"
+        },
+        "mode": "require",
+        "timeout_ms": 8000,
+        "state": "visible"
+      },
+      "timeout_ms": 8000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 1,
+        "interval_ms": 800
+      },
+      "on_fail": {
+        "action": "goto",
+        "target_id": "s8"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["order"],
+      "params": {
+        "target": {
+          "by": "text_contains",
+          "value": "立即购买",
+          "index": 0
+        }
+      }
+    },
+    {
+      "id": "s10",
+      "name": "断言下单页",
+      "type": "assert",
+      "description": "出现支付按钮即认为进入下单页",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 10000,
+      "delay_before_ms": 800,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "abort"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["assert"],
+      "params": {
+        "kind": "exists",
+        "target": {
+          "by": "text_contains",
+          "value": "支付"
+        }
+      }
+    },
+    {
+      "id": "s11",
+      "name": "留证截图",
+      "type": "screenshot",
+      "description": "存档下单页",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 10000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "order_confirm"
+      }
+    },
+    {
+      "id": "s12",
+      "name": "收集崩溃日志",
+      "type": "shell",
+      "description": "抓一份最近的 crash buffer 便于排查",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": ["debug"],
+      "params": {
+        "command": "logcat -d -b crash -t 50",
+        "timeout_ms": 15000,
+        "check_exit_code": false
+      }
+    }
+  ]
+}

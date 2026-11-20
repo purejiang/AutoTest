@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "name": "主流程（嵌入子脚本）",
+  "notes": "演示 sub_script：把“登录”脚本作为节点嵌入。script_id 需替换为你库里真实脚本的 id（请先从脚本页复制）。",
+  "variables": {
+    "package": "com.example.shop"
+  },
+  "settings": {
+    "default_timeout_ms": 10000,
+    "on_fail": "abort",
+    "logcat": false,
+    "retry": null,
+    "screenshot_on_fail": true
+  },
+  "defaults": {
+    "retry": {
+      "count": 1,
+      "interval_ms": 1000
+    }
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "name": "清空应用数据",
+      "type": "app",
+      "description": "保证从干净状态开始",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 30000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 1000,
+      "retry": null,
+      "on_fail": {
+        "action": "abort"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "destructive",
+      "tags": ["setup"],
+      "params": {
+        "action": "clear",
+        "package": "{{package}}"
+      }
+    },
+    {
+      "id": "s2",
+      "name": "嵌入登录子脚本",
+      "type": "sub_script",
+      "description": "替换 script_id 为“登录”脚本的真实 id；子脚本失败由外层 on_fail 接管",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 120000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 500,
+      "retry": null,
+      "on_fail": {
+        "action": "abort"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["login"],
+      "params": {
+        "script_id": "REPLACE_WITH_LOGIN_SCRIPT_ID",
+        "variables": {
+          "account": "13800000000",
+          "password": "123456"
+        }
+      }
+    },
+    {
+      "id": "s3",
+      "name": "等待首页稳定",
+      "type": "wait",
+      "description": "等首页关键元素出现",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "abort"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "until",
+        "target": {
+          "by": "resource_id",
+          "value": "com.example.shop:id/home_banner",
+          "index": 0
+        },
+        "state": "visible",
+        "timeout_ms": 15000,
+        "interval_ms": 350
+      }
+    },
+    {
+      "id": "s4",
+      "name": "断言前台包名",
+      "type": "assert",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 5000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "abort"
+      },
+      "screenshot_on_fail": true,
+      "rerun_safety": "safe",
+      "tags": ["assert"],
+      "params": {
+        "kind": "foreground",
+        "value": "{{package}}"
+      }
+    }
+  ]
+}
