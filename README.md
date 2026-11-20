@@ -186,7 +186,7 @@ git log --oneline --graph        # 历史
 git diff                         # 未提交的改动
 git diff HEAD~1 --stat           # 上一次提交改了什么
 git checkout <hash> -- <file>    # 把某文件恢复到某个版本
-git tag -l                       # 版本标签（当前 v0.1.0）
+git tag -l                       # 版本标签（当前 v0.1.1）
 ```
 
 ## 开发
