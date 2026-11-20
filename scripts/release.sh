@@ -95,6 +95,12 @@ init.write_text(new_text, encoding="utf-8")
 print(f"    后端版本 -> {version}")
 PY
 
+# ---- 1.5) 后端锁文件同步（pyproject 版本变了，uv.lock 里的项目版本也要跟着变，
+#          否则每次发版后第一次 uv run 都会把工作区弄脏）
+if command -v uv >/dev/null 2>&1; then
+  (cd backend && uv lock >/dev/null 2>&1) || echo "    [warn] uv lock 失败（离线/网络问题？），锁文件可能滞后" >&2
+fi
+
 # ---- 2) 前端版本号（package.json + package-lock.json，用 npm 保证锁文件一致）
 if command -v npm >/dev/null 2>&1; then
   (cd frontend && npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null)
