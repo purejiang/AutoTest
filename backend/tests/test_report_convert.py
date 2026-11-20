@@ -120,7 +120,16 @@ def test_events_to_script_is_valid_and_one_node_per_event() -> None:
 
     result = validate_script(script)
     assert result["valid"] is True, result["errors"]
-    assert [step["id"] for step in script["steps"]] == ["s1", "s2", "s3", "s4", "s5", "s6", "s7"]
+    assert [step["id"] for step in script["steps"]] == [
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "s5",
+        "s6",
+        "s7",
+        "s8",
+    ]
     assert [step["type"] for step in script["steps"]] == [
         "click",
         "long_click",
@@ -129,7 +138,13 @@ def test_events_to_script_is_valid_and_one_node_per_event() -> None:
         "input",
         "key",
         "key",
+        "app",
     ]
+    # app 事件 → app 节点（回放从同一界面开始）
+    assert script["steps"][7]["params"]["package"] == "com.example.fake"
+    assert script["steps"][7]["params"]["action"] == "launch"
+    # 回放时序：首个节点有起步延迟（给应用/页面稳定时间）
+    assert script["steps"][0]["delay_before_ms"] == convert._FIRST_STEP_DELAY_MS
     # 一事件一节点：两个 tap 不合并
     assert script["steps"][0]["params"]["target"] == _node_target()
     assert script["steps"][1]["params"]["duration_ms"] == 900
@@ -154,7 +169,8 @@ def test_events_to_script_is_valid_and_one_node_per_event() -> None:
     # 中文命名 + warnings
     assert script["steps"][0]["name"] == "点击「登录」"
     assert any("坐标定位" in warning for warning in warnings)
-    assert any("应用切换事件" in warning for warning in warnings)
+    # app 事件现在生成节点（不再有「未生成节点」警告），并提示已还原操作间隔
+    assert any("间隔" in warning for warning in warnings)
 
 
 def test_events_to_script_filter_include_kinds_and_exclude_seqs() -> None:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from datetime import datetime
 from typing import Any
 
 from ..android.driver import KEY_CODES, HierarchyNode
@@ -42,8 +43,14 @@ _KIND_TO_STEP: dict[str, str] = {
     "app": "app",
 }
 
-# 契约 §13：录制不产生 app 节点
-_SKIP_KINDS = {"app"}
+# 录制保真：app 启动/切换也生成 app 节点（否则回放不从同一界面开始）；
+# 只跳过确实无法转换的 kind（见 _convert_event 返回 None 的分支）。
+_SKIP_KINDS: set[str] = set()
+
+# 回放时序：把录制事件之间的真实间隔还原成节点的 delay_before_ms，
+# 否则回放会「瞬间连点」，而页面动画/网络都没跟上（用户反馈「运行和操作不一样」）。
+_STEP_DELAY_MAX_MS = 3000
+_FIRST_STEP_DELAY_MS = 800
 
 # rerun_safety：录制出来的手势/输入/按键都按 safe 处理（契约 §3）
 _SAFE_TYPES = {"click", "long_click", "swipe", "drag", "input", "key"}
@@ -147,6 +154,57 @@ def _smallest_clickable(root: HierarchyNode, x: int, y: int) -> HierarchyNode | 
     return best
 
 
+def _area(bounds: Any) -> int:
+    x1, y1, x2, y2 = _normalize_bounds(bounds)
+    return max(0, x2 - x1) * max(0, y2 - y1)
+
+
+def _descendant_with_selector(root: HierarchyNode, x: int, y: int) -> HierarchyNode | None:
+    """在 root 子树里找包含点击点、且带可用选择器（text/content_desc/resource_id）的最小节点。
+
+    典型场景：MIUI/系统设置的列表行是「可点击的父容器 + 无点击属性的子 TextView」，
+    父容器没有 text，直接取父容器只能退回坐标；向下找到子 TextView 才能得到 by=text 的稳定选择器。
+    """
+    best: HierarchyNode | None = None
+    best_area = float("inf")
+
+    def walk(node: HierarchyNode) -> None:
+        nonlocal best, best_area
+        if node is not root and node.visible and _contains(node.bounds, x, y):
+            has_selector = bool(node.text or node.content_desc or node.resource_id)
+            if has_selector:
+                x1, y1, x2, y2 = _normalize_bounds(node.bounds)
+                area = max(0, x2 - x1) * max(0, y2 - y1)
+                if area < best_area:
+                    best, best_area = node, area
+        for child in node.children:
+            walk(child)
+
+    walk(root)
+    return best
+
+
+def _smallest_selector_node(root: HierarchyNode, x: int, y: int) -> HierarchyNode | None:
+    """整棵树里包含点击点、带选择器的最小节点（不限 clickable，作为最后的文本兜底）。"""
+    best: HierarchyNode | None = None
+    best_area = float("inf")
+
+    def walk(node: HierarchyNode) -> None:
+        nonlocal best, best_area
+        if node.visible and _contains(node.bounds, x, y):
+            has_selector = bool(node.text or node.content_desc or node.resource_id)
+            if has_selector:
+                x1, y1, x2, y2 = _normalize_bounds(node.bounds)
+                area = max(0, x2 - x1) * max(0, y2 - y1)
+                if area < best_area:
+                    best, best_area = node, area
+        for child in node.children:
+            walk(child)
+
+    walk(root)
+    return best
+
+
 def node_target(node: HierarchyNode | None) -> dict[str, Any] | None:
     """节点 -> 契约 §3 Target；优先 text（可读性好），其次 content_desc / resource_id。"""
     if node is None:
@@ -193,20 +251,57 @@ def attribute_with_confidence(
             "点击点不在层级根范围内（快照可能过期），使用坐标定位",
         )
     node = _smallest_clickable(tree, px, py)
-    if node is None:
+    if node is not None:
+        # 优先「可读文本」：容器往往只有 resource_id（如 header_view），回放易受布局改名影响；
+        # 子节点的 text/content_desc 更语义化、更稳定。
+        readable_child = _descendant_with_selector(node, px, py)
+        readable_target = node_target(readable_child) if readable_child is not None else None
+        node_target_value = node_target(node)
+        if readable_target is not None and readable_target["by"] in ("text", "content_desc"):
+            return (
+                readable_target,
+                CONFIDENCE_HIGH,
+                f"命中可点击容器内的文本子节点 {readable_target['by']}={readable_target['value']}",
+            )
+        if node_target_value is not None:
+            if readable_target is not None and node_target_value["by"] == "resource_id":
+                return (
+                    readable_target,
+                    CONFIDENCE_HIGH,
+                    f"命中可点击容器内的子节点 {readable_target['by']}={readable_target['value']}",
+                )
+            return (
+                node_target_value,
+                CONFIDENCE_HIGH,
+                f"命中可点击节点 {node_target_value['by']}={node_target_value['value']}",
+            )
+        if readable_target is not None:
+            return (
+                readable_target,
+                CONFIDENCE_HIGH,
+                f"命中可点击容器内的子节点 {readable_target['by']}={readable_target['value']}",
+            )
+    # 没有任何可点击节点包含该点：退一步用「带选择器的文本节点」，比裸坐标稳定得多。
+    # 但只接受「有可读文本」或「面积足够小」的容器，避免把整页容器（如 springbacklayout）当目标。
+    fallback = _smallest_selector_node(tree, px, py)
+    fallback_target = node_target(fallback)
+    if fallback is not None and fallback_target is not None:
+        root_area = _area(tree.bounds) or 1
+        fallback_area = _area(fallback.bounds)
+        readable = bool(fallback.text or fallback.content_desc)
+        if not readable and fallback_area > root_area * 0.3:
+            fallback_target = None
+    if fallback_target is not None:
         return (
-            {"by": "point", "x": px, "y": py},
+            fallback_target,
             CONFIDENCE_MEDIUM,
-            "未找到包含点击点的可点击节点，使用坐标定位",
+            f"未命中可点击节点，使用文本节点 {fallback_target['by']}={fallback_target['value']}",
         )
-    target = node_target(node)
-    if target is None:
-        return (
-            {"by": "point", "x": px, "y": py},
-            CONFIDENCE_MEDIUM,
-            "可点击节点缺少可用选择器属性，使用坐标定位",
-        )
-    return target, CONFIDENCE_HIGH, f"命中节点 {target['by']}={target['value']}"
+    return (
+        {"by": "point", "x": px, "y": py},
+        CONFIDENCE_MEDIUM,
+        "未找到包含点击点的可定位节点，使用坐标定位",
+    )
 
 
 def attribute(driver: Any, pre_tree: Any, x: int, y: int) -> dict[str, Any] | None:
@@ -353,6 +448,29 @@ def _build_description(
     return "；".join(str(part) for part in parts)[:500]
 
 
+def _event_timestamp(event: Any) -> float | None:
+    """事件时间戳（秒）：优先 created_at(ISO)，兼容 ts 数字。"""
+    raw = _event_get(event, "created_at", None)
+    if raw is None:
+        raw = _event_get(event, "ts", None)
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str) and raw:
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    return None
+
+
+def _gap_delay_ms(previous_ts: float | None, current_ts: float | None) -> int:
+    """两次操作之间的真实间隔 → 节点 delay_before_ms（上限 3s，避免录到长离开）。"""
+    if previous_ts is None or current_ts is None:
+        return 0
+    gap = int(round((current_ts - previous_ts) * 1000))
+    return max(0, min(_STEP_DELAY_MAX_MS, gap))
+
+
 def _convert_event(
     kind: str,
     payload: dict[str, Any],
@@ -360,6 +478,23 @@ def _convert_event(
 ) -> tuple[str, str, str, dict[str, Any], str, dict[str, Any] | None] | None:
     """返回 (type, name, description, params, rerun_safety, point_target_if_used)。"""
     step_type = classify(kind, payload)
+    if step_type == "app":
+        package = str(payload.get("package") or "").strip()
+        if not package:
+            return None
+        action = str(payload.get("action") or "launch").strip().lower()
+        if action not in ("launch", "stop", "clear", "restart"):
+            action = "launch"
+        activity = payload.get("activity")
+        params = {
+            "action": action,
+            "package": package,
+            "activity": str(activity) if activity else None,
+        }
+        name = f"{ {'launch': '启动', 'stop': '停止', 'clear': '清数据', 'restart': '重启'}[action] } {package}"
+        description = f"录制：{action} {package}" + (f" / {activity}" if activity else "")
+        safety = "destructive" if action in ("stop", "clear", "restart") else "safe"
+        return step_type, name, description, params, safety, None
     if step_type == "click":
         start = _point_target(*_point_pair(payload, ""))
         target = _valid_target(payload.get("node") or payload.get("target"))
@@ -443,7 +578,7 @@ def events_to_script(
 
     - 一事件一节点（**不**合并同点连续 tap，避免自创语义）；
     - include_kinds 白名单过滤（按 event.kind 原始值），exclude_seqs 排除指定 seq；
-    - app 事件按契约 §13 不产生节点；
+    - app 启动/切换事件会生成 app 节点（保证回放从同一界面开始）；
     - warnings 为面向用户的中文提示（坐标定位、低置信度、疑似滚动等）。
 
     返回 (script, warnings)，script 结构可通过 `schemas.validate_script()`。
@@ -464,7 +599,7 @@ def events_to_script(
     low_confidence_nodes = 0
     swipe_count = 0
     skipped = 0
-    app_skipped = 0
+    previous_ts: float | None = None
 
     for event in events:
         kind = str(_event_get(event, "kind", "") or "").strip()
@@ -480,7 +615,7 @@ def events_to_script(
         if allowed is not None and kind.lower() not in allowed:
             continue
         if kind.lower() in _SKIP_KINDS:
-            app_skipped += 1
+            skipped += 1
             continue
 
         payload = _event_payload(event)
@@ -497,6 +632,24 @@ def events_to_script(
         if confidence == CONFIDENCE_LOW:
             low_confidence_nodes += 1
 
+        # 紧跟在「同目标点击」之后的输入：点击已经完成聚焦，输入节点不应再带 target，
+        # 否则回放会二次点击（页面可能已跳转，目标消失 → 输入失败）。
+        if step_type == "input" and steps and steps[-1]["type"] == "click":
+            previous_target = (steps[-1].get("params") or {}).get("target")
+            current_target = params.get("target")
+            if previous_target is not None and current_target == previous_target:
+                params["target"] = None
+                description = (description + "；目标由上一节点点击聚焦").strip("；")
+
+        event_ts = _event_timestamp(event)
+        delay = (
+            _FIRST_STEP_DELAY_MS
+            if not steps
+            else _gap_delay_ms(previous_ts, event_ts)
+        )
+        if event_ts is not None:
+            previous_ts = event_ts
+
         steps.append(
             {
                 "id": f"s{len(steps) + 1}",
@@ -506,7 +659,7 @@ def events_to_script(
                 "enabled": True,
                 "when": None,
                 "timeout_ms": None,
-                "delay_before_ms": 0,
+                "delay_before_ms": delay,
                 "delay_after_ms": 0,
                 "retry": None,
                 "on_fail": None,
@@ -535,8 +688,9 @@ def events_to_script(
         "steps": steps,
     }
 
-    if app_skipped:
-        warnings.append(f"{app_skipped} 个应用切换事件未生成节点（录制不产生 app 节点）")
+    delayed_steps = sum(1 for step in steps if int(step.get("delay_before_ms") or 0) > 0)
+    if delayed_steps:
+        warnings.append(f"已按录制时的操作间隔还原 {delayed_steps} 个节点的延迟（回放更接近人工节奏）")
     if skipped:
         warnings.append(f"{skipped} 个事件无法转换，已跳过")
     if coordinate_nodes:

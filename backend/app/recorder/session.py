@@ -40,6 +40,9 @@ from . import convert, hooks
 
 DriverGetter = Callable[[str], Any]
 
+# 层级采样缓存有效期：超过则 before_pointer 退回同步 dump
+_HIER_CACHE_MAX_AGE_MS = 1500
+
 _KEYCODE_TO_NAME: dict[int, str] = {code: name for name, code in KEY_CODES.items()}
 
 # Linux input-event-codes（getevent KeyEvent.keycode 口径）-> 契约 §3 KeyName。
@@ -282,6 +285,18 @@ class WebRecorderSession(_BaseRecorder):
             self.meta["click_dump"] = True
         self._last_signature: tuple[Any, ...] | None = None
         self._last_signature_at = 0.0
+        # 层级采样缓存：录制期间后台每 ~500ms 抓一次，pointerdown 时直接用最近快照，
+        # 避免「先注入 down 再同步 dump」抓到动作之后的界面（会导致归因错误）
+        self._hier_cache: dict[str, Any] | None = None
+        self._hier_cache_at: float = 0.0
+        self._sampler_stop = threading.Event()
+        self._sampler: threading.Thread | None = None
+        self._hier_lock = threading.RLock()
+        # 最近一次点击命中的 Target：input 事件本身没有坐标，用它当输入目标，
+        # 否则回放时只能"输入到当前焦点"，焦点不对就整段丢字。
+        self._last_pointer_target: dict[str, Any] | None = None
+        self._last_pointer_target_at: float = 0.0
+        self._start_hierarchy_sampler()
 
     # ---- hooks 协议
     def before_pointer(self) -> dict[str, Any] | None:
@@ -292,14 +307,58 @@ class WebRecorderSession(_BaseRecorder):
                 return None
         except Exception:  # pragma: no cover
             pass
+        # 优先用后台采样缓存（通常 <500ms 新鲜，零等待）
+        with self._hier_lock:
+            cached = self._hier_cache
+            cached_at = self._hier_cache_at
+        if cached is not None and (time.monotonic() - cached_at) * 1000 <= _HIER_CACHE_MAX_AGE_MS:
+            return cached
         driver = self._driver()
         if driver is None:
             return None
         try:
-            return driver.dump_hierarchy().to_dict()
+            tree = driver.dump_hierarchy().to_dict()
+            with self._hier_lock:
+                self._hier_cache = tree
+                self._hier_cache_at = time.monotonic()
+            return tree
         except Exception as exc:  # 录制不能影响控制
             logger.debug("before_pointer dump failed for %s: %s", self.serial, exc)
-            return None
+            return cached
+
+    def _start_hierarchy_sampler(self) -> None:
+        """后台层级采样：录制期间维持一份 ~500ms 新的层级快照，供点击归因使用。"""
+        if self._sampler is not None:
+            return
+        try:
+            interval_ms = int(config.get("recording.hierarchy_refresh_ms") or 500)
+        except Exception:  # pragma: no cover
+            interval_ms = 500
+        interval_s = max(0.2, interval_ms / 1000.0)
+
+        def loop() -> None:
+            while not self._sampler_stop.is_set():
+                if not self.paused:
+                    driver = self._driver()
+                    if driver is not None:
+                        try:
+                            tree = driver.dump_hierarchy().to_dict()
+                            with self._hier_lock:
+                                self._hier_cache = tree
+                                self._hier_cache_at = time.monotonic()
+                        except Exception:  # 录制不能影响控制
+                            logger.debug("hierarchy sampler dump failed for %s", self.serial, exc_info=True)
+                self._sampler_stop.wait(interval_s)
+
+        self._sampler = threading.Thread(target=loop, name=f"rec-hier-{self.serial}", daemon=True)
+        self._sampler.start()
+
+    def _stop_hierarchy_sampler(self) -> None:
+        self._sampler_stop.set()
+        sampler = self._sampler
+        self._sampler = None
+        if sampler is not None and sampler.is_alive():
+            sampler.join(timeout=2.0)
 
     def handle(self, kind: str, payload: dict[str, Any], pre: dict[str, Any] | None) -> None:
         if self.paused:
@@ -377,6 +436,9 @@ class WebRecorderSession(_BaseRecorder):
             target, confidence, reason = convert.attribute_with_confidence(driver, pre, x, y)
             body["node"] = target
             body["target"] = target
+            if target and target.get("by") != "point":
+                self._last_pointer_target = dict(target)
+                self._last_pointer_target_at = time.monotonic()
         elif kind in ("swipe", "drag"):
             start, end = _extract_points(payload)
             if start is None or end is None:
@@ -393,9 +455,14 @@ class WebRecorderSession(_BaseRecorder):
         elif kind == "input":
             body["text"] = str(payload.get("text") or "")
             target = _valid_payload_target(payload)
+            if target is None:
+                # 复用最近一次点击的元素（5s 内）作为输入目标：回放时先点它聚焦再输入
+                recent = self._last_pointer_target
+                if recent is not None and (time.monotonic() - self._last_pointer_target_at) <= 5.0:
+                    target = dict(recent)
             body["node"] = target
             body["target"] = target
-            reason = "文本输入事件"
+            reason = "文本输入事件（目标复用最近点击元素）" if target else "文本输入事件"
         elif kind == "key":
             key = payload.get("key")
             keycode = payload.get("keycode")
@@ -937,6 +1004,12 @@ def stop(recording_id: str) -> bool:
                 stopped = bool(stopper())
             except Exception as exc:  # pragma: no cover - 防御
                 logger.warning("recording session stop failed: %s", exc)
+        stopper_sampler = getattr(session, "_stop_hierarchy_sampler", None)
+        if callable(stopper_sampler):
+            try:
+                stopper_sampler()
+            except Exception:  # pragma: no cover - 防御
+                logger.debug("hierarchy sampler stop failed", exc_info=True)
         hooks.unregister(session.serial, recording_id)
         _release_device(session.serial, recording_id)
         event_count = 0

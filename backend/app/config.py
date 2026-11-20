@@ -54,6 +54,7 @@ DEFAULTS: dict[str, Any] = {
     "recording.click_dump": True,
     "recording.confirm_before_save": True,
     "recording.ring_buffer_ms": 1500,
+    "recording.hierarchy_refresh_ms": 500,
     "capture.logcat_auto_attach": False,
     "capture.logcat_max_lines": 5000,
     "capture.network.enabled": False,
