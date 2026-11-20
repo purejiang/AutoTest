@@ -102,49 +102,90 @@ def test_reader_rejects_absurd_payload_length() -> None:
         reader.read_frame()
 
 
-def test_reader_stream_headers_meta_mode() -> None:
+def test_reader_stream_headers_device_meta_v5() -> None:
+    # v5：固定 64 字节 UTF-8 设备名（NUL 补齐，无长度前缀）
     device_name = "Pixel 9 Pro".encode()
-    codec_id = int.from_bytes(b"h264", "big")
     header = (
-        struct.pack(">Q", len(device_name))
-        + device_name
-        + struct.pack(">III", codec_id, 1080, 2400)
+        device_name.ljust(scrcpy.DEVICE_NAME_FIELD_LENGTH, b"\x00")
         + scrcpy.pack_frame(123, annexb(build_sps(), build_pps(), build_idr()))
     )
     reader = scrcpy.VideoFrameReader(FakeSocket(header))
-    stream_header = reader.read_stream_headers(scrcpy.StreamHeaderSpec(device_meta=True, codec_meta=True))
+    stream_header = reader.read_stream_headers(scrcpy.StreamHeaderSpec(device_meta=True))
     assert stream_header.device_name == "Pixel 9 Pro"
-    assert stream_header.codec == "h264"
-    assert (stream_header.width, stream_header.height) == (1080, 2400)
+    assert stream_header.dummy_byte is False
     pts, payload = reader.read_frame()
     assert pts == 123
     assert payload
-    assert reader.geometry.width == 1080  # SPS 覆盖 codec meta 尺寸
+    assert reader.geometry.width == 1080
 
 
 def test_reader_stream_headers_with_dummy_byte() -> None:
+    # v5 顺序：dummy 字节（先）→ 64 字节设备名 → 帧
     device_name = b"phone"
-    codec_id = int.from_bytes(b"h264", "big")
     header = (
-        struct.pack(">Q", len(device_name))
-        + device_name
-        + struct.pack(">III", codec_id, 720, 1280)
-        + b"\x00"  # dummy byte
+        b"\x00"
+        + device_name.ljust(scrcpy.DEVICE_NAME_FIELD_LENGTH, b"\x00")
         + scrcpy.pack_frame(7, annexb(build_sps(720, 1280), build_pps(), build_idr()))
     )
     reader = scrcpy.VideoFrameReader(FakeSocket(header))
-    reader.read_stream_headers(scrcpy.StreamHeaderSpec(device_meta=True, codec_meta=True, dummy_byte=True))
+    stream_header = reader.read_stream_headers(
+        scrcpy.StreamHeaderSpec(device_meta=True, dummy_byte=True)
+    )
+    assert stream_header.dummy_byte is True
+    assert stream_header.device_name == "phone"
     pts, _payload = reader.read_frame()
     assert pts == 7
     assert reader.geometry.width == 720
     assert reader.geometry.height == 1280
 
 
-def test_reader_rejects_implausible_device_name_length() -> None:
-    data = struct.pack(">Q", 10**9)
-    reader = scrcpy.VideoFrameReader(FakeSocket(data))
-    with pytest.raises(scrcpy.ScrcpyProtocolError):
-        reader.read_stream_headers(scrcpy.StreamHeaderSpec())
+def test_reader_stream_headers_truncated() -> None:
+    reader = scrcpy.VideoFrameReader(FakeSocket(b"name"))
+    with pytest.raises(scrcpy.ScrcpyDisconnected):
+        reader.read_stream_headers(scrcpy.StreamHeaderSpec(device_meta=True))
+
+
+def test_reader_frame_header_flags_mask_pts() -> None:
+    payload = annexb(build_idr())
+    raw_header = struct.pack(
+        ">QI", 0x2000000000000000 | 1234, len(payload)  # KEY_FRAME flag + pts
+    )
+    reader = scrcpy.VideoFrameReader(FakeSocket(raw_header + payload))
+    pts, out = reader.read_frame()
+    assert pts == 1234
+    assert out == payload
+    assert reader.last_info is not None
+    assert reader.last_info.keyframe is True
+
+
+def test_reader_config_packet_flagged() -> None:
+    config_payload = annexb(build_sps(), build_pps())
+    raw_header = struct.pack(">QI", scrcpy.PACKET_FLAG_CONFIG, len(config_payload))
+    keyframe = annexb(build_idr())
+    key_header = struct.pack(
+        ">QI", scrcpy.PACKET_FLAG_KEY_FRAME | 42, len(keyframe)
+    )
+    reader = scrcpy.VideoFrameReader(FakeSocket(raw_header + config_payload + key_header + keyframe))
+    pts, out = reader.read_frame()
+    assert pts == 0
+    assert out == config_payload
+    assert reader.last_info is not None
+    assert reader.last_info.config is True
+    assert reader.last_info.keyframe is False
+    # config 包里的 SPS/PPS 已被缓存，几何可解析
+    assert reader.geometry.width == 1080
+    pts, out = reader.read_frame()
+    assert pts == 42
+    assert reader.last_info is not None
+    assert reader.last_info.config is False
+    assert reader.last_info.keyframe is True
+
+
+def test_decode_frame_header_helper() -> None:
+    size = 10
+    header = struct.pack(">QI", scrcpy.PACKET_FLAG_CONFIG | scrcpy.PACKET_FLAG_KEY_FRAME | 7, size)
+    assert scrcpy.decode_frame_header(header) == (7, size, True, True)
+    assert scrcpy.unpack_frame_header(header) == (7, size)
 
 
 def test_reader_geometry_changes_with_new_sps() -> None:

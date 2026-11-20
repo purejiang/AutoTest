@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
 import tests.test_core_support as support
+from app import db, models
 from app.android.driver import CommandResult
 from app.errors import ApiError
 from app.services import device_registry
@@ -231,6 +233,63 @@ def test_paused_run_allows_manual_with_note(core_client) -> None:
         assert recorder.notes[0][1]["x"] == 3
     finally:
         device_registry.release("fake-1", "run", "2")
+
+
+def _manual_intervention_events(run_id: int) -> list[models.RunEvent]:
+    with db.session_scope() as session:
+        return list(
+            session.execute(
+                select(models.RunEvent).where(
+                    models.RunEvent.run_id == run_id,
+                    models.RunEvent.type == "manual_intervention",
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+def test_paused_run_manual_tap_emits_manual_intervention_event(core_client) -> None:
+    support.insert_run(21, status="paused")
+    device_registry.acquire("fake-1", "run", "21")
+    try:
+        response = core_client.post("/api/devices/fake-1/tap", json={"x": 11, "y": 22})
+        assert response.status_code == 200, response.text
+    finally:
+        device_registry.release("fake-1", "run", "21")
+
+    events = _manual_intervention_events(21)
+    assert len(events) == 1
+    event = events[0]
+    assert event.seq >= 1
+    assert event.payload["kind"] == "tap"
+    assert event.payload["payload"]["x"] == 11
+    assert event.payload["payload"]["y"] == 22
+    assert event.created_at
+
+
+def test_paused_run_manual_key_and_text_emit_events(core_client) -> None:
+    support.insert_run(22, status="paused")
+    device_registry.acquire("fake-1", "run", "22")
+    try:
+        assert core_client.post("/api/devices/fake-1/key", json={"key": "back"}).status_code == 200
+        assert core_client.post("/api/devices/fake-1/text", json={"text": "hi"}).status_code == 200
+    finally:
+        device_registry.release("fake-1", "run", "22")
+    kinds = [event.payload["kind"] for event in _manual_intervention_events(22)]
+    assert kinds == ["key", "input"]
+    seqs = [event.seq for event in _manual_intervention_events(22)]
+    assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
+
+
+def test_normal_manual_tap_emits_no_run_event(core_client) -> None:
+    response = core_client.post("/api/devices/fake-1/tap", json={"x": 1, "y": 2})
+    assert response.status_code == 200
+    with db.session_scope() as session:
+        count = session.execute(
+            select(models.RunEvent).where(models.RunEvent.type == "manual_intervention")
+        ).scalars().all()
+    assert count == []
 
 
 def test_recording_and_mirror_occupancy_do_not_block(core_client) -> None:

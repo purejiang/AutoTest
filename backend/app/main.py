@@ -138,6 +138,14 @@ def _mount_static(app: FastAPI) -> list[str]:
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
         mounted.append(str(STATIC_DIR))
+    # 产物直链（截图/视频/logcat）：必须在 "/" 之前挂载，否则被 SPA fallback 吞掉
+    try:
+        artifacts_root = config.artifacts_dir()
+        if artifacts_root.is_dir():
+            app.mount("/artifacts", StaticFiles(directory=str(artifacts_root)), name="artifacts")
+            mounted.append(f"/artifacts -> {artifacts_root}")
+    except OSError:  # 数据目录不可写时不挂载，端点仍返回 url（会 404，由前端提示）
+        logger.warning("artifacts dir unavailable, skip /artifacts mount")
     if FRONTEND_DIST.is_dir() and (FRONTEND_DIST / "index.html").exists():
         app.mount("/", SPAStaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
         mounted.append(str(FRONTEND_DIST))

@@ -6,7 +6,8 @@
 2. 录制挂钩：点击类 `hooks.on_before_pointer()` -> 注入 -> `hooks.on_action()`；
    滑动/key/text/app 直接 `hooks.on_action()`（环缓冲在 session 内部）；
 3. 占用检查：device 被 run 占用 -> 409 DEVICE_BUSY；run 处于 paused 时放行并额外
-   `hooks.note_manual()`；录制/镜像期间允许手动控制。
+   `hooks.note_manual()` + 一条 §5 `manual_intervention` 运行事件（RunEventBus）；
+   录制/镜像期间允许手动控制。
 
 注意：mirror 的 start/stop/status 端点与 WS 归 be-media（app/api/mirror.py, §14.3），本文件不重复注册。
 """
@@ -146,23 +147,27 @@ def _resolve_swipe(serial: str, payload: SwipeRequest) -> tuple[int, int, int, i
 
 
 # ---------------------------------------------------------------- 占用 / 录制
-def _run_paused(session: Session, run_ref: Any) -> bool:
+def _paused_run_id(session: Session, run_ref: Any) -> int | None:
+    """run 占用且状态 paused -> run_id；否则 None。"""
     try:
         run_id = int(run_ref)
     except (TypeError, ValueError):
-        return False
+        return None
     row = session.get(models.Run, run_id)
-    return bool(row is not None and row.status == "paused")
+    if row is not None and row.status == "paused":
+        return run_id
+    return None
 
 
-def _manual_state(serial: str, session: Session) -> bool:
-    """校验手动控制是否允许；返回 True 表示 run 已 paused（需要 note_manual 留痕）。"""
-    manual = False
+def _manual_state(serial: str, session: Session) -> int | None:
+    """校验手动控制是否允许；返回 paused run 的 id（需 note_manual + manual_intervention 留痕）。"""
+    manual_run_id: int | None = None
     for entry in device_registry.occupancy(serial):
         purpose = str(entry.get("purpose"))
         if purpose == "run":
-            if _run_paused(session, entry.get("ref_id")):
-                manual = True
+            paused_run_id = _paused_run_id(session, entry.get("ref_id"))
+            if paused_run_id is not None:
+                manual_run_id = paused_run_id
                 continue
             raise ApiError(
                 "DEVICE_BUSY",
@@ -172,7 +177,22 @@ def _manual_state(serial: str, session: Session) -> bool:
         if purpose in ("recording", "mirror"):
             continue  # 录制/镜像期间允许手动控制（录制会留痕）
         raise ApiError("DEVICE_BUSY", f"device {serial} is busy with {purpose}", {"serial": serial, "holder": entry})
-    return manual
+    return manual_run_id
+
+
+def _emit_manual_intervention(serial: str, run_id: int, kind: str, payload: dict[str, Any]) -> None:
+    """暂停 run 期间的手动操作 -> §5 manual_intervention 运行事件（失败只告警，控制优先）。"""
+    try:
+        from ..events import RunEventBus  # noqa: PLC0415 - be-runner 模块，缺失时降级
+    except ImportError:
+        logger.warning("RunEventBus not available yet; manual_intervention for run %s dropped", run_id)
+        return
+    try:
+        RunEventBus.emit(int(run_id), "manual_intervention", {"kind": kind, "payload": dict(payload)})
+    except Exception:
+        logger.warning(
+            "emit manual_intervention failed (run=%s serial=%s kind=%s)", run_id, serial, kind, exc_info=True
+        )
 
 
 def _after_action(
@@ -180,11 +200,12 @@ def _after_action(
     kind: str,
     payload: dict[str, Any],
     pre: dict[str, Any] | None = None,
-    manual: bool = False,
+    manual_run_id: int | None = None,
 ) -> None:
     hooks.on_action(serial, kind, payload, pre)
-    if manual:
+    if manual_run_id is not None:
         hooks.note_manual(serial, kind, payload)
+        _emit_manual_intervention(serial, manual_run_id, kind, payload)
 
 
 # ---------------------------------------------------------------- 列表 / 连接
@@ -367,10 +388,10 @@ def tap(
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     x, y = _resolve_point(serial, payload)
-    manual = _manual_state(serial, session)
+    manual_run_id = _manual_state(serial, session)
     pre = hooks.on_before_pointer(serial)
     _device_call(serial, driver.click, x, y)
-    _after_action(serial, "tap", {"x": x, "y": y, "duration_ms": 0}, pre, manual)
+    _after_action(serial, "tap", {"x": x, "y": y, "duration_ms": 0}, pre, manual_run_id)
     return _control_response(serial, "tap", x=x, y=y)
 
 
@@ -382,10 +403,16 @@ def long_press(
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     x, y = _resolve_point(serial, payload)
-    manual = _manual_state(serial, session)
+    manual_run_id = _manual_state(serial, session)
     pre = hooks.on_before_pointer(serial)
     _device_call(serial, driver.long_press, x, y, int(payload.duration_ms))
-    _after_action(serial, "long_press", {"x": x, "y": y, "duration_ms": int(payload.duration_ms)}, pre, manual)
+    _after_action(
+        serial,
+        "long_press",
+        {"x": x, "y": y, "duration_ms": int(payload.duration_ms)},
+        pre,
+        manual_run_id,
+    )
     return _control_response(serial, "long_press", x=x, y=y, duration_ms=payload.duration_ms)
 
 
@@ -397,7 +424,7 @@ def swipe(
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     x1, y1, x2, y2 = _resolve_swipe(serial, payload)
-    manual = _manual_state(serial, session)
+    manual_run_id = _manual_state(serial, session)
     duration = int(payload.duration_ms)
     _device_call(serial, driver.swipe, x1, y1, x2, y2, duration)
     _after_action(
@@ -405,7 +432,7 @@ def swipe(
         "swipe",
         {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "duration_ms": duration},
         None,
-        manual,
+        manual_run_id,
     )
     return _control_response(serial, "swipe", x1=x1, y1=y1, x2=x2, y2=y2, duration_ms=duration)
 
@@ -426,9 +453,9 @@ def press_key(
             code = resolve_key(key_name)
         except ValueError as exc:
             raise ApiError("INVALID_ARGUMENT", str(exc), {"key": key_name}) from exc
-    manual = _manual_state(serial, session)
+    manual_run_id = _manual_state(serial, session)
     _device_call(serial, driver.key, code)
-    _after_action(serial, "key", {"key": key_name, "keycode": code}, None, manual)
+    _after_action(serial, "key", {"key": key_name, "keycode": code}, None, manual_run_id)
     return _control_response(serial, "key", key=key_name, keycode=code)
 
 
@@ -439,12 +466,12 @@ def input_text(
     driver: Driver = Depends(get_driver_or_503),
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    manual = _manual_state(serial, session)
+    manual_run_id = _manual_state(serial, session)
     if payload.clear_first:
         _device_call(serial, driver.clear_text)
     _device_call(serial, driver.input_text, payload.text)
     _after_action(
-        serial, "input", {"text": payload.text, "clear_first": bool(payload.clear_first)}, None, manual
+        serial, "input", {"text": payload.text, "clear_first": bool(payload.clear_first)}, None, manual_run_id
     )
     return _control_response(serial, "input", text=payload.text, clear_first=payload.clear_first)
 
@@ -459,7 +486,7 @@ def control_app(
     package = (payload.package or "").strip()
     if not package:
         raise ApiError("INVALID_ARGUMENT", "package is required for app action", {"action": payload.action})
-    manual = _manual_state(serial, session)
+    manual_run_id = _manual_state(serial, session)
     if payload.action == "launch":
         _device_call(serial, driver.app_start, package, payload.activity)
     elif payload.action == "stop":
@@ -474,7 +501,7 @@ def control_app(
         "app",
         {"action": payload.action, "package": package, "activity": payload.activity},
         None,
-        manual,
+        manual_run_id,
     )
     return _control_response(
         serial, "app", action=payload.action, package=package, activity=payload.activity

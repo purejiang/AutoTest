@@ -268,15 +268,16 @@ def _on_pause_change(ctx: RunContext, entered: bool) -> None:
         reason = control.pause_reason or "user"
         _update_run(ctx.run_id, status="paused", current_step_id=step_id)
         _safe_emit(ctx.run_id, "run_paused", {"reason": reason, "at_step_id": step_id})
+        _safe_emit(ctx.run_id, "run_state", {"status": "paused", "step_index": ctx.step_index})
         return
     if control.stop_event.is_set():
         return
     warnings = list(control.resume_warnings or [])
     control.resume_warnings = []
-    resume_kind = "debug" if (control.pause_reason or "") in ("step_mode", "breakpoint") else "hot"
     control.pause_reason = "user"
     _update_run(ctx.run_id, status="running")
-    _safe_emit(ctx.run_id, "run_resumed", {"resume_kind": resume_kind, "warnings": warnings})
+    _safe_emit(ctx.run_id, "run_resumed", {"resume_kind": "hot", "warnings": warnings})
+    _safe_emit(ctx.run_id, "run_state", {"status": "running", "step_index": ctx.step_index})
 
 
 # ---------------------------------------------------------------- 主循环
@@ -311,7 +312,6 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                 last_error = dict(exc.error)
                 outcomes[step.id] = "failed"
                 _record_attempt(ctx, step, index, "failed", 0, now_iso(), 0, exc.error, None)
-                _safe_emit(ctx.run_id, "error", last_error)
                 raise
 
             ctx.wait_if_paused()
@@ -417,7 +417,6 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                     _record_attempt(
                         ctx, step, index, "failed", attempts, started_iso, step_duration, stop_error, None
                     )
-                    _safe_emit(ctx.run_id, "error", stop_error)
                     raise
                 except BaseException as exc:  # noqa: BLE001 - 统一转 step error
                     step_duration = max(0, ctx.active_elapsed_ms() - started_active)
@@ -484,12 +483,15 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
             raise RunFailed(str(error_code), str(error_message), step_id=step.id)
     except RunStopped as exc:
         exc.summary = _apply_outcomes(summary, outcomes)  # type: ignore[attr-defined]
+        _restore_parent_progress(ctx)
         raise
     except RunFailed as exc:
         exc.summary = _apply_outcomes(summary, outcomes)  # type: ignore[attr-defined]
+        _restore_parent_progress(ctx)
         raise
 
     _apply_outcomes(summary, outcomes)
+    _restore_parent_progress(ctx)
     status = "failed" if summary["failed_steps"] > 0 else "succeeded"
     summary["status"] = status
     summary["error"] = last_error if status == "failed" else None
@@ -535,6 +537,14 @@ def reset_retry_used(retry_used: dict[str, int], steps: list[Any], from_index: i
     """goto 重入：重置目标节点及其后的 retry 计数。"""
     for step in steps[max(0, int(from_index)) :]:
         retry_used.pop(step.id, None)
+
+
+def _restore_parent_progress(ctx: RunContext) -> None:
+    """sub_script 子上下文跑完后，把 run 进度恢复成父节点（避免 UI 高亮到子步骤）。"""
+    parent = ctx.parent
+    if parent is None or parent.current_step_id is None:
+        return
+    _update_run_progress(ctx.run_id, parent.current_step_id, parent.step_index)
 
 
 def _consume_run_from(

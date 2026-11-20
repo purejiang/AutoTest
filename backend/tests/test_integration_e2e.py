@@ -23,6 +23,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOTEST_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
     monkeypatch.setenv("AUTOTEST_CONFIG", str(tmp_path / "config.json"))
     monkeypatch.delenv("AUTOTEST_ADB", raising=False)
+    monkeypatch.setenv("AUTOTEST_FAKE_DEVICE", "1")  # 保证 e2e 不依赖机器上是否插着真机
     config.reset_to_defaults()
     config.ensure_dirs()
     db.reset_engine_for_tests(tmp_path / "e2e.db")

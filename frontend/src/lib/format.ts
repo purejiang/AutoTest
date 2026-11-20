@@ -314,3 +314,12 @@ export function artifactUrl(artifact: Pick<Artifact, 'path'> | { path?: string |
   if (index >= 0) return `/artifacts/${normalized.slice(index + marker.length)}`
   return null
 }
+
+/** 优先用后端返回的 artifact.url（无直链为 null），否则尝试从 path 推导 /artifacts 直链。 */
+export function artifactHref(
+  artifact: Pick<Artifact, 'path'> & { url?: string | null },
+): string | null {
+  const direct = artifact.url
+  if (typeof direct === 'string' && direct.trim()) return direct
+  return artifactUrl(artifact)
+}

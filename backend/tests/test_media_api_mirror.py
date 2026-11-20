@@ -100,31 +100,31 @@ def start_fake_session(serial: str) -> tuple[mirror_module.MirrorSession, FakeSe
     return session, server
 
 
-def recv_text(ws) -> dict:
-    for _ in range(200):
-        message = ws.receive()
-        if message.get("type") != "websocket.receive":
-            continue
-        if message.get("text") is not None:
-            return json.loads(message["text"])
-    raise AssertionError("no text message received")
+def receive_message(ws) -> tuple[str, object]:
+    """TestClient 的 ws.receive() 返回的是 ASGI 原始消息（type=websocket.send）。"""
+    message = ws.receive()
+    text = message.get("text")
+    if text is not None:
+        return "text", json.loads(text)
+    data = message.get("bytes")
+    if data is not None:
+        return "binary", data
+    return receive_message(ws)
 
 
-def wait_kind(ws, kind: str, limit: int = 200) -> dict:
+def wait_kind(ws, kind: str, limit: int = 500) -> dict:
     for _ in range(limit):
-        data = recv_text(ws)
-        if data.get("kind") == kind:
-            return data
+        message_type, payload = receive_message(ws)
+        if message_type == "text" and payload.get("kind") == kind:
+            return payload
     raise AssertionError(f"kind {kind!r} not received")
 
 
 def recv_bytes(ws) -> bytes:
-    for _ in range(200):
-        message = ws.receive()
-        if message.get("type") != "websocket.receive":
-            continue
-        if message.get("bytes") is not None:
-            return message["bytes"]
+    for _ in range(500):
+        message_type, payload = receive_message(ws)
+        if message_type == "binary":
+            return payload
     raise AssertionError("no binary message received")
 
 
@@ -265,9 +265,10 @@ def test_ws_hello_frames_ping_and_keyframe(client) -> None:
 def test_ws_auto_starts_session(client, monkeypatch) -> None:
     serial = "fake-ws-autostart"
     server = FakeServer()
+    real_start = mirror_module.start_session  # 先保存原函数，避免 monkeypatch 递归
 
     def fake_start(session_serial, cfg=None, **_kwargs):
-        return mirror_module.start_session(
+        return real_start(
             session_serial,
             starter=lambda _cfg: server,
             size_probe=lambda: NATURAL,
@@ -309,9 +310,10 @@ def test_ws_accepts_valid_token(client, monkeypatch) -> None:
     config.set_db_overrides({"security.token": "secret-token"})
     serial = "fake-ws-token"
     server = FakeServer()
+    real_start = mirror_module.start_session  # 先保存原函数，避免 monkeypatch 递归
 
     def fake_start(session_serial, cfg=None, **_kwargs):
-        return mirror_module.start_session(
+        return real_start(
             session_serial,
             starter=lambda _cfg: server,
             size_probe=lambda: NATURAL,

@@ -42,13 +42,25 @@ def make_jar(tmp_path: Path, data: bytes = b"fake-scrcpy-server-jar") -> tuple[P
 
 
 class FakeScrcpyServer(threading.Thread):
-    """模拟 scrcpy server：监听端口，按 mode 发 stream 头 + 帧。"""
+    """模拟 v5 server：accept video（control=true 时再 accept control），按握手模式发流。"""
 
-    def __init__(self, port: int, mode: str, *, silent: bool = False) -> None:
+    def __init__(
+        self,
+        port: int,
+        mode: str,
+        *,
+        silent: bool = False,
+        expects_control: bool = True,
+        width: int = 1080,
+        height: int = 1920,
+    ) -> None:
         super().__init__(daemon=True)
         self.port = port
         self.mode = mode
         self.silent = silent
+        self.expects_control = expects_control
+        self.width = width
+        self.height = height
         self.stop_event = threading.Event()
         self.connections: list[socket.socket] = []
         self.error: Exception | None = None
@@ -66,7 +78,15 @@ class FakeScrcpyServer(threading.Thread):
                 except TimeoutError:
                     continue
                 self.connections.append(conn)
-                self._serve(conn)
+                if len(self.connections) == 1:
+                    threading.Thread(
+                        target=_send_stream,
+                        args=(conn, self.mode, self.width, self.height),
+                        kwargs={"silent": self.silent, "stop_event": self.stop_event},
+                        daemon=True,
+                    ).start()
+                else:
+                    threading.Thread(target=self._hold_control, args=(conn,), daemon=True).start()
         except Exception as exc:  # noqa: BLE001 - 测试线程失败在断言里暴露
             self.error = exc
         finally:
@@ -77,15 +97,39 @@ class FakeScrcpyServer(threading.Thread):
                     pass
             listener.close()
 
-    def _serve(self, conn: socket.socket) -> None:
-        _send_stream(conn, self.mode, silent=self.silent, stop_event=self.stop_event)
+    def _hold_control(self, conn: socket.socket) -> None:
+        """control socket：保持打开（真机 server 只在关闭时报错）。"""
+        try:
+            while not self.stop_event.is_set():
+                try:
+                    data = conn.recv(4096)
+                except TimeoutError:
+                    continue
+                if not data:
+                    return
+                self.control_bytes = getattr(self, "control_bytes", b"") + data
+        except OSError:
+            return
 
     def stop(self) -> None:
         self.stop_event.set()
         self.join(timeout=2)
 
 
-def _send_stream(conn: socket.socket, mode: str, *, silent: bool, stop_event: threading.Event) -> None:
+def _frame_with_flags(flags: int, pts: int, payload: bytes) -> bytes:
+    return struct.pack(">QI", flags | pts, len(payload)) + payload
+
+
+def _send_stream(
+    conn: socket.socket,
+    mode: str,
+    width: int,
+    height: int,
+    *,
+    silent: bool,
+    stop_event: threading.Event,
+) -> None:
+    """按 v5 协议模拟 server：dummy → 64B 设备名 → codec id → session meta → config → keyframe → 帧。"""
     if silent:
         while not stop_event.is_set():
             time.sleep(0.02)
@@ -95,14 +139,17 @@ def _send_stream(conn: socket.socket, mode: str, *, silent: bool, stop_event: th
         conn.sendall(data)
 
     try:
+        if mode in ("full", "meta_dummy"):
+            _send(b"\x00")  # send_dummy_byte
         if mode != "raw":
-            device_name = b"fake-device"
-            codec_id = int.from_bytes(b"h264", "big")
-            _send(struct.pack(">Q", len(device_name)) + device_name)
-            _send(struct.pack(">III", codec_id, 1080, 1920))
-            if mode == "meta_dummy":
-                _send(b"\x00")
-        _send(scrcpy.pack_frame(0, KEYFRAME))
+            _send(b"fake-device".ljust(scrcpy.DEVICE_NAME_FIELD_LENGTH, b"\x00"))
+            _send(struct.pack(">I", int.from_bytes(b"h264", "big")))
+            # session meta 伪包头：u64 = PACKET_FLAG_SESSION|u32 flags, u32 = height
+            _send(struct.pack(">III", 0x80000000, width, height))
+        # codec config 包（SPS/PPS，flag=CONFIG，pts=0）
+        _send(_frame_with_flags(scrcpy.PACKET_FLAG_CONFIG, 0, annexb(PORTRAIT_SPS, PPS)))
+        # 第一个真实帧：keyframe flag + IDR
+        _send(_frame_with_flags(scrcpy.PACKET_FLAG_KEY_FRAME, 0, KEYFRAME))
         pts = 30_000
         while not stop_event.is_set():
             time.sleep(0.02)
@@ -133,7 +180,8 @@ class FakeScrcpyConnector(threading.Thread):
                 time.sleep(0.02)
         if self.conn is None:
             return
-        _send_stream(self.conn, self.mode, silent=self.silent, stop_event=self.stop_event)
+        if self.mode == "raw":
+            _send_stream(self.conn, "raw", 1080, 1920, silent=self.silent, stop_event=self.stop_event)
         try:
             self.conn.close()
         except OSError:
@@ -173,10 +221,10 @@ class FakeProcess:
 
 
 class FakeAdbOps:
-    """adbd 替身：forward 只记录端口，start_process 在本机起假 server。"""
+    """adbd 替身：forward 只记录端口，start_process 在本机起假 server；模拟 ls -l 远端 jar。"""
 
-    def __init__(self, *, reject_raw: bool = False, silent: bool = False) -> None:
-        self.reject_raw = reject_raw
+    def __init__(self, *, reject_full: bool = False, silent: bool = False) -> None:
+        self.reject_full = reject_full
         self.silent = silent
         self.push_calls: list[tuple[str, str]] = []
         self.forward_calls: list[tuple[str, str]] = []
@@ -184,12 +232,18 @@ class FakeAdbOps:
         self.reverse_calls: list[tuple[str, str]] = []
         self.commands: list[str] = []
         self.processes: list[FakeProcess] = []
+        self.shell_calls: list[str] = []
         self.port: int | None = None
+        self.remote_jar_size: int | None = None
         self.devices = [{"serial": "fake-1", "state": "device"}]
 
     # ---- 契约 §14.1 形状
     def push(self, local: Path, remote: str) -> None:
         self.push_calls.append((str(local), remote))
+        try:
+            self.remote_jar_size = Path(local).stat().st_size
+        except OSError:
+            self.remote_jar_size = 0
 
     def forward(self, local: str, remote: str) -> None:
         self.forward_calls.append((local, remote))
@@ -208,17 +262,38 @@ class FakeAdbOps:
         return [dict(item) for item in self.devices]
 
     def shell_text(self, command: str, timeout: float = 10.0) -> str:
+        self.shell_calls.append(command)
+        if command.startswith("ls -l"):
+            if self.remote_jar_size is None:
+                return f"ls: {scrcpy.REMOTE_JAR_PATH}: No such file or directory\n"
+            return (
+                f"-rw-r--r-- 1 shell shell {self.remote_jar_size} 2026-11-20 08:26 "
+                f"{scrcpy.REMOTE_JAR_PATH}\n"
+            )
+        if "logcat -b crash" in command:
+            return "--------- beginning of crash\n"
         return "Physical size: 1080x1920\n"
 
     def start_process(self, command: str) -> FakeProcess:
         self.commands.append(command)
-        if self.reject_raw and "send_device_meta=false" in command:
-            proc = FakeProcess(dead=True, stderr_text="java.lang.IllegalArgumentException: Unknown option: send_device_meta")
+        if self.reject_full and "send_dummy_byte=true" in command:
+            proc = FakeProcess(dead=True, stderr_text="java.lang.IllegalArgumentException: rejected full handshake")
             self.processes.append(proc)
             return proc
-        mode = "raw" if "send_device_meta=false" in command else "meta"
+        if "send_device_meta=false" in command:
+            mode = "raw"
+        elif "send_dummy_byte=true" in command:
+            mode = "full"
+        else:
+            mode = "meta"
+        expects_control = "control=true" in command
         assert self.port is not None, "forward() must be called before start_process()"
-        thread = FakeScrcpyServer(self.port, mode, silent=self.silent)
+        thread = FakeScrcpyServer(
+            self.port,
+            mode,
+            silent=self.silent,
+            expects_control=expects_control,
+        )
         thread.start()
         proc = FakeProcess(thread)
         self.processes.append(proc)
@@ -302,12 +377,15 @@ def test_build_server_args_contract(tmp_path) -> None:
         "video_bit_rate=4000000",
         "tunnel_forward=true",
         "control=false",
-        f"socket={cfg.socket_name}",
+        f"scid={cfg.scid}",
+        "send_stream_meta=false",
+        "send_frame_meta=true",
         "send_device_meta=false",
-        "send_codec_meta=false",
         "send_dummy_byte=false",
     ):
         assert expected in joined
+    assert "send_codec_meta" not in joined  # v5 不存在该参数
+    assert "socket=" not in joined  # v5 用 scid 派生 localabstract 名
     command = scrcpy.build_server_command(cfg, "raw")
     assert command.startswith(f"CLASSPATH={scrcpy.REMOTE_JAR_PATH} app_process / ")
     assert scrcpy.SERVER_CLASS in command
@@ -319,7 +397,20 @@ def test_build_server_args_includes_crop_and_control(tmp_path) -> None:
     joined = " ".join(scrcpy.build_server_args(cfg, "meta"))
     assert "crop=800:1600:100:200" in joined
     assert "control=true" in joined
-    assert "send_device_meta=false" not in joined
+    assert "send_device_meta=true" in joined
+    assert "send_dummy_byte=false" in joined
+    dummy_joined = " ".join(scrcpy.build_server_args(cfg, "meta_dummy"))
+    assert "send_dummy_byte=true" in dummy_joined
+
+
+def test_device_socket_name_derived_from_scid(tmp_path) -> None:
+    jar, _ = make_jar(tmp_path)
+    cfg = scrcpy.ServerConfig(jar_path=jar, scid=0x1234ABCD)
+    assert cfg.device_socket_name == "scrcpy_1234abcd"
+    assert scrcpy.ServerConfig(jar_path=jar, scid=-1).device_socket_name == "scrcpy"
+    assert scrcpy.ServerConfig(jar_path=jar).device_socket_name.startswith("scrcpy_")
+    with pytest.raises(ApiError):
+        scrcpy.ServerConfig(jar_path=jar, scid=-2)
 
 
 def test_socket_name_is_unique_and_prefixed() -> None:
@@ -385,7 +476,8 @@ def test_start_server_raw_mode(tmp_path) -> None:
         assert first_payload == KEYFRAME
         # 推送/forward 参数符合契约
         assert ops.push_calls[0] == (str(cfg.jar_path), scrcpy.REMOTE_JAR_PATH)
-        assert ops.forward_calls[0] == (f"tcp:{server.local_port}", f"localabstract:{cfg.socket_name}")
+        assert ops.forward_calls[0] == (f"tcp:{server.local_port}", f"localabstract:{cfg.device_socket_name}")
+        assert cfg.device_socket_name.startswith("scrcpy_")
         # server 参数
         assert "audio=false" in ops.commands[0] and "video=true" in ops.commands[0]
         assert server.request_keyframe() is False  # control 默认关闭
@@ -404,7 +496,7 @@ def test_start_server_falls_back_to_meta_mode(tmp_path) -> None:
         assert (server.geometry.width, server.geometry.height) == (1080, 1920)
         assert len(ops.commands) == 2
         assert "send_device_meta=false" in ops.commands[0]
-        assert "send_device_meta=false" not in ops.commands[1]
+        assert "send_device_meta=true" in ops.commands[1]
         # 第一次失败的 forward 也被清理
         assert len(ops.removed_forwards) == 1
     finally:

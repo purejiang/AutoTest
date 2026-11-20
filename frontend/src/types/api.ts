@@ -209,6 +209,8 @@ export interface Artifact {
   kind: string
   name: string
   path: string
+  /** 产物直链（后端 /artifacts/<相对路径>），无直链时为 null */
+  url?: string | null
   size: number
   created_at: string
 }
@@ -260,7 +262,11 @@ export interface RecordingEvent {
     duration_ms?: number
     text?: string
     key?: string
+    /** 后端落库字段为 node；保留 target 以兼容旧版本 */
+    node?: Target | null
     target?: Target | null
+    from?: { x: number; y: number }
+    to?: { x: number; y: number }
     confidence_reason?: string
     [key: string]: unknown
   }

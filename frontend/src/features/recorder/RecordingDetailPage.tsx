@@ -65,12 +65,33 @@ function kindMeta(kind: string): { label: string; color: string } {
 }
 
 function targetText(event: RecordingEvent): string {
-  // 契约 types/api.ts 写的是 payload.target；当前后端录制事件实际落在 payload.node，
-  // 两者都兼容，避免目标列显示为 —。
-  const target = event.payload.target ?? (event.payload.node as Target | undefined) ?? null
+  // 后端落库字段是 payload.node；types/api.ts 同时保留 payload.target 兼容，优先 node。
+  const target = (event.payload.node as Target | undefined) ?? event.payload.target ?? null
   if (!target) return '—'
   if (target.by === 'point') return `point (${target.x ?? '?'}, ${target.y ?? '?'})`
   return `${target.by} = ${target.value ?? ''}`
+}
+
+interface PointLike {
+  x?: number
+  y?: number
+}
+
+function formatPoint(point: PointLike | undefined): string {
+  if (!point) return '—'
+  return `(${point.x ?? '?'}, ${point.y ?? '?'})`
+}
+
+function coordText(event: RecordingEvent): string {
+  const payload = event.payload
+  // swipe/drag 的 payload 是 from/to 结构，优先展示；其余事件退回 x/y。
+  const from = payload.from as PointLike | undefined
+  const to = payload.to as PointLike | undefined
+  if (from || to) return `${formatPoint(from)} → ${formatPoint(to)}`
+  if (payload.x !== undefined || payload.y !== undefined) {
+    return `${payload.x ?? '?'}, ${payload.y ?? '?'}`
+  }
+  return '—'
 }
 
 interface ConvertFormValues {
@@ -202,11 +223,8 @@ export default function RecordingDetailPage() {
     },
     {
       title: '坐标',
-      width: 130,
-      render: (_, event) => {
-        const { x, y } = event.payload
-        return x === undefined && y === undefined ? '—' : `${x ?? '?'}, ${y ?? '?'}`
-      },
+      width: 190,
+      render: (_, event) => <span className="code-text small-text">{coordText(event)}</span>,
     },
     {
       title: '目标',

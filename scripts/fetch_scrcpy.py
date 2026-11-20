@@ -10,7 +10,11 @@ scrcpy-server 是 Android 端的 dex jar，由 adb push 到手机后通过 app_p
 
 产物：
     backend/vendor/scrcpy-server-v5.0.1.jar
-    backend/vendor/scrcpy.lock.json   # {version,url,sha256,size,fetched_at}
+    backend/vendor/scrcpy.lock.json   # {version,url,asset_name,local_name,sha256,size,fetched_at}
+
+注意：GitHub release 资产名是 ``scrcpy-server-v5.0.1``（**没有** .jar 后缀），
+本地保存为 ``scrcpy-server-v5.0.1.jar``（扩展名只是方便识别，jar 内容一致）。
+urllib 默认 HTTP/1.1，不会触发 GitHub 的 HTTP/2 framing 问题。
 
 约定：
 - 只允许从官方 GitHub Release 下载；下载失败**绝不**伪造成功，打印清晰错误并非零退出。
@@ -33,9 +37,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 VERSION = "5.0.1"
-JAR_NAME = f"scrcpy-server-v{VERSION}.jar"
+# GitHub release 资产名**没有** .jar 后缀；下载后本地保存为 .jar 供 adb push / 校验
+ASSET_NAME = f"scrcpy-server-v{VERSION}"
+JAR_NAME = f"{ASSET_NAME}.jar"
 LOCK_NAME = "scrcpy.lock.json"
-URL = f"https://github.com/Genymobile/scrcpy/releases/download/v{VERSION}/{JAR_NAME}"
+URL = f"https://github.com/Genymobile/scrcpy/releases/download/v{VERSION}/{ASSET_NAME}"
+# 官方 release API 的 assets[].digest（仅作参考展示；lock 文件以实际下载校验值为准）
+OFFICIAL_SHA256 = "764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENDOR_DIR = REPO_ROOT / "backend" / "vendor"
@@ -161,9 +169,12 @@ def write_lock(jar: Path) -> dict:
     lock = {
         "version": VERSION,
         "url": URL,
+        "asset_name": ASSET_NAME,
+        "local_name": JAR_NAME,
         "sha256": digest,
         "size": jar.stat().st_size,
         "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "verified_against": "GitHub release API digest field (assets[].digest)",
     }
     lock_file = lock_path(jar)
     lock_file.parent.mkdir(parents=True, exist_ok=True)

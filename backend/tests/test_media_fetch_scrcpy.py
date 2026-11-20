@@ -62,8 +62,8 @@ def test_check_valid_jar_returns_zero(tmp_path) -> None:
 
 
 def test_check_sha_mismatch_returns_nonzero(tmp_path) -> None:
-    jar, _lock = write_valid_jar(tmp_path)
-    jar.write_bytes(b"tampered bytes")
+    jar, lock = write_valid_jar(tmp_path)
+    jar.write_bytes(b"x" * lock["size"])  # 同大小、不同内容 → 只触发 sha 校验
     result = run_fetch(["--check"], jar)
     assert result.returncode != 0
     output = (result.stdout + result.stderr).lower()

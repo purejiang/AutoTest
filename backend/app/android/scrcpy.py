@@ -12,17 +12,21 @@
 - H.264 工具：NAL 扫描、NAL 类型、``codec_string_from_sps``、``is_keyframe``、``build_avcc``、
   最小 SPS 解析（宽高/裁剪）。
 
-**协议假设（无真机，待真机核对项见 docs/device-testing-checklist.md）**
-scrcpy ≤v3 的 server 会在视频 socket 上先发 device meta（u64 长度 + UTF-8 设备名）与
-codec meta（u32 fourcc + u32 宽 + u32 高），部分版本在 tunnel_forward 时再补一个 dummy 字节。
-本模块默认优先用 ``send_device_meta=false send_codec_meta=false send_dummy_byte=false``
-拿到"纯 12 字节头"流（契约 §10 的最小解析口径）；若 v5 server 不再接受这些参数
-（进程退出 / 首帧不是 Annex B），自动降级为官方默认握手（meta），再降级为 meta+dummy。
-``ServerConfig.stream_mode`` 可显式指定 ``raw|meta|meta_dummy``。
-
-socket 命名：``localabstract:autotest_scrcpy_<pid>_<rand>``（本进程内唯一）。
-v5 server 的 socket 参数名按 ``socket=<name>`` 传入；若真机核实 v5 仍用 ``scid`` 派生名，
-只需把 ``ServerConfig.socket_option`` / ``socket_name`` 调整（不影响其余代码）。
+**v5.0.1 协议（已按官方 scrcpy-server-v5.0.1.jar 的 dex 反汇编核实）**
+- server 参数是 ``key=value``，第一个参数是版本号 ``5.0.1``；socket 由 ``scid=<int>`` 派生：
+  ``scrcpy``（scid=-1）或 ``scrcpy_<scid:%08x>``，因此本模块的 localabstract 名是
+  ``scrcpy_<8位小写hex>``（随机 scid，天然唯一；``socket_name`` 字段仅作本进程逻辑名/日志）。
+- ``tunnel_forward=true`` 时 server 端 ``LocalServerSocket.accept()``：按序 accept video → control，
+  客户端（本模块）用 ``adb forward tcp:<port> localabstract:<name>`` 后 connect。
+- 可选 stream 头（默认都发，本模块显式关掉后再按模式降级）：
+  1. ``send_dummy_byte=true`` → video socket 上先写 1 个 dummy 字节；
+  2. ``send_device_meta=true`` → 固定 64 字节 UTF-8 设备名（NUL 补齐，无长度前缀）；
+  3. ``send_stream_meta=true`` → u32 codec fourcc + 12 字节 session meta（flags/width/height）。
+  本模块的三种模式：``raw``（全关，纯 12 字节头帧）、``meta``（device meta + 帧）、
+  ``meta_dummy``（dummy + device meta + 帧），auto 依次尝试。
+- 帧头 **12 字节**：``u64 = flags | pts``（见 ``PACKET_FLAG_*``）+ ``u32 payload_len``；
+  config 包（SPS/PPS）不进 WS 帧流，转成 ``config`` 控制消息与 hello/sps_b64。
+- 控制消息 type 17 = ``TYPE_RESET_VIDEO`` → 请求 keyframe；本模块默认不开 control socket。
 """
 
 from __future__ import annotations
@@ -52,6 +56,7 @@ SCRCPY_VERSION = "5.0.1"
 JAR_NAME = f"scrcpy-server-v{SCRCPY_VERSION}.jar"
 LOCK_NAME = "scrcpy.lock.json"
 REMOTE_JAR_PATH = "/data/local/tmp/autotest-scrcpy.jar"
+OFFICIAL_JAR_SIZE = 733930  # scrcpy-server-v5.0.1 官方 release 大小（本地 jar 校验的兜底值）
 SERVER_CLASS = "com.genymobile.scrcpy.Server"
 SOCKET_PREFIX = "autotest_scrcpy_"
 
@@ -77,10 +82,20 @@ CODEC_FOURCC: dict[int, str] = {
     int.from_bytes(b"av01", "big"): "av1",
 }
 
-# 控制消息：让编码器尽快出 IDR（scrcpy v2+ 控制协议 1 字节 type）。
-# 真机核对项：若 v5 的 REQUEST_KEYFRAME 不是 16，改这里即可；默认 control=false，
-# 没有 control socket 时 request_keyframe 只记 debug 日志，不影响主链路。
-CONTROL_REQUEST_KEYFRAME = 16
+# v5 控制消息：1 字节 type。TYPE_RESET_VIDEO=17 → 请求编码器尽快出 IDR（见 v5 jar
+# control/ControlMessage.TYPE_RESET_VIDEO + Controller.resetVideo）。
+# 默认 control=false；没有 control socket 时 request_keyframe 只记 debug 日志。
+CONTROL_REQUEST_KEYFRAME = 17
+
+# v5 12 字节帧头里的 u64 实际是 [flags 高位 + pts]（Streamer 反汇编确认）：
+#   PACKET_FLAG_SESSION   = 1<<63（session meta 伪包头：u32 flags|u32 width|u32 height）
+#   PACKET_FLAG_CONFIG    = 1<<62（codec config 包：payload 是 SPS/PPS，不是图像帧）
+#   PACKET_FLAG_KEY_FRAME = 1<<61（关键帧）
+#   pts 只有低 61 位有效
+PACKET_FLAG_SESSION = 1 << 63
+PACKET_FLAG_CONFIG = 1 << 62
+PACKET_FLAG_KEY_FRAME = 1 << 61
+PACKET_PTS_MASK = (1 << 61) - 1
 
 
 # ---------------------------------------------------------------- 异常
@@ -428,6 +443,8 @@ class FrameInfo:
     pts_us: int
     size: int
     keyframe: bool = False
+    config: bool = False  # v5 codec config 包（payload 是 SPS/PPS，不是图像帧）
+    session_meta: bool = False  # v5 session meta 伪包头（旋转/尺寸变化时重发）
     nals: tuple[int, ...] = ()
     sps_changed: bool = False
     pps_changed: bool = False
@@ -435,17 +452,47 @@ class FrameInfo:
 
 
 def pack_frame(pts_us: int, payload: bytes) -> bytes:
-    """按契约 §6.2 的 12 字节头打包（后端对上游帧可原样透传）。"""
-    return FRAME_HEADER.pack(int(pts_us) & 0xFFFFFFFFFFFFFFFF, len(payload)) + payload
+    """按契约 §6.2 的 12 字节头打包（对外 WS 帧：pts 不带 v5 内部 flag）。"""
+    return FRAME_HEADER.pack(int(pts_us) & PACKET_PTS_MASK, len(payload)) + payload
 
 
 def unpack_frame_header(header: bytes) -> tuple[int, int]:
+    """解析 12 字节头 → (掩掉 v5 flag 的 pts_us, payload_len)。"""
     if len(header) != FRAME_HEADER_SIZE:
         raise ScrcpyProtocolError(f"frame header must be {FRAME_HEADER_SIZE} bytes, got {len(header)}")
-    pts_us, size = FRAME_HEADER.unpack(header)
+    raw_pts, size = FRAME_HEADER.unpack(header)
     if size > MAX_PAYLOAD_BYTES:
         raise ScrcpyProtocolError(f"frame payload length out of range: {size}")
-    return pts_us, size
+    return raw_pts & PACKET_PTS_MASK, size
+
+
+def decode_frame_header(header: bytes) -> tuple[int, int, bool, bool]:
+    """解析 v5 12 字节头 → ``(pts_us, size, is_config, is_keyframe)``（session 包也按此返回）。"""
+    if len(header) != FRAME_HEADER_SIZE:
+        raise ScrcpyProtocolError(f"frame header must be {FRAME_HEADER_SIZE} bytes, got {len(header)}")
+    raw_pts, size = FRAME_HEADER.unpack(header)
+    if not (raw_pts & PACKET_FLAG_SESSION) and size > MAX_PAYLOAD_BYTES:
+        raise ScrcpyProtocolError(f"frame payload length out of range: {size}")
+    return (
+        raw_pts & PACKET_PTS_MASK,
+        size,
+        bool(raw_pts & PACKET_FLAG_CONFIG),
+        bool(raw_pts & PACKET_FLAG_KEY_FRAME),
+    )
+
+
+def decode_session_meta(header: bytes) -> tuple[int, int, bool]:
+    """解析 session meta 伪包头 → ``(width, height, locked)``。
+
+    v5 ``Streamer.writeSessionMeta`` 写 12 字节：``u32 flags | u32 width | u32 height``，
+    其中 flags 的高位 = PACKET_FLAG_SESSION，bit0 = 客户端 resize 锁定标志。
+    """
+    raw_pts, height = FRAME_HEADER.unpack(header)
+    if not raw_pts & PACKET_FLAG_SESSION:
+        raise ScrcpyProtocolError("not a session meta packet")
+    flags_hi = (raw_pts >> 32) & 0xFFFFFFFF
+    width = raw_pts & 0xFFFFFFFF
+    return width, height, bool(flags_hi & 0x1)
 
 
 def _looks_like_annexb(payload: bytes) -> bool:
@@ -459,31 +506,38 @@ def _looks_like_annexb(payload: bytes) -> bool:
     return nal_type(nals[0]) in (NAL_SLICE, NAL_IDR, NAL_SEI, NAL_SPS, NAL_PPS, NAL_AUD)
 
 
-# ---------------------------------------------------------------- stream 头（scrcpy 官方握手）
+# ---------------------------------------------------------------- stream 头（v5 可选握手）
+DEVICE_NAME_FIELD_LENGTH = 64  # v5 DesktopConnection.DEVICE_NAME_FIELD_LENGTH
+
+
 @dataclass(frozen=True)
 class StreamHeaderSpec:
+    """v5 握手顺序：dummy 字节 → 64B 设备名 → u32 codec id（session meta 走帧头循环）。"""
+
     device_meta: bool = True
-    codec_meta: bool = True
-    dummy_byte: bool = False
+    dummy_byte: bool = True
+    stream_meta: bool = True  # 4 字节 codec id；随后第一个 12B "包头" 是 session meta
 
 
 STREAM_MODE_SPECS: dict[str, StreamHeaderSpec | None] = {
-    "raw": None,  # server 端被要求不发 meta：纯 12 字节头
-    "meta": StreamHeaderSpec(device_meta=True, codec_meta=True, dummy_byte=False),
-    "meta_dummy": StreamHeaderSpec(device_meta=True, codec_meta=True, dummy_byte=True),
+    # 官方默认（全开）：dummy + 设备名 + codec id + session meta + 帧
+    "full": StreamHeaderSpec(device_meta=True, dummy_byte=True, stream_meta=True),
+    # 只关 dummy
+    "meta": StreamHeaderSpec(device_meta=True, dummy_byte=False, stream_meta=True),
+    # 全关：纯 12 字节头帧（无 dummy/name/codec/session meta）
+    "raw": None,
 }
 
 
 @dataclass(frozen=True)
 class StreamHeader:
     device_name: str = ""
+    dummy_byte: bool = False
     codec_id: int = 0
-    width: int = 0
-    height: int = 0
     codec: str = ""
 
     def to_geometry(self) -> VideoGeometry:
-        return VideoGeometry(width=self.width, height=self.height, codec=self.codec)
+        return VideoGeometry(codec=self.codec)
 
 
 def _recv_exact(sock: socket.socket, count: int) -> bytes:
@@ -492,7 +546,7 @@ def _recv_exact(sock: socket.socket, count: int) -> bytes:
     while remaining > 0:
         try:
             chunk = sock.recv(remaining)
-        except (TimeoutError, socket.timeout) as exc:
+        except TimeoutError as exc:
             raise TimeoutError(f"timed out reading {count} bytes from scrcpy socket") from exc
         if not chunk:
             raise ScrcpyDisconnected("scrcpy socket closed by peer")
@@ -502,36 +556,36 @@ def _recv_exact(sock: socket.socket, count: int) -> bytes:
 
 
 def read_stream_headers(sock: socket.socket, spec: StreamHeaderSpec) -> StreamHeader:
-    """读取 scrcpy 官方 stream 头：device meta + codec meta（+ 可选 dummy 字节）。"""
-    device_name = ""
-    if spec.device_meta:
-        raw_length = _recv_exact(sock, 8)
-        (name_length,) = struct.unpack(">Q", raw_length)
-        if name_length > 1024:
-            raise ScrcpyProtocolError(f"implausible device name length: {name_length}")
-        if name_length:
-            device_name = _recv_exact(sock, name_length).decode("utf-8", errors="replace")
-    codec_id = 0
-    width = 0
-    height = 0
-    codec = ""
-    if spec.codec_meta:
-        raw_meta = _recv_exact(sock, 12)
-        codec_id, width, height = struct.unpack(">III", raw_meta)
-        codec = CODEC_FOURCC.get(codec_id, "")
-        if width > 16384 or height > 16384:
-            raise ScrcpyProtocolError(f"implausible codec meta: {width}x{height}")
+    """读取 v5 stream 头：dummy 字节 → 64 字节设备名 → u32 codec id。
+
+    紧随其后的 12 字节是 session meta 伪包头（PACKET_FLAG_SESSION），由 ``read_frame`` 消费。
+    """
+    dummy = False
     if spec.dummy_byte:
         _recv_exact(sock, 1)
-    return StreamHeader(device_name=device_name, codec_id=codec_id, width=width, height=height, codec=codec)
+        dummy = True
+    device_name = ""
+    if spec.device_meta:
+        raw_name = _recv_exact(sock, DEVICE_NAME_FIELD_LENGTH)
+        device_name = raw_name.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
+    codec_id = 0
+    codec = ""
+    if spec.stream_meta:
+        (codec_id,) = struct.unpack(">I", _recv_exact(sock, 4))
+        codec = CODEC_FOURCC.get(codec_id, "")
+    return StreamHeader(device_name=device_name, dummy_byte=dummy, codec_id=codec_id, codec=codec)
 
 
 class VideoFrameReader:
     """从 scrcpy video socket 读帧（12 字节头 + Annex B payload）。
 
     - ``read_frame() -> (pts_us, payload)``；短读自动重试；对端关闭抛 ``ScrcpyDisconnected``；
-    - 自动缓存 SPS/PPS 并维护 ``geometry``（编码尺寸/旋转/``avc1.PPCCLL``）；
-    - ``last_info`` 暴露本帧的 NAL 类型、是否关键帧、SPS/PPS 是否变化。
+    - v5 的 session meta 伪包头（PACKET_FLAG_SESSION）不出 payload：返回 ``(0, b"")``，
+      并通过 ``last_info.session_meta=True`` + ``geometry.width/height`` 暴露新尺寸/旋转；
+    - v5 的 codec config 包（PACKET_FLAG_CONFIG，SPS/PPS）返回 ``(0, payload)`` 且
+      ``last_info.config=True``；``codec_config`` 缓存最近一次 config payload 供上层 in-band 拼接；
+    - 自动缓存 SPS/PPS 并维护 ``geometry``（尺寸优先取 session meta，codec 串取 SPS）；
+    - ``last_info`` 暴露本帧 NAL 类型、关键帧、SPS/PPS/尺寸变化。
     """
 
     def __init__(self, sock: socket.socket, *, timeout: float | None = None) -> None:
@@ -539,8 +593,11 @@ class VideoFrameReader:
         self.timeout = timeout
         self.geometry = VideoGeometry()
         self.last_info: FrameInfo | None = None
+        self.codec_config: bytes = b""  # 最近一次 CONFIG 包（SPS/PPS，Annex B）
+        self.session_size: tuple[int, int] | None = None
         self._sps: bytes = b""
         self._pps: bytes = b""
+        self._session_locked = False
         self._open = True
         if timeout is not None:
             try:
@@ -562,13 +619,51 @@ class VideoFrameReader:
     # ---- 帧
     def read_frame(self) -> tuple[int, bytes]:
         header = self._read_exact(FRAME_HEADER_SIZE)
-        pts_us, size = unpack_frame_header(header)
+        raw_pts, size = FRAME_HEADER.unpack(header)
+        if raw_pts & PACKET_FLAG_SESSION:
+            info = self._update_session_meta(header)
+            self.last_info = info
+            return (0, b"")
+        if size > MAX_PAYLOAD_BYTES:
+            raise ScrcpyProtocolError(f"frame payload length out of range: {size}")
+        pts_us = raw_pts & PACKET_PTS_MASK
+        is_config = bool(raw_pts & PACKET_FLAG_CONFIG)
+        is_key = bool(raw_pts & PACKET_FLAG_KEY_FRAME)
         payload = self._read_exact(size) if size else b""
-        info = self._update_info(pts_us, payload)
+        info = self._update_info(pts_us, payload, config=is_config, keyframe_flag=is_key)
         self.last_info = info
         return pts_us, payload
 
-    def _update_info(self, pts_us: int, payload: bytes) -> FrameInfo:
+    def _update_session_meta(self, header: bytes) -> FrameInfo:
+        width, height, locked = decode_session_meta(header)
+        if not (0 < width <= 16384 and 0 < height <= 16384):
+            raise ScrcpyProtocolError(f"implausible session meta size: {width}x{height}")
+        self.session_size = (width, height)
+        self._session_locked = locked
+        self.geometry = VideoGeometry(
+            width=width,
+            height=height,
+            rotation=self.geometry.rotation,
+            codec=self.geometry.codec,
+            sps=self._sps or None,
+            pps=self._pps or None,
+        )
+        logger.info("scrcpy session meta: %dx%d locked=%s", width, height, locked)
+        return FrameInfo(
+            pts_us=0,
+            size=0,
+            session_meta=True,
+            geometry=self.geometry,
+        )
+
+    def _update_info(
+        self,
+        pts_us: int,
+        payload: bytes,
+        *,
+        config: bool = False,
+        keyframe_flag: bool = False,
+    ) -> FrameInfo:
         nals = split_nals(payload)
         sps_changed = False
         pps_changed = False
@@ -586,8 +681,8 @@ class VideoFrameReader:
                     logger.warning("failed to parse SPS: %s", exc)
                     continue
                 self.geometry = VideoGeometry(
-                    width=info.width,
-                    height=info.height,
+                    width=self.geometry.width or info.width,
+                    height=self.geometry.height or info.height,
                     rotation=self.geometry.rotation,
                     codec=info.codec,
                     sps=nal,
@@ -606,10 +701,13 @@ class VideoFrameReader:
                 sps=self._sps,
                 pps=self._pps or None,
             )
+        if config and payload:
+            self.codec_config = payload
         return FrameInfo(
             pts_us=pts_us,
             size=len(payload),
-            keyframe=is_keyframe(nals),
+            keyframe=keyframe_flag or is_keyframe(nals),
+            config=config,
             nals=tuple(types),
             sps_changed=sps_changed,
             pps_changed=pps_changed,
@@ -626,7 +724,13 @@ class VideoFrameReader:
 
 # ---------------------------------------------------------------- ServerConfig
 def default_socket_name() -> str:
+    """本进程逻辑 session 名（日志/registry 用；真机 localabstract 由 scid 派生）。"""
     return f"{SOCKET_PREFIX}{os.getpid()}_{secrets.token_hex(4)}"
+
+
+def default_scid() -> int:
+    """v5 ``scid``：随机正整数（派生 localabstract:scrcpy_<8位小写hex>）。"""
+    return secrets.randbelow(0xFFFFFFFF) + 1
 
 
 _CROP_RE = re.compile(r"^\d+:\d+:\d+:\d+$")
@@ -643,12 +747,12 @@ class ServerConfig:
     video_bit_rate: int = 8_000_000
     crop: str = ""
     codec: str = "h264"
-    socket_name: str = field(default_factory=default_socket_name)
-    socket_option: str = "socket"  # v5 参数名；真机核对项
+    socket_name: str = field(default_factory=default_socket_name)  # 逻辑名（日志/registry）
+    scid: int = field(default_factory=default_scid)  # v5 真机 socket：scrcpy_<%08x>
     tunnel_forward: bool = True
-    control: bool = False
+    control: bool = True  # v5：control=true 时 server 会 accept 第二个 socket，必须连接
     log_level: str = "info"
-    stream_mode: str = "auto"  # auto|raw|meta|meta_dummy
+    stream_mode: str = "auto"  # auto|full|meta|raw
     connect_timeout_s: float = 10.0
     handshake_timeout_s: float = 3.0
     first_frame_timeout_s: float = 8.0
@@ -667,7 +771,9 @@ class ServerConfig:
             raise ApiError("UNSUPPORTED", f"仅支持 h264 镜像（收到 {self.codec}）")
         if not _SOCKET_RE.match(self.socket_name):
             raise ApiError("INVALID_ARGUMENT", f"非法 socket 名: {self.socket_name}")
-        if self.stream_mode not in ("auto", "raw", "meta", "meta_dummy"):
+        if not (-1 <= int(self.scid) <= 0xFFFFFFFF):
+            raise ApiError("INVALID_ARGUMENT", f"非法 scid（-1 或 0..0xFFFFFFFF）: {self.scid}")
+        if self.stream_mode not in ("auto", "full", "meta", "raw"):
             raise ApiError("INVALID_ARGUMENT", f"非法 stream_mode: {self.stream_mode}")
 
     @classmethod
@@ -680,6 +786,13 @@ class ServerConfig:
             crop=str(config.get("scrcpy.crop") or ""),
         )
 
+    @property
+    def device_socket_name(self) -> str:
+        """v5 server 实际监听的 localabstract 名。"""
+        if int(self.scid) == -1:
+            return "scrcpy"
+        return f"scrcpy_{int(self.scid) & 0xFFFFFFFF:08x}"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "max_size": self.max_size,
@@ -688,6 +801,8 @@ class ServerConfig:
             "crop": self.crop,
             "codec": self.codec,
             "socket_name": self.socket_name,
+            "device_socket_name": self.device_socket_name,
+            "scid": self.scid,
             "tunnel_forward": self.tunnel_forward,
             "control": self.control,
             "stream_mode": self.stream_mode,
@@ -695,7 +810,7 @@ class ServerConfig:
 
 
 def build_server_args(cfg: ServerConfig, mode: str) -> list[str]:
-    """构造 server 参数列表（第一个是版本号，其余 ``key=value``）。"""
+    """构造 v5 server 参数列表（第一个是版本号，其余 ``key=value``，已按 jar 反汇编核对）。"""
     args: list[str] = [
         SCRCPY_VERSION,
         f"log_level={cfg.log_level}",
@@ -707,13 +822,18 @@ def build_server_args(cfg: ServerConfig, mode: str) -> list[str]:
         f"video_bit_rate={int(cfg.video_bit_rate)}",
         f"tunnel_forward={'true' if cfg.tunnel_forward else 'false'}",
         f"control={'true' if cfg.control else 'false'}",
-        f"{cfg.socket_option}={cfg.socket_name}",
+        f"scid={int(cfg.scid)}",
+        "send_frame_meta=true",  # 契约 §6.2 的 12 字节头
     ]
     if cfg.crop:
         args.append(f"crop={cfg.crop}")
     if mode == "raw":
-        # 让 server 只发 12 字节头 + 裸 Annex B（契约 §10 的最小解析口径）
-        args.extend(["send_device_meta=false", "send_codec_meta=false", "send_dummy_byte=false"])
+        # 只发 12 字节头 + Annex B：关掉 dummy/device meta/codec+session meta
+        args.extend(["send_device_meta=false", "send_dummy_byte=false", "send_stream_meta=false"])
+    elif mode == "meta":
+        args.extend(["send_device_meta=true", "send_dummy_byte=false", "send_stream_meta=true"])
+    else:  # full（v5 官方默认）
+        args.extend(["send_device_meta=true", "send_dummy_byte=true", "send_stream_meta=true"])
     for key, value in cfg.extra_args.items():
         args.append(f"{key}={value}")
     return args
@@ -922,9 +1042,15 @@ class ScrcpyServer:
     first_frame: tuple[int, bytes]
     local_port: int
     stream_mode: str = "raw"
+    log_lines: list[str] = field(default_factory=list)  # 设备端 server 输出（排障用）
     started_at: float = field(default_factory=time.monotonic)
     _stopped: bool = False
     _lock: threading.RLock = field(default_factory=threading.RLock)
+
+    def server_log_tail(self, limit: int = 40) -> str:
+        with self._lock:
+            lines = list(self.log_lines)
+        return "\n".join(lines[-limit:])
 
     @property
     def geometry(self) -> VideoGeometry:
@@ -936,7 +1062,7 @@ class ScrcpyServer:
 
     @property
     def remote_socket(self) -> str:
-        return f"localabstract:{self.cfg.socket_name}"
+        return f"localabstract:{self.cfg.device_socket_name}"
 
     def process_alive(self) -> bool:
         try:
@@ -1017,8 +1143,35 @@ def _terminate_process(process: Any) -> None:
         logger.debug("terminate scrcpy process failed: %s", exc)
 
 
-def _drain_stderr(process: Any, limit: int = 800) -> str:
-    """仅对已退出进程调用；返回截断后的 stderr（fake process 用 stderr_text 属性）。"""
+def _attach_process_log(process: Any, limit: int = 500) -> list[str]:
+    """持续消费 adb shell 的 stdout/stderr（否则 PIPE 写满会阻塞设备端），保留最后 N 行。"""
+    lines: list[str] = []
+    lock = threading.Lock()
+
+    def pump(stream: Any) -> None:
+        try:
+            for raw in stream:
+                line = str(raw).rstrip()
+                with lock:
+                    lines.append(line)
+                    if len(lines) > limit:
+                        del lines[: len(lines) - limit]
+        except Exception as exc:  # noqa: BLE001 - 进程结束/管道关闭
+            logger.debug("scrcpy process log pump ended: %s", exc)
+
+    for stream in (getattr(process, "stdout", None), getattr(process, "stderr", None)):
+        if stream is not None:
+            threading.Thread(target=pump, args=(stream,), name="scrcpy-log", daemon=True).start()
+    text = str(getattr(process, "stderr_text", "") or "")
+    if text:
+        lines.append(text)
+    return lines
+
+
+def _drain_stderr(process: Any, limit: int = 800, log_lines: list[str] | None = None) -> str:
+    """返回设备端 server 输出尾部（优先用 pump 采集的日志，避免和读线程抢 PIPE）。"""
+    if log_lines:
+        return "\n".join(log_lines[-limit // 80 :])[-limit:]
     text = str(getattr(process, "stderr_text", "") or "")
     if text:
         return text[-limit:]
@@ -1032,26 +1185,79 @@ def _drain_stderr(process: Any, limit: int = 800) -> str:
     return str(data or "")[-limit:]
 
 
-def _process_failure(process: Any, context: str) -> ScrcpyStartupError:
+def _process_failure(process: Any, context: str, log_lines: list[str] | None = None) -> ScrcpyStartupError:
     code = getattr(process, "returncode", None)
     if code is None:
         try:
             code = process.poll()
         except Exception:  # noqa: BLE001
             code = None
-    stderr = _drain_stderr(process)
+    stderr = _drain_stderr(process, log_lines=log_lines)
     message = f"{context}: scrcpy server exited (code={code})"
     if stderr:
         message += f": {stderr.strip()}"
     return ScrcpyStartupError(message)
 
 
-def _connect_tcp(port: int, deadline: float, process: Any) -> socket.socket:
+def _capture_crash_log(ops: AdbOps, limit: int = 2000) -> str:
+    """启动失败时尽量抓一段设备端 crash log（best effort，不抛异常）。"""
+    try:
+        output = ops.shell_text("logcat -b crash -d -t 20", timeout=5.0)
+    except Exception as exc:  # noqa: BLE001
+        return f"(logcat unavailable: {exc})"
+    return (output or "").strip()[-limit:]
+
+
+def _remote_jar_size(ops: AdbOps) -> int | None:
+    """``ls -l`` 拿设备上 jar 大小；不存在/失败返回 None。"""
+    try:
+        output = ops.shell_text(f"ls -l {REMOTE_JAR_PATH}", timeout=8.0)
+    except Exception:  # noqa: BLE001
+        return None
+    if not output or "No such file" in output or "No such file or directory" in output:
+        return None
+    parts = output.split()
+    for token in reversed(parts):
+        if token.isdigit() and int(token) > 1024:
+            return int(token)
+    return None
+
+
+def ensure_remote_jar(ops: AdbOps, cfg: ServerConfig) -> dict[str, Any]:
+    """每次 start 前确认设备端 jar 存在且大小一致；不符/缺失则 push（失败不删远端 jar）。"""
+    local = jar_path(cfg)
+    local_size = local.stat().st_size if local.exists() else OFFICIAL_JAR_SIZE
+    remote_size = _remote_jar_size(ops)
+    pushed = False
+    if remote_size != local_size:
+        logger.info(
+            "remote scrcpy jar missing/size mismatch (remote=%s local=%s), pushing %s",
+            remote_size,
+            local_size,
+            local,
+        )
+        ops.push(local, REMOTE_JAR_PATH)
+        pushed = True
+        remote_size = _remote_jar_size(ops)
+        if remote_size != local_size:
+            raise ScrcpyStartupError(
+                f"push 后远端 jar 大小仍不符: remote={remote_size} local={local_size} path={REMOTE_JAR_PATH}"
+            )
+    return {"remote_jar": REMOTE_JAR_PATH, "size": local_size, "pushed": pushed}
+
+
+def _connect_tcp(
+    port: int,
+    deadline: float,
+    process: Any,
+    log_lines: list[str] | None = None,
+    context: str = "connect video socket",
+) -> socket.socket:
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
             if process.poll() is not None:
-                raise _process_failure(process, "connect video socket")
+                raise _process_failure(process, context, log_lines)
         except ScrcpyStartupError:
             raise
         except Exception:  # noqa: BLE001
@@ -1066,12 +1272,18 @@ def _connect_tcp(port: int, deadline: float, process: Any) -> socket.socket:
     raise ScrcpyStartupError(f"connect tcp:{port} timeout: {last_error}")
 
 
-def _accept_tcp(listener: socket.socket, deadline: float, process: Any, context: str) -> socket.socket:
+def _accept_tcp(
+    listener: socket.socket,
+    deadline: float,
+    process: Any,
+    context: str,
+    log_lines: list[str] | None = None,
+) -> socket.socket:
     listener.settimeout(0.2)
     while time.monotonic() < deadline:
         try:
             if process is not None and process.poll() is not None:
-                raise _process_failure(process, context)
+                raise _process_failure(process, context, log_lines)
         except ScrcpyStartupError:
             raise
         except Exception:  # noqa: BLE001
@@ -1090,14 +1302,15 @@ def _accept_tcp(listener: socket.socket, deadline: float, process: Any, context:
 def _attempt_modes(cfg: ServerConfig) -> list[str]:
     if cfg.stream_mode != "auto":
         return [cfg.stream_mode]
-    return ["raw", "meta", "meta_dummy"]
+    # 官方 v5 默认 full 握手优先；失败再尝试纯 12 字节头（raw）
+    return ["full", "raw"]
 
 
 def start_server(serial: str, cfg: ServerConfig | None = None, *, ops: AdbOps | None = None) -> ScrcpyServer:
     """推送并启动 scrcpy server，连 socket，自检首帧（≤8s）。
 
-    失败自动尝试下一种握手模式（raw → meta → meta_dummy）；全部失败抛 ``SCRCPY_FAILED``
-    （设备/ adb 不可用抛 ``DEVICE_UNAVAILABLE``），并保证进程/forward/socket 已清理。
+    失败自动尝试下一种握手模式（full → raw）；全部失败抛 ``SCRCPY_FAILED``（details 带
+    command/scid/socket/server_log_tail/adb_stderr），保证进程/forward/socket 已清理。
     """
     cfg = cfg or ServerConfig.from_settings()
     verified = verify_jar(cfg)
@@ -1111,7 +1324,9 @@ def start_server(serial: str, cfg: ServerConfig | None = None, *, ops: AdbOps | 
             raise
         except (ScrcpyStartupError, ScrcpyProtocolError, TimeoutError, OSError) as exc:
             logger.warning("scrcpy start attempt mode=%s failed: %s", mode, exc)
-            attempts.append({"mode": mode, "error": f"{type(exc).__name__}: {exc}"})
+            item = {"mode": mode, "error": f"{type(exc).__name__}: {exc}"}
+            item.update(getattr(exc, "details", {}) or {})
+            attempts.append(item)
             last_error = exc
             continue
         logger.info(
@@ -1125,10 +1340,21 @@ def start_server(serial: str, cfg: ServerConfig | None = None, *, ops: AdbOps | 
         )
         return server
     detail = attempts[-1]["error"] if attempts else "unknown"
+    last = attempts[-1] if attempts else {}
     raise ApiError(
         "SCRCPY_FAILED",
         f"scrcpy server 启动失败：{detail}",
-        {"serial": serial, "attempts": attempts, "cfg": cfg.to_dict(), "last_error": type(last_error).__name__ if last_error else ""},
+        {
+            "serial": serial,
+            "attempts": attempts,
+            "cfg": cfg.to_dict(),
+            "command": last.get("command", ""),
+            "scid": cfg.scid,
+            "socket": cfg.device_socket_name,
+            "server_log_tail": last.get("server_log_tail", ""),
+            "adb_stderr": last.get("adb_stderr", ""),
+            "last_error": type(last_error).__name__ if last_error else "",
+        },
     )
 
 
@@ -1139,14 +1365,22 @@ def _start_attempt(serial: str, cfg: ServerConfig, ops: AdbOps, mode: str) -> Sc
     listener: socket.socket | None = None
     local_port = 0
     forwarded = False
-    started = time.monotonic()
-    deadline = started + float(cfg.connect_timeout_s)
+    log_lines: list[str] = []
+    command = build_server_command(cfg, mode)
+    remote_socket = f"localabstract:{cfg.device_socket_name}"
+    details: dict[str, Any] = {
+        "mode": mode,
+        "command": command,
+        "scid": cfg.scid,
+        "socket": cfg.device_socket_name,
+        "remote_jar": REMOTE_JAR_PATH,
+    }
     try:
-        ops.push(jar_path(cfg), REMOTE_JAR_PATH)
+        details.update(ensure_remote_jar(ops, cfg))
         spec = STREAM_MODE_SPECS[mode]
         if cfg.tunnel_forward:
             local_port = _free_tcp_port()
-            ops.forward(f"tcp:{local_port}", f"localabstract:{cfg.socket_name}")
+            ops.forward(f"tcp:{local_port}", remote_socket)
             forwarded = True
         else:
             listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1154,46 +1388,65 @@ def _start_attempt(serial: str, cfg: ServerConfig, ops: AdbOps, mode: str) -> Sc
             listener.bind(("127.0.0.1", 0))
             listener.listen(2)
             local_port = int(listener.getsockname()[1])
-            ops.reverse(f"localabstract:{cfg.socket_name}", f"tcp:{local_port}")
+            ops.reverse(remote_socket, f"tcp:{local_port}")
             forwarded = True
-        command = build_server_command(cfg, mode)
-        logger.info("starting scrcpy server for %s: mode=%s socket=%s", serial, mode, cfg.socket_name)
+        deadline = time.monotonic() + float(cfg.connect_timeout_s)
+        logger.info(
+            "starting scrcpy server for %s: mode=%s scid=%s socket=%s",
+            serial,
+            mode,
+            cfg.scid,
+            cfg.device_socket_name,
+        )
         process = ops.start_process(command)
+        log_lines = _attach_process_log(process)
+        # v5：先连 video；control=true 时 server 会 accept 第二个 socket，必须连上才出帧
         if cfg.tunnel_forward:
-            video_sock = _connect_tcp(local_port, deadline, process)
+            video_sock = _connect_tcp(local_port, deadline, process, log_lines, "connect video socket")
             if cfg.control:
-                control_sock = _connect_tcp(local_port, deadline, process)
+                control_sock = _connect_tcp(local_port, deadline, process, log_lines, "connect control socket")
         else:
             assert listener is not None
-            video_sock = _accept_tcp(listener, deadline, process, "accept video socket")
+            video_sock = _accept_tcp(listener, deadline, process, "accept video socket", log_lines)
             if cfg.control:
-                control_sock = _accept_tcp(listener, deadline, process, "accept control socket")
+                control_sock = _accept_tcp(listener, deadline, process, "accept control socket", log_lines)
         reader = VideoFrameReader(video_sock)
         video_sock.settimeout(float(cfg.handshake_timeout_s))
         if spec is not None:
             stream_header = reader.read_stream_headers(spec)
             logger.info(
-                "scrcpy stream header: device=%r codec=%s %dx%d",
+                "scrcpy stream header: device=%r dummy_byte=%s codec=%s",
                 stream_header.device_name,
+                stream_header.dummy_byte,
                 stream_header.codec or "unknown",
-                stream_header.width,
-                stream_header.height,
             )
-        try:
-            video_sock.settimeout(float(cfg.first_frame_timeout_s))
-            first_frame = reader.read_frame()
-        except TimeoutError as exc:
-            raise ScrcpyStartupError(
-                f"首帧超时（>{cfg.first_frame_timeout_s}s，模式={mode}）"
-            ) from exc
-        pts_us, payload = first_frame
-        if not _looks_like_annexb(payload):
-            raise ScrcpyProtocolError(
-                f"首帧不是 Annex B H.264（mode={mode}, len={len(payload)}, head={payload[:8].hex()}）"
-            )
-        if reader.geometry.width <= 0 or reader.geometry.height <= 0:
-            raise ScrcpyProtocolError(f"无法从首帧确定视频尺寸（mode={mode}）")
+        # 自检：等首个**真实图像帧**（跳过 session meta 与 config 包），整体 ≤first_frame_timeout
+        first_deadline = time.monotonic() + float(cfg.first_frame_timeout_s)
+        first_frame: tuple[int, bytes] | None = None
+        while time.monotonic() < first_deadline:
+            remaining = max(0.05, first_deadline - time.monotonic())
+            video_sock.settimeout(remaining)
+            try:
+                pts_us, payload = reader.read_frame()
+            except TimeoutError as exc:
+                raise ScrcpyStartupError(
+                    f"首帧超时（>{cfg.first_frame_timeout_s}s，模式={mode}）"
+                ) from exc
+            info = reader.last_info
+            if info is not None and (info.config or info.session_meta):
+                continue  # session meta / codec config → 继续等真实帧
+            if not _looks_like_annexb(payload):
+                raise ScrcpyProtocolError(
+                    f"首帧不是 Annex B H.264（mode={mode}, len={len(payload)}, head={payload[:8].hex()}）"
+                )
+            if reader.geometry.width <= 0 or reader.geometry.height <= 0:
+                raise ScrcpyProtocolError(f"无法确定视频尺寸（mode={mode}）")
+            first_frame = (pts_us, payload)
+            break
+        if first_frame is None:
+            raise ScrcpyStartupError(f"首帧超时（>{cfg.first_frame_timeout_s}s，模式={mode}）")
         video_sock.settimeout(None)
+        details["server_log_tail"] = "\n".join(log_lines[-40:])
         server = ScrcpyServer(
             serial=serial,
             cfg=cfg,
@@ -1205,11 +1458,12 @@ def _start_attempt(serial: str, cfg: ServerConfig, ops: AdbOps, mode: str) -> Sc
             first_frame=first_frame,
             local_port=local_port,
             stream_mode=mode,
+            log_lines=log_lines,
         )
         _register_server(server)
         return server
-    except Exception:
-        # 任一失败都把本次尝试的资源清干净（不 pkill 别的 session）
+    except Exception as exc:
+        # 任一失败都把本次尝试的资源清干净（不 pkill 别的 session；不删远端 jar）
         if control_sock is not None:
             try:
                 control_sock.close()
@@ -1234,9 +1488,12 @@ def _start_attempt(serial: str, cfg: ServerConfig, ops: AdbOps, mode: str) -> Sc
                     pass
             else:
                 try:
-                    ops.remove_reverse(f"localabstract:{cfg.socket_name}")
+                    ops.remove_reverse(remote_socket)
                 except Exception:  # noqa: BLE001
                     pass
+        details["server_log_tail"] = "\n".join(log_lines[-40:])
+        details["adb_stderr"] = _capture_crash_log(ops)
+        exc.details = details  # type: ignore[attr-defined] - 供 start_server 汇总错误详情
         raise
 
 

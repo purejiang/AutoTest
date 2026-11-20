@@ -20,10 +20,10 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
-from . import config
 from .android import scrcpy
 from .errors import ApiError
 from .logs import logger
@@ -229,6 +229,8 @@ class MirrorSession:
         self._dropped = 0
         self._frame_times: deque[float] = deque(maxlen=600)
         self._video_geometry = scrcpy.VideoGeometry()
+        self._last_sps: bytes | None = None
+        self._pending_config: bytes = b""  # 等待拼到下一视频帧前的 in-band SPS/PPS
         self._geometry = MirrorGeometry(max_size=int(self.cfg.max_size))
         self._device_size: tuple[int, int] = (0, 0)
         self._crop = parse_crop(self.cfg.crop)
@@ -449,14 +451,35 @@ class MirrorSession:
                     )
                 return
 
-    def _ingest(self, pts_us: int, payload: bytes) -> None:
-        """一帧进入会话：更新 geometry/SPS、统计、广播（线程安全）。"""
+    def _ingest(self, pts_us: int, payload: bytes, info: scrcpy.FrameInfo | None = None) -> None:
+        """一帧进入会话：更新 geometry/SPS、统计、广播（线程安全）。
+
+        v5 的 config 包（SPS/PPS，``info.config=True``）只用于几何/参数：
+        更新 sps/pps → 广播 ``config`` 控制消息，**不**当视频帧转发给前端。
+        """
+        if info is None:
+            info = getattr(getattr(self._server, "reader", None), "last_info", None)
         nals = scrcpy.split_nals(payload)
-        keyframe = scrcpy.is_keyframe(nals)
+        keyframe = bool(info.keyframe) if info is not None else scrcpy.is_keyframe(nals)
         video_geometry = getattr(self._server, "geometry", None)
         if isinstance(video_geometry, scrcpy.VideoGeometry):
             self._video_geometry = video_geometry
-        self._maybe_update_geometry(self._video_geometry)
+        geometry_changed = self._maybe_update_geometry(self._video_geometry)
+        if info is not None and info.session_meta:
+            # v5 session meta：尺寸/旋转变化；不发帧，只更新几何并广播 config
+            if not geometry_changed and self._state in ("running", "starting"):
+                self._broadcast_control({"kind": "config", **self._hello_fields()})
+            return
+        if info is not None and info.config:
+            # v5 CONFIG 包 = SPS/PPS（in-band）：缓存并拼到下一个视频帧前面再下发前端
+            if payload:
+                self._pending_config = payload
+            if not geometry_changed and self._state in ("running", "starting"):
+                self._broadcast_control({"kind": "config", **self._hello_fields()})
+            return
+        if self._pending_config:
+            payload = self._pending_config + payload
+            self._pending_config = b""
         binary = scrcpy.pack_frame(pts_us, payload)
         now = time.monotonic()
         with self._lock:
@@ -466,10 +489,14 @@ class MirrorSession:
         for sub in subscribers:
             self._deliver_frame(sub, binary, keyframe)
 
-    def _maybe_update_geometry(self, video_geometry: scrcpy.VideoGeometry) -> None:
+    def _maybe_update_geometry(self, video_geometry: scrcpy.VideoGeometry) -> bool:
+        """按最新视频几何更新（旋转推断），返回是否广播了 config。"""
         if video_geometry.width <= 0 or video_geometry.height <= 0:
-            return
+            return False
         current = self._geometry
+        sps_changed = bool(video_geometry.sps) and video_geometry.sps != self._last_sps
+        if video_geometry.sps:
+            self._last_sps = video_geometry.sps
         if (
             current.stream_width == video_geometry.width
             and current.stream_height == video_geometry.height
@@ -486,9 +513,12 @@ class MirrorSession:
                 crop=current.crop,
                 max_size=current.max_size,
             )
-            return
+            if sps_changed and self._state in ("running", "starting"):
+                self._broadcast_control({"kind": "config", **self._hello_fields()})
+                return True
+            return False
         natural_w, natural_h = self._natural_size()
-        rotation = infer_rotation(video_geometry.width, video_geometry.height, natural_w, natural_h)
+        rotation = self._infer_rotation_dynamic(video_geometry.width, video_geometry.height, natural_w, natural_h)
         geometry = MirrorGeometry(
             stream_width=video_geometry.width,
             stream_height=video_geometry.height,
@@ -503,6 +533,7 @@ class MirrorSession:
             or geometry.stream_height != current.stream_height
             or geometry.rotation != current.rotation
             or geometry.natural_width != current.natural_width
+            or sps_changed
         )
         self._geometry = geometry
         if changed and self._state in ("running", "starting"):
@@ -515,11 +546,25 @@ class MirrorSession:
                 geometry.natural_height,
             )
             self._broadcast_control({"kind": "config", **self._hello_fields()})
+            return True
+        return False
 
     def _natural_size(self) -> tuple[int, int]:
         if self._device_size[0] > 0 and self._device_size[1] > 0:
             return self._device_size
         return (self._geometry.stream_width, self._geometry.stream_height)
+
+    def _infer_rotation_dynamic(self, width: int, height: int, natural_w: int, natural_h: int) -> int:
+        """优先用「相邻两次流尺寸是否交换」判断 90°/270°，否则退回宽高比推断。"""
+        current = self._geometry
+        if current.stream_width and current.stream_height:
+            same = (width, height) == (current.stream_width, current.stream_height)
+            if same:
+                return current.rotation
+            swapped = (width, height) == (current.stream_height, current.stream_width)
+            if swapped and width != height:
+                return (current.rotation + 90) % 360
+        return infer_rotation(width, height, natural_w, natural_h)
 
     # ------------------------------------------------------------ 订阅/广播
     def subscribe(self, loop: asyncio.AbstractEventLoop | None = None, maxsize: int = DEFAULT_SUBSCRIBER_QUEUE) -> Subscriber:

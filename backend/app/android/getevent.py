@@ -21,9 +21,9 @@ from __future__ import annotations
 import re
 import subprocess
 import threading
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from .. import config
 from ..errors import ApiError

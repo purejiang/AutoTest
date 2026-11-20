@@ -333,6 +333,8 @@ async def test_restart_limit_reports_error(monkeypatch) -> None:
         while time.monotonic() < deadline and session.state != "error":
             await asyncio.sleep(0.02)
         assert session.state == "error"
+        # state 由读线程先置位、error 控制消息经 call_soon_threadsafe 稍后投递
+        await asyncio.sleep(0.05)
         assert len(calls) == mirror.MAX_RESTARTS_PER_WINDOW + 1  # 初次 + 3 次重启
         assert "自动重启超过" in (session.status()["error"] or "")
         items = drain_queue(sub)

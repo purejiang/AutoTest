@@ -58,6 +58,8 @@ class RunFailed(Exception):
         self.message = message
         self.step_id = step_id
         self.error: dict[str, Any] = {"code": code, "message": message}
+        if step_id is not None:
+            self.error["step_id"] = step_id
         if details is not None:
             self.error["details"] = details
 

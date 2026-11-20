@@ -175,6 +175,7 @@ client→server：`{"kind":"ping"}`→`{"kind":"pong"}`；`{"kind":"ack","last_s
 ### 7.1 设备与手动控制（be-core）
 GET /api/devices；POST /api/devices/connect {address}；POST /api/devices/{serial}/disconnect；
 GET /api/devices/{serial}/info|hierarchy?raw=|screenshot(png)|apps?keyword=&type=|logcat?lines=200；
+  hierarchy 响应：`{"node": HierarchyNode, "raw": str|null}`（raw=true 时尽量给原始 XML，取不到为 null 并带 `"raw_unavailable"`）；
 POST /api/devices/{serial}/tap|long_press|swipe|key|text|app|shell；
 POST /api/devices/{serial}/screenrecord/start {name,bit_rate,time_limit_s} / stop；
 POST /api/devices/{serial}/network/start|stop（未启用→UNSUPPORTED）；
@@ -189,15 +190,20 @@ POST /api/scripts/{id}/run {serial,...}（快捷=POST /api/runs）。
 
 ### 7.3 运行（be-runner）
 POST /api/runs {script_id,serial?,variables?,debug?}（占用/录制中→409）；
-GET /api/runs?status=&script_id=&limit=&offset=；GET /api/runs/{id}（含 steps+artifacts 摘要）；
+GET /api/runs?status=&script_id=&limit=&offset=；GET /api/runs/{id}（含 steps + artifacts：
+`[{id,kind,name,path,url,size,created_at}]`，url 为 `/artifacts/<相对 artifacts_dir 路径>`，无直链为 null）；
 DELETE /api/runs/{id}；GET /api/runs/{id}/events?since_seq=&limit=；
-POST /api/runs/{id}/pause | resume-check | resume | stop | debug {action,step_id?}。
+POST /api/runs/{id}/pause；**POST** /api/runs/{id}/resume-check（返回 §7.3 预检字段）；
+POST /api/runs/{id}/resume {ack,resume_kind:"hot"}；POST /api/runs/{id}/stop；
+POST /api/runs/{id}/debug {action:"step"|"continue"|"run_from", step_id?}。
+暂停期间的手动控制放行，并必须 emit `manual_intervention` 运行事件（见 §5）。
 
 ### 7.4 录制（be-report）
 POST /api/recordings {name?,serial,mode}；GET /api/recordings?status=&limit=；
 GET /api/recordings/{id}；POST /api/recordings/{id}/pause|resume|stop；
 GET /api/recordings/{id}/events?since_seq=&limit=；DELETE /api/recordings/{id}/events/{seq}；
-POST /api/recordings/{id}/to_script {name?,include_kinds?,exclude_seqs?}；DELETE /api/recordings/{id}。
+POST /api/recordings/{id}/to_script {name?,include_kinds?,exclude_seqs?}
+→ `{id, script_id, name, data, warnings:[{seq,reason}]}`；DELETE /api/recordings/{id}。
 
 ### 7.5 报告与维护（be-report）
 POST /api/runs/{id}/report {include_video?}；GET /api/reports?run_id=；
@@ -236,12 +242,21 @@ RecorderSession 需实现：`before_pointer() -> dict|None`、`handle(kind, payl
 
 ## 10. scrcpy 镜像（be-media 必做）
 
-- 固定 scrcpy-server **v5.0.1**，jar 放 `backend/vendor/scrcpy-server-v5.0.1.jar`，
-  SHA256 记录在 `backend/vendor/scrcpy.lock.json`（下载脚本写 `scripts/fetch_scrcpy.py`，Lead 已建 scripts/ 目录）；
-- 参数：`--no-audio --no-playback`，video_codec=h264，max_size/max_fps/video_bit_rate/crop 白名单来自设置；
-- socket：`localabstract:autotest_scrcpy_<pid>_<rand>` 唯一；按序连接 video（v5 先 video 后 control）；
-  启动后断言 socket 数量与顺序，不符→SCRCPY_FAILED+清理；
-- Python 最小帧解析：12 字节头 + Annex B；SPS/PPS 缓存；参数变化→config 消息；
+- 固定 scrcpy-server **v5.0.1**（官方资产名 `scrcpy-server-v5.0.1`，**无 .jar 后缀**，落地为
+  `backend/vendor/scrcpy-server-v5.0.1.jar`，官方 SHA256 `764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536`，
+  锁文件 `backend/vendor/scrcpy.lock.json` 已就位）；
+- 启动参数（v5.0.1 实测合法集合）：`log_level max_size max_fps video_bit_rate crop display_id audio video
+  control tunnel_forward send_device_meta send_frame_meta send_dummy_byte send_stream_meta clipboard_autosync power_on cleanup scid`；
+  **没有 `socket=`**；socket 名由 `scid` 派生：`localabstract:scrcpy_<scid 8位小写hex>`；
+  固定 `audio=false video=true control=true tunnel_forward=true send_device_meta=true send_frame_meta=true
+  send_dummy_byte=true send_stream_meta=true`；jar 每次 start 前校验/必要时重推，清理时**不删设备端 jar**；
+- 字节流（v5.0.1 `device/Streamer.java` 实证）：
+  `[1B dummy=0x00][64B device name][4B codec id "h264"][12B session meta: flags u32|w u32|h u32]`，
+  之后每包 `[12B: pts_and_flags u64 BE | size u32 BE][size B Annex B payload]`；
+  flags：bit61=KEY_FRAME，bit62=CONFIG（CONFIG 包=SPS/PPS，必须消费并拼到下一个视频帧前）；
+  pts = pts_and_flags & ~(1<<61) & ~(1<<62)；session meta 变化（旋转/改尺寸）→ 重发 config；
+  连接顺序 video → control（只连 video 时 server 不出帧）；
+- 后端→前端 WS 帧保持 `[u64 pts][u32 len][Annex B payload]` 不变（前端按此实现）；
 - 旋转：视频尺寸变化→新 SPS→重发 config；stream→device 逆映射由 MirrorSession 维护（含 max_size/crop/rotation）；
 - 崩溃/断线自动重启（≤3 次/分钟），WS 发 error 保持连接；
 - 启动自检：socket 数、首帧 ≤8s、codec 字符串从 SPS 解析；

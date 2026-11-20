@@ -1,7 +1,7 @@
 // 运行详情 · 产物区：截图缩略图 gallery + 视频/日志下载
 import { Empty, Image, Space, Tag, Tooltip, Typography } from 'antd'
 
-import { artifactUrl, artifactKindMeta, formatBytes } from '@/lib/format'
+import { artifactHref, artifactKindMeta, formatBytes } from '@/lib/format'
 import type { Artifact } from '@/types/api'
 
 export interface RunArtifactsCardProps {
@@ -10,7 +10,7 @@ export interface RunArtifactsCardProps {
 
 function ArtifactFileRow({ artifact }: { artifact: Artifact }) {
   const meta = artifactKindMeta(artifact.kind)
-  const url = artifactUrl(artifact)
+  const url = artifactHref(artifact)
   const name = artifact.name || artifact.path.split(/[\\/]/).pop() || String(artifact.id)
   return (
     <Space size={6} wrap style={{ width: '100%' }}>
@@ -20,12 +20,12 @@ function ArtifactFileRow({ artifact }: { artifact: Artifact }) {
       </span>
       <span className="small-text muted">{formatBytes(artifact.size)}</span>
       {url ? (
-        <Typography.Link href={url} target="_blank" rel="noreferrer" download={artifact.name || undefined}>
+        <a href={url} download={artifact.name || undefined} target="_blank" rel="noreferrer">
           下载 / 查看
-        </Typography.Link>
+        </a>
       ) : (
-        <Tooltip title="后端未暴露 /artifacts 静态路径，无法生成可访问 URL；文件位于后端 artifact.path">
-          <span className="small-text muted">无 URL</span>
+        <Tooltip title="后端未返回 artifact.url，且无法从 path 推导 /artifacts 直链">
+          <span className="small-text muted">无直链</span>
         </Tooltip>
       )}
     </Space>
@@ -62,7 +62,7 @@ export default function RunArtifactsCard({ artifacts }: RunArtifactsCardProps) {
               <Image.PreviewGroup>
                 <div className="artifact-grid" style={{ marginTop: 6 }}>
                   {screenshots.map((artifact) => {
-                    const url = artifactUrl(artifact)
+                    const url = artifactHref(artifact)
                     const name = artifact.name || String(artifact.id)
                     return (
                       <div key={artifact.id} className="artifact-card">
@@ -89,7 +89,7 @@ export default function RunArtifactsCard({ artifacts }: RunArtifactsCardProps) {
                               color: 'rgba(0,0,0,.45)',
                             }}
                           >
-                            无 URL
+                            无直链
                           </div>
                         )}
                         <div className="artifact-name" title={artifact.path}>
