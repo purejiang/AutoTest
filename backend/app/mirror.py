@@ -239,7 +239,9 @@ class MirrorSession:
         self._frame_times: deque[float] = deque(maxlen=600)
         self._video_geometry = scrcpy.VideoGeometry()
         self._last_sps: bytes | None = None
-        self._pending_config: bytes = b""  # 等待拼到下一视频帧前的 in-band SPS/PPS
+        self._pending_config: bytes = b""
+        self._last_keyframe_request: float = 0.0
+        self._keyframe_requests_throttled: int = 0  # 等待拼到下一视频帧前的 in-band SPS/PPS
         self._codec_config: bytes = b""  # 最近一次 CONFIG 包（SPS/PPS），新订阅者首帧补发
         self._geometry = MirrorGeometry(max_size=int(self.cfg.max_size))
         self._device_size: tuple[int, int] = (0, 0)
@@ -482,17 +484,18 @@ class MirrorSession:
             self._video_geometry = video_geometry
         geometry_changed = self._maybe_update_geometry(self._video_geometry)
         if info is not None and info.session_meta:
-            # v5 session meta：尺寸/旋转变化；不发帧，只更新几何并广播 config
-            if not geometry_changed and self._state in ("running", "starting"):
-                self._broadcast_control({"kind": "config", **self._hello_fields()})
+            # v5 session meta：尺寸/旋转变化；不发帧。
+            # 注意：几何没变时**不要**再广播 config —— 否则「config→前端请求关键帧→编码器重置→
+            # 新 session meta→config」会形成 5Hz 自我循环，表现为镜像疯狂闪烁。
+            if geometry_changed:
+                logger.info("mirror geometry changed by session meta: %s", self._hello_fields())
             return
         if info is not None and info.config:
-            # v5 CONFIG 包 = SPS/PPS（in-band）：缓存并拼到下一个视频帧前面再下发前端
+            # v5 CONFIG 包 = SPS/PPS（in-band）：缓存并拼到下一个视频帧前面再下发前端。
+            # 同样不广播 config（参数集随下一帧 in-band 下发，前端无需重配）。
             if payload:
                 self._codec_config = payload
                 self._pending_config = payload
-            if not geometry_changed and self._state in ("running", "starting"):
-                self._broadcast_control({"kind": "config", **self._hello_fields()})
             return
         if self._pending_config:
             payload = self._pending_config + payload
@@ -593,7 +596,9 @@ class MirrorSession:
             self._subscribers[sub.id] = sub
             running = self._state == "running"
         if running:
-            # 新订阅者错过启动首帧：请求编码器尽快出 IDR，从干净状态开始解码
+            # 新订阅者：先单播当前参数集（只给它，避免其它客户端被 config 打扰），
+            # 再请求一次 IDR（节流，多标签页/重连不会把编码器刷爆）。
+            self._deliver_control(sub, {"kind": "config", **self._hello_fields()})
             self.request_keyframe()
         return sub
 
@@ -703,10 +708,18 @@ class MirrorSession:
             pass
 
     # ------------------------------------------------------------ 对外能力
-    def request_keyframe(self) -> bool:
+    _KEYFRAME_MIN_INTERVAL_S = 0.8  # 关键帧请求最小间隔：防止调用方循环触发编码器重置
+
+    def request_keyframe(self, force: bool = False) -> bool:
         server = self._server
         if server is None:
             return False
+        now = time.monotonic()
+        with self._lock:
+            if not force and now - self._last_keyframe_request < self._KEYFRAME_MIN_INTERVAL_S:
+                self._keyframe_requests_throttled += 1
+                return False
+            self._last_keyframe_request = now
         try:
             return bool(server.request_keyframe())
         except Exception as exc:  # noqa: BLE001

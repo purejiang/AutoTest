@@ -154,6 +154,15 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
     let pps: Uint8Array | null = null
     let needsConfigure = true
     let awaitingKeyframe = true
+    // 关键帧请求最小间隔：防止 config/error 与后端「重置编码器→再发 config」形成 5Hz 闪烁循环
+    let lastKeyframeRequestAt = 0
+    const KEYFRAME_REQUEST_MIN_GAP_MS = 1200
+    const requestKeyframeThrottled = (): void => {
+      const now = Date.now()
+      if (now - lastKeyframeRequestAt < KEYFRAME_REQUEST_MIN_GAP_MS) return
+      lastKeyframeRequestAt = now
+      socket?.requestKeyframe()
+    }
     let generation = 0
     let chain: Promise<void> = Promise.resolve()
     let lastConfigureErrorAt = 0
@@ -301,7 +310,8 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
           applyParameterSets(msg.sps_b64, msg.pps_b64)
           awaitingKeyframe = true
           setStatusSafe('waiting-keyframe')
-          socket?.requestKeyframe()
+          // 不要在这里请求关键帧：config 本身就意味着后端编码器已重置、IDR 即将到来；
+          // 请求会再次重置编码器 → 又发 config → 无限循环（表现为画面持续闪烁）。
           break
         }
         case 'flush': {
@@ -312,7 +322,7 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
             if (!isAlive() || gen !== generation || !decoder) return
             await decoder.flush(typeof msg.reason === 'string' ? msg.reason : undefined)
           })
-          socket?.requestKeyframe()
+          // 后端丢帧后会自动补发整 GOP（含 IDR），这里不重复请求，避免编码器反复重置
           break
         }
         case 'error': {
@@ -392,7 +402,7 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
             awaitingKeyframe = true
             setStatus((prev) => (prev === 'streaming' ? 'waiting-keyframe' : prev))
             reportError(`解码错误：${err.message}`)
-            socket?.requestKeyframe()
+            requestKeyframeThrottled()
           },
         })
         decoderRef.current = decoder

@@ -246,8 +246,10 @@ async def test_session_broadcast_and_hello() -> None:
         assert stats["frames"] > 0
         assert stats["fps"] >= 0
         before = _servers[0].key_requests
-        assert session.request_keyframe() is True
+        # 显式请求用 force（UI 按钮语义）；默认调用受 0.8s 节流保护，防止前端循环重置编码器
+        assert session.request_keyframe(force=True) is True
         assert _servers[0].key_requests == before + 1
+        assert session.request_keyframe() is False, "节流应拦住紧邻的重复请求"
         session.unsubscribe(sub)
         assert session.subscriber_count() == 0
     finally:

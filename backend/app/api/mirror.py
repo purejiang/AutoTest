@@ -170,7 +170,8 @@ async def _receive_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
         if kind == "ping":
             session.push_control(sub, {"kind": "pong"})
         elif kind == "request_keyframe":
-            session.request_keyframe()
+            # 客户端显式请求（工具栏按钮/新连接首帧）→ 绕过节流
+            session.request_keyframe(force=True)
             logger.debug("mirror ws requested keyframe for %s", session.serial)
         else:
             logger.debug("mirror ws ignored control message: %s", kind)
