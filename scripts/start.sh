@@ -129,4 +129,8 @@ if [ "$OPEN_BROWSER" = "1" ]; then
 fi
 
 cd backend
+# 优先用项目自带 venv，避免 uv 全局缓存权限异常（如 ~/.cache/uv 被 root 占用）导致启动失败。
+if [ -x ".venv/bin/python" ]; then
+  exec .venv/bin/python -m uvicorn app.main:app --host "$HOST" --port "$PORT"
+fi
 exec uv run uvicorn app.main:app --host "$HOST" --port "$PORT"

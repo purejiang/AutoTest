@@ -58,7 +58,11 @@ trap cleanup EXIT INT TERM
 
 echo "[dev] 后端 http://127.0.0.1:${BACKEND_PORT}  (API 文档 /docs)"
 (
-  cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" --reload
+  cd backend
+  if [ -x ".venv/bin/python" ]; then
+    exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" --reload
+  fi
+  exec uv run uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" --reload
 ) &
 PIDS+=($!)
 
