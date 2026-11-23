@@ -13,7 +13,9 @@ datas = [
 if (ROOT / "vendor").exists():
     datas.append((str(ROOT / "vendor"), "vendor"))
 if FE_DIST.exists():
-    datas.append((str(FE_DIST), "static"))
+    # main.py 在打包环境里的 BACKEND_ROOT 是 _MEIPASS，
+    # FRONTEND_DIST 指向 _MEIPASS/frontend/dist；不要放到 "static"，否则 / 不会托管 SPA。
+    datas.append((str(FE_DIST), "frontend/dist"))
 else:
     print("WARNING: frontend/dist 不存在，打包产物没有前端界面（先 npm run build）", file=sys.stderr)
 

@@ -88,5 +88,10 @@ Say "启动 AutoTest -> $url （API 文档 $url/docs，Ctrl+C 退出）"
 if ($Open) { Start-Process $url }
 
 Push-Location backend
-uv run uvicorn app.main:app --host $BindHost --port $Port
+# 优先用项目自带 venv，避免 uv 全局缓存权限异常导致启动失败。
+if (Test-Path ".venv\Scripts\python.exe") {
+    & ".venv\Scripts\python.exe" -m uvicorn app.main:app --host $BindHost --port $Port
+} else {
+    uv run uvicorn app.main:app --host $BindHost --port $Port
+}
 Pop-Location

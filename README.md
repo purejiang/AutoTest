@@ -45,6 +45,9 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Open
 首次运行脚本会自动完成：装 uv（若缺）→ Python 3.12 + 后端依赖 → 前端依赖 + 构建 → 下载 scrcpy-server → 启动。
 也可以先手动跑一次 `sh scripts/setup.sh`（Windows `scripts\setup.ps1`）做完整安装 + 环境自检。
 
+生产/长期部署（Windows 服务、Linux systemd、udev、PyInstaller 单文件、反向代理与安全边界）
+见 [docs/deployment.md](docs/deployment.md)。
+
 ### 前端技术栈与回滚（v0.2）
 
 | 目录 | 说明 |

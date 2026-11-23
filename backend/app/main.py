@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 import os
 import pkgutil
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -31,7 +32,12 @@ from .services import settings_service
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = BACKEND_ROOT / "static"
-FRONTEND_DIST = BACKEND_ROOT.parent / "frontend" / "dist"
+# 源码运行：仓库根/frontend/dist；PyInstaller onefile：_MEIPASS/frontend/dist。
+# 冻结后 __file__ 在 _MEIPASS/app 下，BACKEND_ROOT.parent 会跑到临时目录之外。
+if getattr(sys, "frozen", False):
+    FRONTEND_DIST = Path(getattr(sys, "_MEIPASS", BACKEND_ROOT)) / "frontend" / "dist"
+else:
+    FRONTEND_DIST = BACKEND_ROOT.parent / "frontend" / "dist"
 
 
 def frontend_dist_dir() -> Path:

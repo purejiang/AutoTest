@@ -54,7 +54,11 @@ fi
 
 echo "==> 3/3 可选打包（PyInstaller，需要 backend/.venv 已装 dev+build 依赖）"
 if [ "$DO_PACK" = "1" ]; then
-  (cd backend && uv run pyinstaller --clean --noconfirm autotest.spec)
+  if [ -x backend/.venv/bin/pyinstaller ]; then
+    (cd backend && .venv/bin/pyinstaller --clean --noconfirm autotest.spec)
+  else
+    (cd backend && uv run pyinstaller --clean --noconfirm autotest.spec)
+  fi
   echo "    产物：backend/dist/autotest"
 else
   echo "    跳过（加 --pack 生成单文件可执行程序）"

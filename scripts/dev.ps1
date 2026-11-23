@@ -32,8 +32,14 @@ if ($FrontendImpl -eq "react") {
     Write-Host "[dev] 注意：frontend-react/ 是 v0.1.3 的回滚备份，不再继续开发。"
 }
 Write-Host "[dev] 后端 http://127.0.0.1:$BackendPort"
+$backendExe = if (Test-Path "backend\.venv\Scripts\python.exe") { (Resolve-Path "backend\.venv\Scripts\python.exe").Path } else { "uv" }
+$backendArgs = if ($backendExe -eq "uv") {
+    @("run", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", $BackendPort, "--reload")
+} else {
+    @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", $BackendPort, "--reload")
+}
 $backend = Start-Process -PassThru -NoNewWindow -WorkingDirectory "backend" `
-    -FilePath "uv" -ArgumentList @("run", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", $BackendPort, "--reload")
+    -FilePath $backendExe -ArgumentList $backendArgs
 Start-Sleep -Seconds 2
 Write-Host "[dev] 前端 http://127.0.0.1:5173"
 $env:AUTOTEST_BACKEND = "http://127.0.0.1:$BackendPort"
