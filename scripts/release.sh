@@ -105,7 +105,7 @@ fi
 # ---- 2) 前端版本号（只同步 frontend/：package.json + package-lock.json）
 if command -v npm >/dev/null 2>&1; then
   (cd frontend && npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null)
-  echo "    frontend 版本 -> $VERSION（frontend-react/ 不参与发版）"
+  echo "    frontend 版本 -> ${VERSION}（frontend-react/ 不参与发版）"
 else
   echo "[release] 未找到 npm，跳过前端版本号同步（请手动改 frontend/package.json）" >&2
 fi
