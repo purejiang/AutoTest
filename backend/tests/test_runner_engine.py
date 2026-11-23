@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from app.android.driver import CommandResult
 from app.runner import controls, engine, executors
+from app.runner.context import RunSnapshot
 from tests.test_runner_kits import (
     click_step,
     get_events,
@@ -16,6 +17,7 @@ from tests.test_runner_kits import (
     insert_run,
     insert_script,
     install_selectors,
+    make_ctx,
     make_script,
     make_step,
     run_script,
@@ -411,6 +413,26 @@ def test_step_timeout_marks_step_failed(runner_env, monkeypatch):
     steps = get_steps(run_id)
     assert steps[0]["status"] == "failed"
     assert steps[0]["error"]["code"] == "STEP_TIMEOUT"
+
+
+def test_step_timeout_covers_long_gesture_duration(runner_env) -> None:
+    """10s 录制滑动不能沿用默认 8s 节点超时，否则回放必失败。"""
+    script = make_script(
+        [
+            make_step(
+                "s1",
+                "swipe",
+                {
+                    "from": {"by": "point", "x": 0, "y": 0},
+                    "to": {"by": "point", "x": 100, "y": 0},
+                    "duration_ms": 10_000,
+                },
+            )
+        ]
+    )
+    ctx = make_ctx(runner_env, script)
+    step = RunSnapshot.from_data(script).parsed.steps[0]
+    assert engine._step_timeout(ctx, step) >= 12_000
 
 
 # ---------------------------------------------------------------- pause / resume

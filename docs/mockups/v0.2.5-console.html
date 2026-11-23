@@ -1,0 +1,3053 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AutoTest v0.2.5 · 控制台与设置视觉稿</title>
+<style>
+/* ==========================================================================
+   单文件视觉稿：只验证控制台 / 设置页的结构、密度、浅深色与轻交互。
+   无外部字体、无 CDN、无网络请求、无真实业务。
+   ========================================================================== */
+:root {
+  color-scheme: light;
+  --rail: 176px;
+  --top: 52px;
+  --bg: #f2f4f7;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --surface-hover: #fbfcfe;
+  --ink: #18212b;
+  --muted: #687385;
+  --muted-2: #94a3b8;
+  --line: #e3e8ef;
+  --line-2: #d6dee8;
+  --line-soft: #eef2f7;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: #eef4ff;
+  --green: #15803d;
+  --green-soft: #e9f8ee;
+  --amber: #b45309;
+  --amber-soft: #fff5e6;
+  --red: #c62828;
+  --red-soft: #fdecec;
+  --violet: #6d28d9;
+  --violet-soft: #f2edff;
+  --cyan: #0e7490;
+  --cyan-soft: #e6f7fb;
+  --rail-bg: #0f151d;
+  --rail-ink: #cbd5e1;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 12px 30px rgba(15, 23, 42, 0.13);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+html.dark {
+  color-scheme: dark;
+  --bg: #0c1118;
+  --surface: #141b24;
+  --surface-2: #19222e;
+  --surface-3: #202b39;
+  --surface-hover: #1b2532;
+  --ink: #e6edf5;
+  --muted: #9aa9ba;
+  --muted-2: #6b7c90;
+  --line: #263241;
+  --line-2: #344256;
+  --line-soft: #1f2a37;
+  --accent: #4f8ef7;
+  --accent-hover: #6aa1ff;
+  --accent-soft: #172640;
+  --green: #4ade80;
+  --green-soft: #12291b;
+  --amber: #fbbf24;
+  --amber-soft: #2a2110;
+  --red: #f87171;
+  --red-soft: #2c1416;
+  --violet: #a78bfa;
+  --violet-soft: #1e1733;
+  --cyan: #22d3ee;
+  --cyan-soft: #0c2429;
+  --rail-bg: #080c12;
+  --rail-ink: #aebccd;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-md: 0 16px 36px rgba(0, 0, 0, 0.46);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+input, select, textarea { min-width: 0; }
+h1, h2, h3, h4, p { margin: 0; }
+a { color: var(--accent); text-decoration: none; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.small { font-size: 11.5px; }
+.muted { color: var(--muted); }
+.hidden { display: none !important; }
+.spacer { flex: 1; }
+.ico { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.ico.sm { width: 13px; height: 13px; }
+.ico.lg { width: 22px; height: 22px; }
+.ico.fill { fill: currentColor; stroke: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- shell */
+.app { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); min-height: 100vh; }
+.rail {
+  position: sticky; top: 0; height: 100vh; overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--rail-bg); color: var(--rail-ink);
+}
+.brand {
+  height: var(--top); flex: none; display: flex; align-items: center; gap: 9px;
+  padding: 0 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.brand-mark {
+  width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center;
+  background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 800; letter-spacing: 0.4px;
+}
+.brand-name { color: #f8fafc; font-size: 13px; font-weight: 650; letter-spacing: 0.2px; }
+.nav { display: flex; flex-direction: column; gap: 2px; padding: 10px 8px; }
+.nav-item {
+  display: flex; align-items: center; gap: 9px; width: 100%; height: 34px; padding: 0 9px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--rail-ink);
+  font-size: 12.5px; text-align: left; white-space: nowrap;
+}
+.nav-item:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
+.nav-item.active { background: rgba(37, 99, 235, 0.2); color: #fff; box-shadow: inset 2px 0 0 var(--accent); }
+.nav-item .ico { opacity: 0.86; }
+.rail-foot {
+  margin-top: auto; flex: none; padding: 10px 12px; border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: #8d9aab; font-size: 11px; display: flex; align-items: center; gap: 6px;
+}
+.work { min-width: 0; }
+.topbar {
+  position: sticky; top: 0; z-index: 40; height: var(--top);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px;
+  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border-bottom: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.crumb { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; }
+.crumb strong { color: var(--ink); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumb-sep { color: var(--muted-2); }
+.top-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.top-status { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11.5px; }
+.build { color: var(--muted-2); font-family: var(--mono); font-size: 10.5px; white-space: nowrap; }
+.top-settings { height: 28px; padding: 0 9px; margin-left: 2px; }
+.content { padding: 16px 18px 28px; max-width: 1680px; margin: 0 auto; }
+.view { display: none; }
+.view.active { display: block; }
+
+/* ---------------------------------------------------------------- common */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; box-shadow: var(--shadow-sm); }
+.card-head {
+  min-height: 40px; padding: 0 12px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.card-head h2 { font-size: 12.5px; font-weight: 650; white-space: nowrap; }
+.card-body { padding: 12px; }
+.hint { color: var(--muted-2); font-size: 10.5px; line-height: 1.5; }
+.row { display: flex; align-items: center; gap: 8px; }
+.wrap { flex-wrap: wrap; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 30px; padding: 0 11px; border: 1px solid var(--line-2); border-radius: 6px;
+  background: var(--surface); color: var(--ink); font-size: 12px; white-space: nowrap; line-height: 1;
+}
+.btn:hover { border-color: var(--muted-2); background: var(--surface-hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.danger { color: var(--red); border-color: var(--red); background: transparent; }
+.btn.danger:hover { background: var(--red-soft); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--surface-2); color: var(--ink); }
+.btn.sm { height: 26px; padding: 0 8px; font-size: 11.5px; }
+.btn .ico { width: 14px; height: 14px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.icon-btn {
+  width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; flex: none;
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+.icon-btn.spin .ico { animation: spin 0.8s linear; }
+#themeBtn .sun { display: none; }
+#themeBtn .moon { display: block; }
+html.dark #themeBtn .sun { display: block; }
+html.dark #themeBtn .moon { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.tag {
+  display: inline-flex; align-items: center; gap: 4px; height: 19px; padding: 0 6px;
+  border-radius: 4px; background: var(--surface-3); color: var(--muted);
+  font-size: 10.5px; font-weight: 550; line-height: 1; white-space: nowrap;
+}
+.tag.blue { background: var(--accent-soft); color: var(--accent); }
+.tag.green { background: var(--green-soft); color: var(--green); }
+.tag.amber { background: var(--amber-soft); color: var(--amber); }
+.tag.red { background: var(--red-soft); color: var(--red); }
+.tag.violet { background: var(--violet-soft); color: var(--violet); }
+.tag.cyan { background: var(--cyan-soft); color: var(--cyan); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2); flex: none; display: inline-block; }
+.dot.online, .dot.live { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.dot.busy { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
+.dot.offline { background: var(--muted-2); box-shadow: 0 0 0 3px var(--surface-3); }
+.dot.red { background: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+
+.seg { display: inline-flex; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.seg button {
+  height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--muted); font-size: 11.5px; white-space: nowrap;
+}
+.seg button:hover { color: var(--ink); }
+.seg button.active { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08); }
+.tab-count {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px;
+  margin-left: 5px; padding: 0 4px; border-radius: 8px; background: var(--surface-3); color: var(--muted);
+  font-family: var(--mono); font-size: 9px; font-weight: 600; line-height: 1;
+}
+.seg button.active .tab-count { background: var(--accent-soft); color: var(--accent); }
+
+.input, .select, .textarea {
+  width: 100%; height: 30px; padding: 0 9px; border: 1px solid var(--line-2);
+  border-radius: 6px; background: var(--surface); color: var(--ink); font-size: 12px;
+}
+.input:focus, .select:focus, .textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.textarea { height: 64px; padding: 7px 9px; resize: vertical; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; }
+.input.mono { font-family: var(--mono); font-size: 11.5px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field > span { color: var(--muted); font-size: 10.5px; font-weight: 550; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.field-row.three { grid-template-columns: 1fr 1fr 1fr; }
+
+.switch { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch .track { width: 26px; height: 15px; border-radius: 20px; background: var(--line-2); position: relative; transition: background 0.15s; flex: none; }
+.switch .track::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px;
+  border-radius: 50%; background: #fff; transition: transform 0.15s; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(11px); }
+
+/* ---------------------------------------------------------------- console */
+.console-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) 384px; gap: 12px;
+  align-items: stretch; height: calc(100vh - var(--top) - 44px); min-height: 620px;
+}
+.mirror-card { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+.mirror-head {
+  min-height: 46px; flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 0 12px; border-bottom: 1px solid var(--line);
+}
+.dropdown { position: relative; flex: none; }
+.device-btn {
+  display: flex; align-items: center; gap: 7px; height: 30px; max-width: 300px; padding: 0 9px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 12px;
+}
+.device-btn:hover { background: var(--surface-2); }
+.device-btn .device-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.device-btn .device-serial { color: var(--muted-2); font-family: var(--mono); font-size: 10.5px; white-space: nowrap; }
+.device-btn .chev { color: var(--muted-2); }
+
+.menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; width: 310px;
+  padding: 6px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); box-shadow: var(--shadow-md);
+}
+.menu.hidden { display: none; }
+.menu-label { padding: 5px 8px 6px; color: var(--muted-2); font-size: 10.5px; }
+.device-row {
+  width: 100%; display: flex; align-items: flex-start; gap: 8px; padding: 7px 8px;
+  border: 0; border-radius: 6px; background: transparent; text-align: left;
+}
+.device-row:hover { background: var(--surface-2); }
+.device-row.active { background: var(--accent-soft); }
+.device-row .device-row-main { min-width: 0; flex: 1; }
+.device-row strong { display: block; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.device-row small { display: block; color: var(--muted); font-family: var(--mono); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.device-row .row-check { color: var(--accent); opacity: 0; flex: none; margin-top: 2px; }
+.device-row.active .row-check { opacity: 1; }
+.menu-sep { height: 1px; margin: 5px 4px; background: var(--line); }
+.menu-item {
+  width: 100%; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; text-align: left;
+}
+.menu-item:hover { background: var(--surface-2); color: var(--ink); }
+
+.mirror-meta { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.mirror-meta .mono { color: var(--ink); }
+.mirror-head > .btn { margin-left: 2px; }
+
+.mirror-toolbar {
+  min-height: 34px; flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 4px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px;
+}
+.mirror-toolbar .toolbar-hint { color: var(--muted-2); font-size: 10.5px; }
+.effect-menu-wrap { position: relative; flex: none; }
+.effect-btn .count {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px;
+  padding: 0 4px; border-radius: 8px; background: var(--surface-3); color: var(--muted);
+  font-family: var(--mono); font-size: 9px; font-weight: 600;
+}
+.effect-btn .count.on { background: var(--accent-soft); color: var(--accent); }
+.effect-popover {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 35; width: 248px; padding: 10px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow-md);
+}
+.effect-popover.hidden { display: none; }
+.effect-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 7px; }
+.effect-head strong { font-size: 11.5px; font-weight: 650; }
+.effect-head small { color: var(--muted-2); font-size: 9.5px; }
+.effect-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
+.effect-row:last-of-type { border-bottom: 0; }
+.effect-row .effect-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.effect-row .effect-label strong { color: var(--ink); font-size: 11px; font-weight: 550; }
+.effect-row .effect-label small { color: var(--muted-2); font-size: 9px; line-height: 1.4; }
+.effect-row .switch { gap: 0; flex: none; }
+.effect-actions { display: flex; gap: 5px; margin-top: 7px; }
+.effect-actions .btn { flex: 1; margin-top: 0; }
+.switch input:disabled + .track { opacity: 0.45; }
+
+.stage-wrap {
+  flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 58px;
+  margin: 8px 8px 0; border-radius: 12px; overflow: hidden; background: #0a0c10;
+  border: 1px solid #232b36; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
+}
+.mirror-stage {
+  position: relative; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center;
+  overflow: hidden; background:
+    radial-gradient(ellipse at 50% 20%, rgba(61, 78, 101, 0.22), transparent 58%),
+    #0a0c10;
+}
+.phone-screen {
+  position: relative; height: calc(100% - 26px); aspect-ratio: 1344 / 2992; max-width: calc(100% - 36px);
+  border-radius: 18px; overflow: hidden; background: #f3f5f9; color: #1a2230;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09);
+}
+.phone-screen.off { display: none; }
+.phone-status {
+  height: 22px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between;
+  color: #202733; font-size: 9px; font-weight: 650;
+}
+.phone-status .status-right { display: flex; align-items: center; gap: 4px; }
+.phone-status .signal { width: 11px; height: 8px; border-radius: 1px; background: linear-gradient(90deg, #202733 0 2px, transparent 2px 3px, #202733 3px 5px, transparent 5px 6px, #202733 6px 9px, transparent 9px 10px, #202733 10px 11px); }
+.phone-status .wifi { width: 10px; height: 8px; border-radius: 50%; border-top: 2px solid #202733; }
+.phone-status .battery { width: 15px; height: 8px; border: 1px solid #202733; border-radius: 2px; position: relative; }
+.phone-status .battery::after { content: ''; position: absolute; inset: 1px; right: 4px; background: #202733; border-radius: 1px; }
+.phone-body { padding: 8px 14px 14px; height: calc(100% - 22px); overflow: hidden; }
+.phone-title-row { display: flex; align-items: center; justify-content: space-between; padding: 2px 0 12px; }
+.phone-title { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+.phone-avatar { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: #dfe7f4; color: #3766a8; font-size: 10px; font-weight: 700; }
+.phone-search { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; margin-bottom: 12px; border-radius: 9px; background: #e7ebf3; color: #6b778c; font-size: 11px; }
+.phone-list { display: flex; flex-direction: column; }
+.phone-row { display: flex; align-items: center; gap: 10px; min-height: 43px; border-bottom: 1px solid #e4e9f1; font-size: 12px; color: #26303e; }
+.phone-row:last-child { border-bottom: 0; }
+.phone-row .pico { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.phone-row .pico .ico { width: 14px; height: 14px; }
+.phone-row .pico.blue { background: #e3ecfb; color: #3766a8; }
+.phone-row .pico.green { background: #e2f5e9; color: #2d7a4a; }
+.phone-row .pico.amber { background: #fdf0db; color: #a66a15; }
+.phone-row .pico.violet { background: #eee7ff; color: #6a4cb3; }
+.phone-row .pico.red { background: #fbe5e5; color: #a33a3a; }
+.phone-row .pico.cyan { background: #e0f4f7; color: #247486; }
+.phone-row .chev { margin-left: auto; color: #9aa6b8; font-size: 18px; line-height: 1; }
+.stage-placeholder {
+  position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 9px;
+  padding: 28px; background: #0a0c10; color: rgba(255, 255, 255, 0.8); text-align: center;
+}
+.stage-placeholder.show { display: flex; }
+.stage-placeholder .ico { color: #7d8da3; }
+.stage-placeholder h3 { font-size: 14px; font-weight: 550; color: rgba(255, 255, 255, 0.86); }
+.stage-placeholder p { max-width: 260px; color: rgba(255, 255, 255, 0.38); font-size: 11.5px; }
+.stage-fps {
+  position: absolute; top: 10px; left: 10px; z-index: 4; display: inline-flex; align-items: center; gap: 6px;
+  height: 24px; padding: 0 10px; border-radius: 12px;
+  background: rgba(10, 14, 20, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #f8fafc; font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); pointer-events: none;
+}
+.stage-fps .dot { width: 6px; height: 6px; }
+.stage-fps .dot.live { background: #4ade80; box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.16); }
+.stage-fps .mono { color: #f8fafc; font-size: 10.5px; font-weight: 600; }
+.action-rail {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 8px 0; background: #111820; border-left: 1px solid #232b36; overflow: visible;
+}
+.rail-btn {
+  width: 46px; height: 43px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  border: 0; border-radius: 7px; background: transparent; color: #8494a8; font-size: 9.5px; line-height: 1;
+}
+.rail-btn .ico { width: 16px; height: 16px; }
+.rail-btn:hover { background: rgba(255, 255, 255, 0.07); color: #f0f6ff; }
+.rail-btn.accent { color: #7fb0ff; }
+.rail-divider { width: 24px; height: 1px; margin: 3px 0; background: #293342; }
+.more-menu {
+  position: absolute; right: calc(100% + 8px); bottom: 6px; z-index: 30; width: 238px;
+  padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.more-menu.hidden { display: none; }
+.more-title { padding: 3px 4px 6px; color: var(--muted-2); font-size: 10px; }
+.more-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 7px; }
+.more-key {
+  height: 43px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); font-size: 9.5px;
+}
+.more-key:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.more-key .ico { width: 15px; height: 15px; }
+
+.mirror-statusline {
+  min-height: 30px; flex: none; display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  padding: 0 12px; color: var(--muted); font-size: 10.5px; white-space: nowrap;
+}
+.mirror-statusline .sep { width: 1px; height: 10px; background: var(--line-2); }
+.mirror-statusline .mono { color: var(--muted); }
+
+/* ---------------------------------------------------------------- dock */
+.dock { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+.dock-tabs { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 6px; border-bottom: 1px solid var(--line); }
+.dock-tab {
+  display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px;
+}
+.dock-tab:hover { background: var(--surface-2); color: var(--ink); }
+.dock-tab.active { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+.run-badge {
+  display: inline-flex; align-items: center; height: 16px; padding: 0 5px; border-radius: 8px;
+  background: var(--green-soft); color: var(--green); font-size: 9px; font-weight: 700;
+}
+.run-badge.paused { background: var(--amber-soft); color: var(--amber); }
+.dock-body { flex: 1; min-height: 0; overflow: hidden; }
+.dock-pane { display: none; height: 100%; min-height: 0; }
+.dock-pane.active { display: flex; flex-direction: column; }
+#pane-manual { display: none; }
+#pane-manual.active { display: flex; flex-direction: column; }
+.manual-tabs {
+  flex: none; display: flex; align-items: stretch; gap: 1px; padding: 0 7px;
+  border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none;
+}
+.manual-tabs::-webkit-scrollbar { display: none; }
+.manual-tab {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; height: 38px; padding: 0 7px;
+  border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted);
+  font-size: 11.5px; white-space: nowrap;
+}
+.manual-tab .ico { width: 13px; height: 13px; color: var(--muted-2); }
+.manual-tab:hover { color: var(--ink); background: var(--surface-2); }
+.manual-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 650; }
+.manual-tab.active .ico { color: var(--accent); }
+.manual-pages { flex: 1; min-height: 0; overflow-y: auto; }
+.manual-page { display: none; padding: 12px; }
+.manual-page.active { display: block; }
+.section-head { display: flex; align-items: center; gap: 6px; margin-bottom: 9px; }
+.section-head h3 { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; white-space: nowrap; }
+.section-head h3 .ico { color: var(--muted); }
+.section-head .tag { margin-left: auto; }
+.section-sub { margin: -3px 0 8px; color: var(--muted-2); font-size: 10.5px; line-height: 1.45; }
+.manual-page > .btn { margin-top: 7px; }
+.manual-page .field + .field { margin-top: 8px; }
+.rec-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rec-row .input { flex: 1; min-width: 120px; }
+.rec-row .select { width: 88px; flex: none; }
+.video-warning {
+  display: flex; align-items: flex-start; gap: 6px; padding: 7px 9px; margin-bottom: 8px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--amber-soft); color: var(--amber);
+  font-size: 10.5px; line-height: 1.5;
+}
+.video-warning .ico { flex: none; margin-top: 1px; }
+.video-warning strong { font-weight: 650; }
+.rec-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); flex: none; }
+.rec-dot.live { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.rec-clock { color: var(--ink); font-family: var(--mono); font-size: 11.5px; }
+.compact-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.manual-divider { height: 1px; margin: 15px 0 13px; background: var(--line-soft); }
+.tool-list { display: flex; flex-direction: column; }
+.tool-item { display: flex; align-items: center; gap: 9px; padding: 8px 3px; border-bottom: 1px solid var(--line-soft); }
+.tool-item:last-child { border-bottom: 0; }
+.tool-item .tool-ico {
+  width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; flex: none;
+  background: var(--surface-3); color: var(--muted);
+}
+.tool-item .tool-ico .ico { width: 15px; height: 15px; }
+.tool-item .tool-main { flex: 1; min-width: 0; }
+.tool-item strong { display: block; font-size: 11.5px; font-weight: 600; }
+.tool-item small { display: block; margin-top: 1px; color: var(--muted-2); font-size: 10px; line-height: 1.4; }
+.tool-item .btn { margin-top: 0; flex: none; }
+
+/* ---------------------------------------------------------------- auto */
+#pane-auto { min-height: 0; }
+#autoList { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+.auto-head { display: flex; align-items: center; gap: 5px; margin-bottom: 9px; }
+.auto-head h2 { font-size: 13px; font-weight: 650; }
+.auto-head .btn { margin-top: 0; }
+.auto-search { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; margin-bottom: 8px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--surface); color: var(--muted-2); }
+.auto-search input { flex: 1; border: 0; outline: none; background: transparent; color: var(--ink); font-size: 11.5px; }
+.vars-panel { margin-bottom: 8px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); }
+.vars-panel .field { margin-bottom: 6px; }
+.script-list { display: flex; flex-direction: column; gap: 2px; }
+.script-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 39px; padding: 6px 8px;
+  border: 0; border-radius: 6px; background: transparent; text-align: left;
+}
+.script-row:hover { background: var(--surface-2); }
+.script-row .script-title { flex: 1; min-width: 0; font-size: 12px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.script-row .run-script { flex: none; }
+.script-row .script-id { color: var(--muted-2); font-family: var(--mono); font-size: 9.5px; }
+.ai-card {
+  margin-top: 10px; padding: 12px; border: 1px dashed var(--line-2); border-radius: 8px;
+  background: linear-gradient(135deg, var(--surface-2), var(--surface));
+}
+.ai-card .ai-title { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; font-weight: 600; }
+.ai-card .ai-title .ico { color: var(--violet); }
+.ai-card p { margin: 5px 0 8px; color: var(--muted-2); font-size: 10.5px; line-height: 1.5; }
+.ai-card .btn { opacity: 0.55; }
+
+/* run monitor */
+#autoRun { display: none; flex-direction: column; height: 100%; min-height: 0; padding: 12px; }
+#autoRun.show { display: flex; }
+.run-head { flex: none; }
+.run-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.run-title strong { min-width: 0; font-size: 12.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.run-title .mono { color: var(--muted); font-size: 10.5px; }
+.progress { height: 5px; margin: 9px 0 7px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.progress > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.3s ease; }
+.run-meta { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; color: var(--muted); font-size: 10.5px; }
+.run-meta b { color: var(--ink); font-weight: 650; }
+.run-actions { display: flex; gap: 5px; margin: 10px 0 8px; flex-wrap: wrap; }
+.run-actions .btn { margin-top: 0; }
+.run-nodes { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+.node-row { display: flex; align-items: flex-start; gap: 7px; padding: 7px 5px; border-bottom: 1px solid var(--line-soft); }
+.node-row:last-child { border-bottom: 0; }
+.node-row.current { background: var(--accent-soft); border-radius: 5px; }
+.node-index { width: 18px; flex: none; color: var(--muted-2); font-family: var(--mono); font-size: 9.5px; text-align: right; padding-top: 2px; }
+.node-body { flex: 1; min-width: 0; }
+.node-name { color: var(--ink); font-size: 11.5px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-sub { display: flex; align-items: center; gap: 6px; margin-top: 1px; color: var(--muted-2); font-size: 9.5px; }
+.node-sub .mono { font-size: 9.5px; }
+.node-status { flex: none; margin-top: 1px; }
+.node-error { margin-top: 2px; color: var(--red); font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.run-terminal { flex: none; margin-top: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); }
+.run-terminal strong { font-size: 11.5px; }
+.run-terminal .terminal-meta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; color: var(--muted); font-size: 10.5px; }
+#backToList { margin-top: 8px; flex: none; align-self: flex-start; }
+
+/* ---------------------------------------------------------------- settings */
+.settings-layout { display: grid; grid-template-columns: 184px minmax(0, 1fr); gap: 16px; align-items: start; }
+.settings-nav { padding: 6px; position: sticky; top: calc(var(--top) + 16px); }
+.settings-tab {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; height: 36px; padding: 0 10px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12.5px; text-align: left;
+}
+.settings-tab:hover { background: var(--surface-2); color: var(--ink); }
+.settings-tab.active { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+.settings-note { margin-top: 8px; padding: 8px 9px; border-top: 1px solid var(--line-soft); color: var(--muted-2); font-size: 10px; line-height: 1.5; }
+.settings-main { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.settings-pane { display: none; flex-direction: column; gap: 14px; }
+.settings-pane.active { display: flex; }
+.settings-card .card-body { padding: 14px; }
+.theme-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.theme-choice {
+  padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); text-align: left;
+}
+.theme-choice:hover { border-color: var(--accent); }
+.theme-choice.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.theme-preview { height: 44px; margin-bottom: 7px; border-radius: 5px; border: 1px solid var(--line); display: grid; grid-template-columns: 16px 1fr; overflow: hidden; }
+.theme-preview .tp-rail { background: #0f151d; }
+.theme-preview .tp-body { padding: 5px; background: #f2f4f7; }
+.theme-preview .tp-body::before { content: ''; display: block; height: 7px; border-radius: 2px; background: #fff; box-shadow: 0 8px 0 #e3e8ef; }
+.theme-choice[data-theme-choice="dark"] .theme-preview .tp-body { background: #0c1118; }
+.theme-choice[data-theme-choice="dark"] .theme-preview .tp-body::before { background: #141b24; box-shadow: 0 8px 0 #263241; }
+.theme-choice[data-theme-choice="system"] .theme-preview .tp-body { background: linear-gradient(90deg, #f2f4f7 0 50%, #0c1118 50% 100%); }
+.theme-choice[data-theme-choice="system"] .theme-preview .tp-body::before { background: linear-gradient(90deg, #fff 0 50%, #141b24 50% 100%); box-shadow: 0 8px 0 #263241; }
+.theme-choice strong { display: block; font-size: 11.5px; font-weight: 600; }
+.theme-choice small { display: block; margin-top: 1px; color: var(--muted-2); font-size: 10px; }
+
+.preset-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.preset {
+  padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); text-align: left;
+}
+.preset:hover { border-color: var(--accent); }
+.preset.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent-soft); }
+.preset .preset-name { display: flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 650; }
+.preset .preset-detail { margin-top: 3px; color: var(--muted); font-family: var(--mono); font-size: 10px; }
+.preset .preset-note { margin-top: 4px; color: var(--muted-2); font-size: 9.5px; }
+.preset-current { margin: 9px 0 8px; color: var(--muted); font-size: 10.5px; }
+.preset-current b { color: var(--accent); font-weight: 650; }
+.field-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.field-grid .field > span { white-space: nowrap; }
+.tool-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.tool-card .card-body { padding: 14px; }
+.tool-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; font-size: 12.5px; font-weight: 650; }
+.tool-head .ico { color: var(--muted); }
+.tool-head .tag { margin-left: auto; }
+.tool-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line-soft); font-size: 10.5px; }
+.tool-row:last-of-type { border-bottom: 0; }
+.tool-row > span { color: var(--muted); }
+.tool-row code { max-width: 62%; overflow: hidden; color: var(--ink); font-family: var(--mono); font-size: 10px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.tool-card .field { margin-top: 7px; }
+.tool-card .btn { margin-top: 7px; }
+.exec-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.exec-card .card-body { padding: 14px; }
+.exec-card .field + .field { margin-top: 8px; }
+.exec-card .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line-soft); }
+.exec-card .switch-row:last-child { border-bottom: 0; }
+.exec-card .switch-row > span { color: var(--muted); font-size: 11px; }
+.kv-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.kv { display: flex; flex-direction: column; gap: 2px; }
+.kv span { color: var(--muted); font-size: 10px; }
+.kv strong { font-size: 12px; font-weight: 600; word-break: break-all; }
+.savebar {
+  position: sticky; bottom: 0; z-index: 10; display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-md);
+}
+.save-count { color: var(--amber); font-size: 11px; font-weight: 600; }
+.savebar .hint { margin-left: auto; }
+
+/* ---------------------------------------------------------------- scripts */
+.scripts-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
+.scripts-title { display: flex; align-items: center; gap: 7px; }
+.scripts-title h1 { font-size: 17px; font-weight: 650; letter-spacing: 0.1px; }
+.scripts-title .tag { height: 18px; font-size: 10px; }
+.scripts-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.scripts-actions .btn.sm { height: 30px; padding: 0 10px; }
+.scripts-actions .icon-btn { width: 30px; height: 30px; }
+.scripts-actions .auto-search { width: 210px; margin: 0; }
+.table-card { overflow-x: auto; }
+.library-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.library-toolbar .auto-search { width: 220px; margin: 0; }
+.data-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 11.5px; }
+.data-table th {
+  padding: 9px 11px; text-align: left; color: var(--muted); font-size: 10px; font-weight: 600;
+  background: var(--surface-2); border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.data-table td { padding: 9px 11px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+.data-table tbody tr:last-child td { border-bottom: 0; }
+.data-table tbody tr:hover { background: var(--surface-hover); }
+.cell-link { border: 0; background: transparent; padding: 0; color: var(--accent); font-size: 11.5px; font-weight: 600; text-align: left; }
+.cell-link:hover { text-decoration: underline; }
+.cell-main { color: var(--ink); font-size: 11.5px; font-weight: 600; }
+.cell-sub { color: var(--muted-2); font-family: var(--mono); font-size: 9.5px; margin-top: 1px; }
+.actions-cell { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.bar-row { display: flex; align-items: center; gap: 6px; min-width: 110px; }
+.bar-row .progress { flex: 1; height: 5px; margin: 0; }
+.bar-row .small { color: var(--muted); font-size: 9.5px; white-space: nowrap; }
+.editor-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 0 0 14px; }
+.editor-head h2 { font-size: 16px; font-weight: 650; letter-spacing: 0.1px; }
+.editor-head .spacer { flex: 1; }
+.editor-shell { display: grid; grid-template-columns: 310px minmax(0, 1fr); gap: 14px; align-items: start; }
+.node-list-card { overflow: hidden; }
+.node-list-head { display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.node-list-head strong { font-size: 12px; font-weight: 650; }
+.node-list-head .btn { margin-left: auto; }
+.node-search { display: flex; align-items: center; gap: 6px; padding: 7px 9px; border-bottom: 1px solid var(--line-soft); color: var(--muted-2); }
+.node-search input { flex: 1; border: 0; background: transparent; outline: none; color: var(--ink); font-size: 11px; }
+.node-list { max-height: 480px; overflow-y: auto; }
+.node-row {
+  position: relative; display: flex; align-items: center; gap: 5px; padding: 6px 8px;
+  border-bottom: 1px solid var(--line-soft); border-left: 2px solid transparent; cursor: pointer;
+}
+.node-row:hover { background: var(--surface-hover); }
+.node-row.selected { background: var(--accent-soft); border-left-color: var(--accent); }
+.node-row.dragging { opacity: 0.42; }
+.node-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.node-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.drag-handle {
+  width: 16px; height: 22px; display: flex; align-items: center; justify-content: center; flex: none;
+  color: var(--muted-2); cursor: grab; border-radius: 4px;
+}
+.drag-handle:hover { color: var(--ink); background: var(--surface-3); }
+.drag-handle:active { cursor: grabbing; }
+.drag-handle .ico { width: 13px; height: 13px; }
+.node-num { width: 18px; flex: none; color: var(--muted-2); font-family: var(--mono); font-size: 9.5px; text-align: right; }
+.node-ic { width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; flex: none; background: var(--surface-3); color: var(--muted); font-size: 9px; font-weight: 700; }
+.node-copy { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.node-name { overflow: hidden; color: var(--ink); font-size: 11.5px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.node-type { overflow: hidden; color: var(--muted-2); font-family: var(--mono); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.node-tools { display: flex; align-items: center; gap: 1px; flex: none; opacity: 0; }
+.node-row:hover .node-tools, .node-row.selected .node-tools { opacity: 1; }
+.node-tools .switch { gap: 0; }
+.node-tools .switch .track { width: 22px; height: 13px; }
+.node-tools .switch .track::after { width: 9px; height: 9px; }
+.node-tools .switch input:checked + .track::after { transform: translateX(9px); }
+.icon-btn.tiny { width: 22px; height: 22px; border-radius: 4px; }
+.icon-btn.tiny .ico { width: 12px; height: 12px; }
+.node-list-foot { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-top: 1px solid var(--line-soft); color: var(--muted-2); font-size: 9.5px; }
+.node-list-foot .tag { margin-left: auto; height: 17px; font-size: 9px; }
+.node-form-card .card-body { display: flex; flex-direction: column; gap: 8px; }
+.node-form-card .hint { margin-top: 2px; }
+.recording-notice {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 9px 11px; margin-bottom: 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 11px;
+}
+.recording-notice .ico { flex: none; }
+.recording-notice .hint { color: var(--muted); }
+.recording-notice .spacer { flex: 1; }
+.recording-notice .btn { margin-top: 0; }
+.recording-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.recording-summary .kv strong { font-size: 11.5px; }
+.recording-detail-note { margin-top: 8px; }
+.recording-livebar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 11px; margin-bottom: 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--red-soft); color: var(--red); font-size: 11px;
+}
+.recording-livebar.hidden { display: none; }
+.recording-livebar .dot { width: 7px; height: 7px; background: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+.recording-livebar .dot.live-pulse { animation: pulse 1.2s ease-in-out infinite; }
+.recording-livebar strong { font-size: 11.5px; }
+.recording-livebar .hint { color: var(--muted); }
+.recording-livebar b { color: var(--ink); }
+.events-table .cell-link { font-size: 11px; }
+@media (max-width: 900px) {
+  .recording-summary { grid-template-columns: 1fr 1fr; }
+}
+.run-detail-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 0 0 14px; }
+.run-detail-head h2 { font-size: 16px; font-weight: 650; letter-spacing: 0.1px; }
+.run-detail-head .spacer { flex: 1; }
+.run-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+.run-detail-grid .stack { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.run-summary .card-body { padding: 12px; }
+.run-detail-meta { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; color: var(--muted); font-size: 10.5px; margin-bottom: 9px; }
+.run-detail-meta .mono { font-family: var(--mono); }
+.run-progress-line { display: flex; align-items: center; gap: 8px; }
+.run-progress-line .progress { flex: 1; margin: 0; }
+.run-kv { display: flex; align-items: center; gap: 13px; flex-wrap: wrap; margin-top: 7px; color: var(--muted); font-size: 10.5px; }
+.run-kv b { color: var(--ink); font-weight: 650; }
+.run-step-list { max-height: 420px; overflow-y: auto; }
+.run-step-row { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); }
+.run-step-row:last-child { border-bottom: 0; }
+.run-step-row.current { background: var(--accent-soft); }
+.run-step-index { width: 20px; flex: none; color: var(--muted-2); font-family: var(--mono); font-size: 9.5px; text-align: right; }
+.run-step-main { flex: 1; min-width: 0; }
+.run-step-name { overflow: hidden; color: var(--ink); font-size: 11.5px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.run-step-sub { margin-top: 1px; color: var(--muted-2); font-family: var(--mono); font-size: 9px; }
+.run-step-duration { width: 42px; flex: none; color: var(--muted); font-size: 9.5px; text-align: right; }
+.run-step-error { margin: 1px 0 0 27px; color: var(--red); font-size: 9.5px; }
+.run-event-list { max-height: 190px; overflow-y: auto; padding: 4px 10px; }
+.run-event-item { display: flex; align-items: baseline; gap: 6px; padding: 4px 0; border-bottom: 1px dashed var(--line-soft); font-size: 10px; }
+.run-event-item:last-child { border-bottom: 0; }
+.run-event-seq { width: 26px; flex: none; color: var(--muted-2); font-family: var(--mono); font-size: 9px; }
+.run-event-time { width: 48px; flex: none; color: var(--muted-2); font-family: var(--mono); font-size: 9px; }
+.run-event-text { color: var(--muted); }
+.artifact-list { display: flex; flex-direction: column; }
+.artifact-row { display: flex; align-items: center; gap: 7px; padding: 5px 0; border-bottom: 1px solid var(--line-soft); font-size: 11px; }
+.artifact-row:last-child { border-bottom: 0; }
+.artifact-row .ico { color: var(--muted); }
+.artifact-row .artifact-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-row .artifact-size { color: var(--muted-2); font-family: var(--mono); font-size: 9px; }
+.report-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.report-actions .btn { margin-top: 0; }
+.run-info-table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+.run-info-table td { padding: 4px 0; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.run-info-table tr:last-child td { border-bottom: 0; }
+.run-info-table td:first-child { width: 66px; color: var(--muted); }
+.run-info-table td:last-child { color: var(--ink); text-align: right; word-break: break-all; }
+.run-info-table .mono { font-family: var(--mono); font-size: 9.5px; }
+
+/* ---------------------------------------------------------------- modal */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center;
+  padding: 20px; background: rgba(8, 12, 18, 0.58);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+}
+.modal-mask.hidden { display: none; }
+.modal {
+  width: min(720px, 100%); max-height: 86vh; display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-md);
+}
+.modal-head { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--line); flex: none; }
+.modal-head h2 { flex: 1; font-size: 13px; font-weight: 650; }
+.modal-head .icon-btn { width: 26px; height: 26px; }
+.modal-body { padding: 14px; overflow-y: auto; min-height: 0; }
+.modal-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--line); flex: none; }
+.modal-text { margin: 0 0 8px; color: var(--ink); font-size: 12.5px; line-height: 1.6; }
+.modal-sub { color: var(--muted); font-size: 10.5px; line-height: 1.55; }
+.report-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.report-kv { padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface-2); }
+.report-kv span { display: block; color: var(--muted-2); font-size: 9.5px; }
+.report-kv strong { display: block; margin-top: 2px; color: var(--ink); font-size: 12px; font-weight: 600; }
+.report-section { margin-top: 10px; }
+.report-section > strong { display: block; margin-bottom: 5px; font-size: 11.5px; font-weight: 650; }
+.report-files { display: flex; flex-direction: column; gap: 4px; }
+.report-file { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--line-soft); border-radius: 6px; font-size: 11px; }
+.report-file .ico { color: var(--muted); }
+.report-file .spacer { flex: 1; }
+.report-file small { color: var(--muted-2); font-family: var(--mono); font-size: 9px; }
+.shot-preview {
+  width: min(300px, 100%); margin: 0 auto; border: 1px solid #dbe2ec; border-radius: 16px;
+  overflow: hidden; background: #f3f5f9; color: #1a2230; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+.shot-status { display: flex; align-items: center; justify-content: space-between; height: 20px; padding: 0 12px; font-size: 8px; font-weight: 700; }
+.shot-body { padding: 8px 14px 14px; }
+.shot-title { font-size: 19px; font-weight: 700; margin-bottom: 9px; }
+.shot-search { height: 26px; display: flex; align-items: center; padding: 0 9px; margin-bottom: 8px; border-radius: 8px; background: #e7ebf3; color: #6b778c; font-size: 9.5px; }
+.shot-row { display: flex; align-items: center; justify-content: space-between; min-height: 30px; border-bottom: 1px solid #e4e9f1; font-size: 10px; }
+.shot-row:last-child { border-bottom: 0; }
+.shot-row span:last-child { color: #9aa6b8; font-size: 14px; }
+.log-pre, .hierarchy-pre {
+  margin: 0; padding: 10px; border-radius: 7px; background: #0b0f15; color: #d7e2ef;
+  font-family: var(--mono); font-size: 10px; line-height: 1.65; white-space: pre-wrap; word-break: break-all;
+  max-height: 52vh; overflow: auto;
+}
+.hierarchy-pre { color: #c9d8ea; }
+
+/* ---------------------------------------------------------------- toast */
+.toast {
+  position: fixed; left: 50%; bottom: 26px; z-index: 100; transform: translate(-50%, 10px);
+  padding: 8px 13px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface);
+  color: var(--ink); font-size: 11.5px; box-shadow: var(--shadow-md); opacity: 0; pointer-events: none;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------------------------------------------------------------- responsive */
+@media (max-width: 1200px) {
+  .console-grid { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
+  .mirror-card { height: 620px; }
+  .dock { height: auto; max-height: none; }
+  .dock-body { max-height: 620px; }
+  #pane-manual { max-height: 620px; }
+  .tool-grid { grid-template-columns: 1fr 1fr; }
+  .field-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 900px) {
+  .topbar { padding: 0 14px; }
+  .content { padding: 12px 14px 24px; }
+  .settings-main, .settings-pane { gap: 12px; }
+  :root { --rail: 56px; }
+  .brand-name, .nav-item span, .rail-foot .rail-text { display: none; }
+  .brand, .nav-item { justify-content: center; padding: 0; }
+  .nav-item { width: 40px; margin: 0 auto; }
+  .rail-foot { justify-content: center; padding: 10px 0; }
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-nav { position: static; display: flex; gap: 3px; overflow-x: auto; padding: 5px; }
+  .settings-tab { width: auto; flex: none; padding: 0 10px; }
+  .settings-note { display: none; }
+  .exec-grid, .tool-grid { grid-template-columns: 1fr; }
+  .editor-shell { grid-template-columns: 1fr; }
+  .run-detail-grid { grid-template-columns: 1fr; }
+  .node-list { max-height: 330px; }
+  .build { display: none; }
+}
+@media (max-width: 640px) {
+  .topbar { padding: 0 8px; gap: 6px; }
+  .content { padding: 10px 12px 20px; }
+  .top-status { display: none; }
+  .top-settings span { display: none; }
+  .top-settings { width: 28px; padding: 0; }
+  .device-btn { max-width: 190px; }
+  .device-btn .device-serial { display: none; }
+  .mirror-head { flex-wrap: wrap; padding: 6px 8px; gap: 6px; }
+  .mirror-head > .btn { margin-left: auto; }
+  .mirror-toolbar .toolbar-hint { display: none; }
+  .mirror-card { height: 560px; }
+  .field-grid, .field-row, .field-row.three, .preset-grid, .theme-choices { grid-template-columns: 1fr 1fr; }
+  .preset-grid { grid-template-columns: 1fr; }
+  .theme-choices { grid-template-columns: 1fr; }
+  .scripts-actions { width: 100%; }
+  .scripts-actions .auto-search { flex: 1; width: auto; }
+  .editor-head h2 { flex: 1; min-width: 0; }
+  .action-rail { width: 52px; }
+  .rail-btn { width: 42px; }
+  .more-menu { width: 210px; right: calc(100% + 5px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+  <symbol id="i-script" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></symbol>
+  <symbol id="i-record" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="18" r="2"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></symbol>
+  <symbol id="i-recents" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="16" rx="1"/><rect x="14" y="4" width="6" height="16" rx="1"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="4"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-drag" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="9" cy="18" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="18" r="1.2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v9"/><path d="M18.36 5.64a9 9 0 1 1-12.73 0"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9a4 4 0 0 1 0 6"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-backspace" viewBox="0 0 24 24"><path d="M9 5h11v14H9L3 12z"/><path d="M12 9l4 6M16 9l-4 6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l4 4L19 6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+  <symbol id="i-magic" viewBox="0 0 24 24"><path d="M4 20l10-10M14 4l1 3 3 1-3 1-1 3-1-3-3-1 3-1z"/><path d="M18 14l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v11H3z"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2 8a15 15 0 0 1 20 0M5 12a10 10 0 0 1 14 0M8.5 15.5a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-bluetooth" viewBox="0 0 24 24"><path d="M7 7l10 10-5 4V3l5 4L7 17"/></symbol>
+  <symbol id="i-battery" viewBox="0 0 24 24"><rect x="2" y="7" width="18" height="10" rx="2"/><path d="M22 10v4"/><rect x="4" y="9" width="12" height="6" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-display" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></symbol>
+</svg>
+
+<div class="app">
+  <aside class="rail">
+    <div class="brand"><span class="brand-mark">AT</span><span class="brand-name">AutoTest</span></div>
+    <nav class="nav" aria-label="主导航">
+      <button class="nav-item active" data-nav="console"><svg class="ico"><use href="#i-monitor"/></svg><span>控制台</span></button>
+      <button class="nav-item" data-nav="scripts"><svg class="ico"><use href="#i-script"/></svg><span>脚本</span></button>
+      <button class="nav-item" data-nav="recorder"><svg class="ico"><use href="#i-video"/></svg><span>录制</span></button>
+      <button class="nav-item" data-nav="settings"><svg class="ico"><use href="#i-settings"/></svg><span>设置</span></button>
+    </nav>
+    <div class="rail-foot"><span class="dot online"></span><span class="rail-text">v0.2.5</span><span class="rail-text mono" style="margin-left:auto;color:#64748b">mock</span></div>
+  </aside>
+
+  <div class="work">
+    <header class="topbar">
+      <div class="crumb"><span>AutoTest</span><span class="crumb-sep">›</span><strong id="crumbPage">控制台</strong></div>
+      <div class="top-actions">
+        <button class="icon-btn" id="themeBtn" title="切换浅色/深色" aria-label="切换主题">
+          <svg class="ico sun"><use href="#i-sun"/></svg>
+          <svg class="ico moon"><use href="#i-moon"/></svg>
+        </button>
+        <span class="top-status"><span class="dot online"></span>正常</span>
+        <span class="build">v0.2.5 · mock</span>
+        <button class="btn ghost sm top-settings" id="topSettingsBtn" title="打开设置">
+          <svg class="ico"><use href="#i-settings"/></svg><span>设置</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="content">
+      <!-- ============================================================ 控制台 -->
+      <section class="view active" id="view-console">
+        <div class="console-grid">
+          <section class="card mirror-card">
+            <header class="mirror-head">
+              <div class="dropdown" id="deviceDropdown">
+                <button class="device-btn" id="deviceBtn" aria-haspopup="menu" aria-expanded="false">
+                  <span class="dot online"></span>
+                  <span class="device-name">Pixel 8 Pro</span>
+                  <span class="device-serial">39121FDH200</span>
+                  <svg class="ico sm chev"><use href="#i-chevron"/></svg>
+                </button>
+                <div class="menu hidden" id="deviceMenu" role="menu">
+                  <div class="menu-label">当前设备 · 在线</div>
+                  <button class="device-row active" data-name="Pixel 8 Pro" data-serial="39121FDH200" data-res="1344 × 2992">
+                    <span class="dot online"></span>
+                    <span class="device-row-main"><strong>Pixel 8 Pro</strong><small>39121FDH200 · 1344×2992</small></span>
+                    <svg class="ico sm row-check"><use href="#i-check"/></svg>
+                  </button>
+                  <button class="device-row" data-name="Xiaomi 14" data-serial="192.168.1.20:5555" data-res="1200 × 2670">
+                    <span class="dot online"></span>
+                    <span class="device-row-main"><strong>Xiaomi 14</strong><small>192.168.1.20:5555 · 1200×2670</small></span>
+                    <svg class="ico sm row-check"><use href="#i-check"/></svg>
+                  </button>
+                  <div class="menu-sep"></div>
+                  <button class="menu-item" data-toast="演示稿：打开「连接网络设备」"><svg class="ico"><use href="#i-link"/></svg>连接设备…</button>
+                  <button class="menu-item" data-toast="演示稿：断开当前网络设备"><svg class="ico"><use href="#i-x"/></svg>断开当前网络设备</button>
+                </div>
+              </div>
+              <div class="mirror-meta">
+                <span class="mono" id="resText">1344 × 2992</span>
+              </div>
+              <div class="spacer"></div>
+              <button class="btn danger" id="mirrorToggle"><svg class="ico"><use href="#i-phone"/></svg><span>断开镜像</span></button>
+              <button class="icon-btn" id="refreshMirror" title="刷新镜像连接与设备状态"><svg class="ico"><use href="#i-refresh"/></svg></button>
+            </header>
+
+            <div class="mirror-toolbar">
+              <span class="toolbar-hint" id="toolbarHint">按住拖动可直接操作设备</span>
+              <span class="spacer"></span>
+              <div class="effect-menu-wrap" id="effectMenuWrap">
+                <button class="btn ghost sm effect-btn" id="effectBtn" aria-haspopup="dialog" aria-expanded="false">
+                  <svg class="ico"><use href="#i-magic"/></svg>特效<span class="count on" id="effectCount">3</span>
+                </button>
+                <div class="effect-popover hidden" id="effectPopover" role="dialog" aria-label="触控特效">
+                  <div class="effect-head"><strong>触控特效</strong><small>仅影响镜像上的视觉反馈，不改变实际点击</small></div>
+                  <div class="effect-row">
+                    <span class="effect-label"><strong>点击特效</strong><small>按下触点和长按呼吸环</small></span>
+                    <label class="switch"><input type="checkbox" id="fxTap" checked><span class="track"></span></label>
+                  </div>
+                  <div class="effect-row">
+                    <span class="effect-label"><strong>波纹</strong><small>点击扩散水波，需开启点击特效</small></span>
+                    <label class="switch"><input type="checkbox" id="fxRipple" checked><span class="track"></span></label>
+                  </div>
+                  <div class="effect-row">
+                    <span class="effect-label"><strong>滑动特效</strong><small>拖动轨迹和跟随终点圆点</small></span>
+                    <label class="switch"><input type="checkbox" id="fxSwipe" checked><span class="track"></span></label>
+                  </div>
+                  <div class="effect-actions">
+                    <button class="btn ghost sm" id="fxAllOn">全开</button>
+                    <button class="btn ghost sm" id="fxAllOff">全关</button>
+                  </div>
+                </div>
+              </div>
+              <button class="btn ghost sm" id="keyframeBtn" data-toast="已请求关键帧"><svg class="ico"><use href="#i-bolt"/></svg>请求关键帧</button>
+            </div>
+
+            <div class="stage-wrap">
+              <div class="mirror-stage" id="mirrorStage">
+                <div class="phone-screen" id="phoneScreen">
+                  <div class="phone-status"><span>9:41</span><span class="status-right"><span class="signal"></span><span class="wifi"></span><span class="battery"></span></span></div>
+                  <div class="phone-body">
+                    <div class="phone-title-row"><span class="phone-title">设置</span><span class="phone-avatar">A</span></div>
+                    <div class="phone-search"><svg class="ico sm"><use href="#i-search"/></svg><span>搜索设置</span></div>
+                    <div class="phone-list">
+                      <div class="phone-row"><span class="pico blue"><svg class="ico"><use href="#i-wifi"/></svg></span><span>网络和互联网</span><span class="chev">›</span></div>
+                      <div class="phone-row"><span class="pico blue"><svg class="ico"><use href="#i-bluetooth"/></svg></span><span>已连接的设备</span><span class="chev">›</span></div>
+                      <div class="phone-row"><span class="pico green"><svg class="ico"><use href="#i-grid"/></svg></span><span>应用</span><span class="chev">›</span></div>
+                      <div class="phone-row"><span class="pico amber"><svg class="ico"><use href="#i-bell"/></svg></span><span>通知</span><span class="chev">›</span></div>
+                      <div class="phone-row"><span class="pico cyan"><svg class="ico"><use href="#i-battery"/></svg></span><span>电池</span><span class="chev">›</span></div>
+                      <div class="phone-row"><span class="pico violet"><svg class="ico"><use href="#i-folder"/></svg></span><span>存储</span><span class="chev">›</span></div>
+                      <div class="phone-row"><span class="pico red"><svg class="ico"><use href="#i-volume"/></svg></span><span>声音和振动</span><span class="chev">›</span></div>
+                      <div class="phone-row"><span class="pico blue"><svg class="ico"><use href="#i-display"/></svg></span><span>显示</span><span class="chev">›</span></div>
+                      <div class="phone-row"><span class="pico green"><svg class="ico"><use href="#i-shield"/></svg></span><span>安全和隐私</span><span class="chev">›</span></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="stage-placeholder" id="stagePlaceholder">
+                  <svg class="ico lg"><use href="#i-phone"/></svg>
+                  <h3>镜像未启动</h3>
+                  <p>启动后可直接在画面上点按、滑动和输入文字。</p>
+                  <button class="btn primary" id="placeholderStart"><svg class="ico"><use href="#i-phone"/></svg>启动镜像</button>
+                </div>
+                <div class="stage-fps" id="stageFpsBadge"><span class="dot live"></span><span class="mono" id="stageFps">60 fps</span></div>
+              </div>
+
+              <aside class="action-rail" id="actionRail">
+                <button class="rail-btn" data-key="返回"><svg class="ico"><use href="#i-back"/></svg><span>返回</span></button>
+                <button class="rail-btn" data-key="桌面"><svg class="ico"><use href="#i-home"/></svg><span>桌面</span></button>
+                <button class="rail-btn" data-key="最近"><svg class="ico"><use href="#i-recents"/></svg><span>最近</span></button>
+                <button class="rail-btn accent" data-dialog="screenshot"><svg class="ico"><use href="#i-camera"/></svg><span>截图</span></button>
+                <div class="rail-divider"></div>
+                <button class="rail-btn" id="moreBtn" aria-expanded="false"><svg class="ico"><use href="#i-more"/></svg><span>更多</span></button>
+                <div class="more-menu hidden" id="moreMenu">
+                  <div class="more-title">系统按键</div>
+                  <div class="more-grid">
+                    <button class="more-key" data-key="菜单"><svg class="ico"><use href="#i-menu"/></svg>菜单</button>
+                    <button class="more-key" data-key="通知"><svg class="ico"><use href="#i-bell"/></svg>通知</button>
+                    <button class="more-key" data-key="音量+"><svg class="ico"><use href="#i-volume"/></svg>音量+</button>
+                    <button class="more-key" data-key="音量−"><svg class="ico"><use href="#i-volume"/></svg>音量−</button>
+                    <button class="more-key" data-key="电源"><svg class="ico"><use href="#i-power"/></svg>电源</button>
+                    <button class="more-key" data-key="回车"><svg class="ico"><use href="#i-keyboard"/></svg>回车</button>
+                    <button class="more-key" data-key="删除"><svg class="ico"><use href="#i-backspace"/></svg>删除</button>
+                  </div>
+                </div>
+              </aside>
+            </div>
+
+            <div class="mirror-statusline" id="mirrorStatusline">
+              <span>WS 已连接</span>
+              <span class="mono">丢帧 0</span>
+              <span class="mono">Annex B</span>
+              <span class="spacer"></span>
+              <span class="muted">键盘打字 → 回车发送</span>
+            </div>
+          </section>
+
+          <aside class="card dock">
+            <div class="dock-tabs" role="tablist">
+              <button class="dock-tab active" data-dock="manual" role="tab"><svg class="ico sm"><use href="#i-settings"/></svg>手动控制</button>
+              <button class="dock-tab" data-dock="auto" role="tab"><svg class="ico sm"><use href="#i-magic"/></svg>自动控制<span class="run-badge hidden" id="runBadge">运行中</span></button>
+            </div>
+            <div class="dock-body">
+              <!-- 手动控制 -->
+              <div class="dock-pane active" id="pane-manual">
+                <div class="manual-tabs" role="tablist" aria-label="手动控制功能">
+                  <button class="manual-tab active" data-manual="video" role="tab" title="视频录制"><svg class="ico"><use href="#i-video"/></svg>视频</button>
+                  <button class="manual-tab" data-manual="record" role="tab" title="镜像录制"><svg class="ico"><use href="#i-record"/></svg>镜像</button>
+                  <button class="manual-tab" data-manual="text" role="tab" title="输入文本"><svg class="ico"><use href="#i-keyboard"/></svg>文本</button>
+                  <button class="manual-tab" data-manual="app" role="tab" title="拉起应用"><svg class="ico"><use href="#i-link"/></svg>应用</button>
+                  <button class="manual-tab" data-manual="tools" role="tab" title="更多工具"><svg class="ico"><use href="#i-grid"/></svg>工具</button>
+                </div>
+                <div class="manual-pages">
+                  <section class="manual-page active" data-manual-page="video">
+                    <div class="section-head"><h3><svg class="ico"><use href="#i-video"/></svg>视频录制</h3><span class="tag blue">浏览器画面</span><span class="tag amber">刷新即丢失</span></div>
+                    <div class="video-warning">
+                      <svg class="ico"><use href="#i-info"/></svg>
+                      <span><strong>视频暂不持久化：</strong>只保存在当前浏览器内存，刷新或关闭页面即丢失；需要保留请停止后立即下载。</span>
+                    </div>
+                    <div class="rec-row">
+                      <input class="input" placeholder="视频名称（可选）" value="登录流程" />
+                      <select class="select"><option>30fps</option><option>60fps</option></select>
+                    </div>
+                    <div class="rec-row" style="margin-top:7px">
+                      <button class="btn primary sm" data-toast="演示稿：视频录制中（刷新即丢失）"><svg class="ico"><use href="#i-record"/></svg>开始录制</button>
+                      <label class="switch"><input type="checkbox" checked><span class="track"></span>包含点击/滑动特效</label>
+                    </div>
+                    <div class="section-sub">录制当前镜像画面，支持暂停/继续；停止后可预览、拖动进度和下载，下载后才会保留。</div>
+                  </section>
+
+                  <section class="manual-page" data-manual-page="record">
+                    <div class="section-head"><h3><svg class="ico"><use href="#i-record"/></svg>镜像录制</h3><span class="tag blue">镜像 → 脚本</span></div>
+                    <div class="rec-row">
+                      <input class="input" placeholder="录制名称（可选）" value="登录操作" />
+                    </div>
+                    <div class="rec-row" style="margin-top:7px">
+                      <button class="btn primary sm" data-toast="演示稿：开始镜像录制"><svg class="ico"><use href="#i-record"/></svg>开始镜像录制</button>
+                      <span class="hint">只记录镜像上的点击/滑动，不录画面</span>
+                    </div>
+                    <div class="section-sub">录制期间在镜像上的点击/滑动会变成脚本节点；停止后可查看录制或一键转脚本。</div>
+                    <div class="row" style="margin-top:4px">
+                      <button type="button" class="cell-link" id="consolePhysicalLink">新建真机录制 →</button>
+                    </div>
+                  </section>
+
+                  <section class="manual-page" data-manual-page="text">
+                    <div class="section-head"><h3><svg class="ico"><use href="#i-keyboard"/></svg>输入文本</h3></div>
+                    <div class="rec-row">
+                      <input class="input" placeholder="发送到当前焦点输入框" value="hello autotest" />
+                      <button class="btn sm" data-toast="已发送文本">发送</button>
+                    </div>
+                    <div class="rec-row" style="margin-top:7px">
+                      <label class="switch"><input type="checkbox"><span class="track"></span>发送前清空输入框</label>
+                    </div>
+                    <div class="section-sub">中文输入需要设备端输入法配合；不确定时先用英文/数字验证链路。</div>
+                  </section>
+
+                  <section class="manual-page" data-manual-page="app">
+                    <div class="section-head"><h3><svg class="ico"><use href="#i-link"/></svg>拉起应用</h3></div>
+                    <div class="field-row">
+                      <label class="field"><span>操作</span><select class="select"><option>启动 launch</option><option>停止 stop</option><option>清数据 clear</option><option>重启 restart</option></select></label>
+                      <label class="field"><span>package</span><input class="input mono" value="com.android.settings" /></label>
+                    </div>
+                    <div class="field" style="margin-top:8px"><span>activity（可选）</span><input class="input mono" placeholder=".MainActivity" /></div>
+                    <button class="btn primary sm" data-toast="演示稿：已执行 launch">执行</button>
+                    <div class="section-sub">清数据（clear）会清空应用数据，请谨慎操作。</div>
+                  </section>
+
+                  <section class="manual-page" data-manual-page="tools">
+                    <div class="section-head"><h3><svg class="ico"><use href="#i-grid"/></svg>更多工具</h3><span class="tag">设备侧</span></div>
+                    <div class="tool-list">
+                      <div class="tool-item">
+                        <span class="tool-ico"><svg class="ico"><use href="#i-folder"/></svg></span>
+                        <div class="tool-main"><strong>层级树</strong><small>查看当前界面元素树，点击节点复制选择器</small></div>
+                        <button class="btn sm" data-dialog="hierarchy">打开</button>
+                      </div>
+                      <div class="tool-item">
+                        <span class="tool-ico"><svg class="ico"><use href="#i-terminal"/></svg></span>
+                        <div class="tool-main"><strong>logcat</strong><small>查看最近日志，支持自动刷新与复制</small></div>
+                        <button class="btn sm" data-dialog="logcat">打开</button>
+                      </div>
+                      <div class="tool-item">
+                        <span class="tool-ico"><svg class="ico"><use href="#i-info"/></svg></span>
+                        <div class="tool-main"><strong>设备信息</strong><small>型号、Android、分辨率、占用与镜像状态</small></div>
+                        <button class="btn sm" data-toast="演示稿：设备信息面板">查看</button>
+                      </div>
+                      <div class="tool-item">
+                        <span class="tool-ico"><svg class="ico"><use href="#i-record"/></svg></span>
+                        <div class="tool-main"><strong>设备录屏</strong><small>手机端 screenrecord，最长 180s</small></div>
+                        <button class="btn sm" data-toast="演示稿：设备录屏">开始</button>
+                      </div>
+                    </div>
+                    <div class="manual-divider"></div>
+                    <label class="field"><span>Shell 命令</span><input class="input mono" value="getprop ro.product.model" /></label>
+                    <button class="btn sm" data-toast="演示稿：执行 shell">执行</button>
+                    <div class="section-sub">层级树、logcat 和 shell 都作用于当前镜像设备。</div>
+                  </section>
+                </div>
+              </div>
+
+              <!-- 自动控制 -->
+              <div class="dock-pane" id="pane-auto">
+                <div id="autoList">
+                  <div class="auto-head">
+                    <h2>脚本</h2>
+                    <span class="tag">12</span>
+                    <span class="spacer"></span>
+                    <button class="btn ghost sm" id="varsBtn">变量</button>
+                    <button class="icon-btn" data-toast="演示稿：刷新脚本列表"><svg class="ico"><use href="#i-refresh"/></svg></button>
+                  </div>
+                  <div class="auto-search"><svg class="ico sm"><use href="#i-search"/></svg><input placeholder="搜索脚本" /></div>
+                  <div class="vars-panel hidden" id="varsPanel">
+                    <label class="field"><span>变量覆盖（JSON，可选）</span><textarea class="textarea">{ "user": "alice" }</textarea></label>
+                    <div class="hint">运行前覆盖脚本 variables；留空使用脚本默认值。</div>
+                  </div>
+                  <div class="script-list">
+                    <button class="script-row"><span class="script-title">登录并打开设置</span><span class="btn primary sm run-script"><svg class="ico"><use href="#i-play"/></svg>运行</span></button>
+                    <button class="script-row"><span class="script-title">检查 WLAN 开关状态</span><span class="btn primary sm run-script"><svg class="ico"><use href="#i-play"/></svg>运行</span></button>
+                    <button class="script-row"><span class="script-title">清理缓存并重启应用</span><span class="btn primary sm run-script"><svg class="ico"><use href="#i-play"/></svg>运行</span></button>
+                    <button class="script-row"><span class="script-title">打开关于手机并截图</span><span class="btn primary sm run-script"><svg class="ico"><use href="#i-play"/></svg>运行</span></button>
+                    <button class="script-row"><span class="script-title">夜间模式回归</span><span class="btn primary sm run-script"><svg class="ico"><use href="#i-play"/></svg>运行</span></button>
+                  </div>
+                  <div class="ai-card">
+                    <div class="ai-title"><svg class="ico"><use href="#i-magic"/></svg>AI 操作<span class="tag violet">规划中</span></div>
+                    <p>用自然语言描述目标，自动规划并执行；当前只预留入口，还没有接后端能力。</p>
+                    <div class="row wrap">
+                      <button class="btn sm" disabled>描述任务生成脚本</button>
+                      <button class="btn sm" disabled>AI 实时接管</button>
+                    </div>
+                  </div>
+                  <div class="hint" style="margin-top:10px">点击脚本标题进入编辑器；点击「运行」在本设备上直接开始。</div>
+                </div>
+
+                <div id="autoRun" class="hidden">
+                  <div class="run-head">
+                    <div class="run-title">
+                      <span class="tag blue" id="runStatusTag">运行中</span>
+                      <strong id="runScriptName">登录并打开设置</strong>
+                      <span class="spacer"></span>
+                      <span class="mono" id="runTime">00:18</span>
+                    </div>
+                    <div class="progress"><span id="runProgress" style="width:40%"></span></div>
+                    <div class="run-meta">
+                      <span id="runStepText">4 / 10</span>
+                      <span>通过 <b id="passedCount">3</b></span>
+                      <span>失败 <b>0</b></span>
+                      <span>耗时 <b id="runDuration">18s</b></span>
+                    </div>
+                  </div>
+                  <div class="run-actions">
+                    <button class="btn sm" id="pauseBtn"><svg class="ico"><use href="#i-pause"/></svg>暂停</button>
+                    <button class="btn sm danger" id="stopBtn"><svg class="ico"><use href="#i-stop"/></svg>停止</button>
+                    <button class="btn sm" id="detailBtn"><svg class="ico"><use href="#i-eye"/></svg>详情</button>
+                  </div>
+                  <div class="run-nodes" id="runNodes"></div>
+                  <div class="run-terminal hidden" id="runTerminal">
+                    <strong id="runTerminalTitle">运行完成</strong>
+                    <div class="terminal-meta"><span>通过 <b id="terminalPassed">10</b></span><span>失败 <b>0</b></span><span>耗时 <b id="terminalDuration">28s</b></span></div>
+                  </div>
+                  <button class="btn ghost sm" id="backToList"><svg class="ico"><use href="#i-back"/></svg>返回脚本列表</button>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ============================================================ 脚本 -->
+      <section class="view" id="view-scripts">
+        <div class="scripts-head">
+          <div class="seg" id="scriptTabs" role="tablist">
+            <button class="active" data-script-tab="library" role="tab">脚本库<span class="tab-count">12</span></button>
+            <button data-script-tab="runs" role="tab">运行记录<span class="tab-count">4</span></button>
+          </div>
+          <span class="spacer"></span>
+          <div class="scripts-actions" id="scriptActions">
+            <div class="auto-search"><svg class="ico sm"><use href="#i-search"/></svg><input placeholder="搜索脚本" /></div>
+            <button class="btn ghost sm" data-toast="演示稿：导入 JSON"><svg class="ico"><use href="#i-folder"/></svg>导入</button>
+            <button class="icon-btn" data-toast="演示稿：刷新脚本列表" title="刷新脚本列表"><svg class="ico"><use href="#i-refresh"/></svg></button>
+            <button class="btn primary" data-toast="演示稿：新建脚本"><svg class="ico"><use href="#i-plus"/></svg>新建脚本</button>
+          </div>
+        </div>
+
+        <div id="scriptLibrary">
+          <div class="card table-card">
+            <div class="library-toolbar">
+              <span class="hint">脚本是可编辑的编排定义；运行记录是脚本在设备上的一次执行。</span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr><th>名称 / ID</th><th style="width:70px">节点</th><th style="width:110px">来源</th><th style="width:130px">更新时间</th><th style="width:150px">操作</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><button class="cell-link" data-open-editor="登录并打开设置">登录并打开设置</button><div class="cell-sub">login_settings</div></td>
+                  <td>10</td><td><span class="tag blue">手动</span></td><td class="small muted">11-23 16:12</td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-open-editor="登录并打开设置">编辑</button><button class="btn primary sm" data-toast="演示稿：跳转控制台运行">运行</button></div></td>
+                </tr>
+                <tr>
+                  <td><button class="cell-link" data-open-editor="检查 WLAN 开关状态">检查 WLAN 开关状态</button><div class="cell-sub">check_wlan</div></td>
+                  <td>14</td><td><span class="tag green">镜像录制</span></td><td class="small muted">11-23 15:40</td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-open-editor="检查 WLAN 开关状态">编辑</button><button class="btn primary sm" data-toast="演示稿：跳转控制台运行">运行</button></div></td>
+                </tr>
+                <tr>
+                  <td><button class="cell-link" data-open-editor="清理缓存并重启应用">清理缓存并重启应用</button><div class="cell-sub">clear_and_restart</div></td>
+                  <td>6</td><td><span class="tag violet">导入</span></td><td class="small muted">11-23 14:08</td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-open-editor="清理缓存并重启应用">编辑</button><button class="btn primary sm" data-toast="演示稿：跳转控制台运行">运行</button></div></td>
+                </tr>
+                <tr>
+                  <td><button class="cell-link" data-open-editor="打开关于手机并截图">打开关于手机并截图</button><div class="cell-sub">about_phone_shot</div></td>
+                  <td>11</td><td><span class="tag cyan">真机录制</span></td><td class="small muted">11-22 19:32</td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-open-editor="打开关于手机并截图">编辑</button><button class="btn primary sm" data-toast="演示稿：跳转控制台运行">运行</button></div></td>
+                </tr>
+                <tr>
+                  <td><button class="cell-link" data-open-editor="夜间模式回归">夜间模式回归</button><div class="cell-sub">night_mode_regression</div></td>
+                  <td>9</td><td><span class="tag blue">手动</span></td><td class="small muted">11-22 17:05</td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-open-editor="夜间模式回归">编辑</button><button class="btn primary sm" data-toast="演示稿：跳转控制台运行">运行</button></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="scriptRuns" class="hidden">
+          <div class="card table-card">
+            <div class="library-toolbar">
+              <select class="select" style="width: 140px"><option>全部状态</option><option>运行中</option><option>已暂停</option><option>成功</option><option>失败</option></select>
+              <div class="auto-search" style="width: 220px; margin: 0"><svg class="ico sm"><use href="#i-search"/></svg><input placeholder="搜索脚本 / 设备" /></div>
+              <span class="spacer"></span>
+              <span class="hint">运行记录保留脚本快照，脚本修改后仍可回看。</span>
+              <button class="icon-btn" data-toast="演示稿：刷新运行记录" title="刷新运行记录"><svg class="ico"><use href="#i-refresh"/></svg></button>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr><th style="width:66px">ID</th><th>脚本</th><th style="width:140px">设备</th><th style="width:90px">状态</th><th style="width:140px">进度</th><th style="width:130px">开始</th><th style="width:70px">耗时</th><th style="width:130px">操作</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="mono">#128</td><td><div class="cell-main">登录并打开设置</div><div class="cell-sub">login_settings</div></td><td class="mono small">Pixel 8 Pro</td><td><span class="tag blue" id="row128Status">运行中</span></td>
+                  <td><div class="bar-row"><div class="progress"><span id="row128Progress" style="width: 40%"></span></div><span class="small" id="row128Step">4/10</span></div></td><td class="small muted">11-23 16:40</td><td class="small">18s</td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-run-id="128">实时</button><button class="btn ghost sm" data-run-id="128">详情</button></div></td>
+                </tr>
+                <tr>
+                  <td class="mono">#127</td><td><div class="cell-main">检查 WLAN 开关状态</div><div class="cell-sub">check_wlan</div></td><td class="mono small">Pixel 8 Pro</td><td><span class="tag green">成功</span></td>
+                  <td><div class="bar-row"><div class="progress"><span style="width: 100%"></span></div><span class="small">10/10</span></div></td><td class="small muted">11-23 16:24</td><td class="small">42s</td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-run-id="127">详情</button></div></td>
+                </tr>
+                <tr>
+                  <td class="mono">#126</td><td><div class="cell-main">清理缓存并重启应用</div><div class="cell-sub">clear_and_restart</div></td><td class="mono small">Xiaomi 14</td><td><span class="tag red">失败</span></td>
+                  <td><div class="bar-row"><div class="progress"><span style="width: 60%"></span></div><span class="small">6/10</span></div></td><td class="small muted">11-23 15:58</td><td class="small">31s</td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-run-id="126">详情</button></div></td>
+                </tr>
+                <tr>
+                  <td class="mono">#125</td><td><div class="cell-main">打开关于手机并截图</div><div class="cell-sub">about_phone_shot</div></td><td class="mono small">Pixel 8 Pro</td><td><span class="tag">已停止</span></td>
+                  <td><div class="bar-row"><div class="progress"><span style="width: 30%"></span></div><span class="small">3/10</span></div></td><td class="small muted">11-23 15:31</td><td class="small">12s</td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-run-id="125">详情</button></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="runDetail" class="hidden">
+          <div class="run-detail-head">
+            <button class="btn ghost sm" id="backToRuns"><svg class="ico"><use href="#i-back"/></svg>运行记录</button>
+            <h2 id="runDetailTitle">运行 #128</h2>
+            <span class="tag blue" id="runDetailStatus">运行中</span>
+            <span class="spacer"></span>
+            <button class="btn sm" id="runDetailPause"><svg class="ico"><use href="#i-pause"/></svg><span id="runDetailPauseLabel">暂停</span></button>
+            <button class="btn sm danger" id="runDetailStop"><svg class="ico"><use href="#i-stop"/></svg>停止</button>
+            <button class="btn sm" data-dialog="report"><svg class="ico"><use href="#i-script"/></svg>报告</button>
+          </div>
+
+          <div class="card run-summary">
+            <div class="card-body">
+              <div class="run-detail-meta">
+                <strong class="cell-main" id="runDetailScript">登录并打开设置</strong>
+                <span class="mono" id="runDetailDevice">Pixel 8 Pro</span>
+                <span>开始 <span id="runDetailStarted">11-23 16:40</span></span>
+                <span>耗时 <span id="runDetailDuration">18s</span></span>
+                <span class="spacer"></span>
+                <span class="hint" id="runDetailWs">WS 已连接</span>
+              </div>
+              <div class="run-progress-line">
+                <span class="hint">进度</span>
+                <div class="progress"><span id="runDetailProgress" style="width: 40%"></span></div>
+                <span class="small" id="runDetailStepText">4 / 10 · 40%</span>
+              </div>
+              <div class="run-kv">
+                <span>通过 <b id="runDetailPassed">3</b></span>
+                <span>失败 <b id="runDetailFailed">0</b></span>
+                <span>跳过 <b id="runDetailSkipped">0</b></span>
+                <span>当前 <b class="mono" id="runDetailCurrent">s4</b></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="run-detail-grid">
+            <div class="stack">
+              <div class="card">
+                <div class="card-head"><h2>步骤进度</h2><span class="hint">当前节点高亮</span></div>
+                <div class="run-step-list" id="runDetailSteps"></div>
+              </div>
+              <div class="card">
+                <div class="card-head"><h2>事件流</h2><span class="tag blue" id="runDetailEventCount">12</span></div>
+                <div class="run-event-list" id="runDetailEvents"></div>
+              </div>
+            </div>
+            <div class="stack">
+              <div class="card">
+                <div class="card-head"><h2>产物</h2><span class="tag">3</span></div>
+                <div class="card-body">
+                  <div class="artifact-list">
+                    <div class="artifact-row"><svg class="ico"><use href="#i-camera"/></svg><span class="artifact-name">screenshot.png</span><span class="artifact-size">182 KB</span><button class="btn ghost sm" data-dialog="screenshot">预览</button></div>
+                    <div class="artifact-row"><svg class="ico"><use href="#i-terminal"/></svg><span class="artifact-name">logcat.txt</span><span class="artifact-size">46 KB</span><button class="btn ghost sm" data-dialog="logcat">查看</button></div>
+                    <div class="artifact-row"><svg class="ico"><use href="#i-folder"/></svg><span class="artifact-name">hierarchy.xml</span><span class="artifact-size">128 KB</span><button class="btn ghost sm" data-dialog="hierarchy">查看</button></div>
+                  </div>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-head"><h2>运行信息</h2></div>
+                <div class="card-body">
+                  <table class="run-info-table">
+                    <tbody>
+                      <tr><td>运行 ID</td><td class="mono" id="runInfoId">#128</td></tr>
+                      <tr><td>脚本</td><td id="runInfoScript">登录并打开设置</td></tr>
+                      <tr><td>设备</td><td class="mono" id="runInfoDevice">Pixel 8 Pro</td></tr>
+                      <tr><td>状态</td><td id="runInfoStatus">运行中</td></tr>
+                      <tr><td>开始</td><td id="runInfoStarted">11-23 16:40</td></tr>
+                      <tr><td>结束</td><td id="runInfoEnded">—</td></tr>
+                      <tr><td>调试</td><td id="runInfoDebug">否</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="scriptEditor" class="hidden">
+          <div class="editor-head">
+            <button class="btn ghost sm" id="backToLibrary"><svg class="ico"><use href="#i-back"/></svg>脚本库</button>
+            <h2 id="editorTitle">登录并打开设置</h2>
+            <span class="tag amber" id="editorDirty">未保存</span>
+            <span class="spacer"></span>
+            <button class="btn sm" data-toast="演示稿：校验脚本">校验</button>
+            <button class="btn primary sm" data-toast="演示稿：保存脚本">保存</button>
+            <button class="btn sm" id="editorRunsBtn"><svg class="ico"><use href="#i-eye"/></svg>运行记录</button>
+            <button class="btn sm" data-toast="演示稿：跳转控制台运行"><svg class="ico"><use href="#i-play"/></svg>运行</button>
+            <button class="btn sm" data-toast="演示稿：打开 JSON 源码">JSON</button>
+          </div>
+          <div class="editor-shell">
+            <div class="card node-list-card">
+              <div class="node-list-head"><strong>节点</strong><span class="tag blue">10</span><button class="btn primary sm" data-toast="演示稿：新增节点"><svg class="ico"><use href="#i-plus"/></svg>新增节点</button></div>
+              <div class="node-search"><svg class="ico sm"><use href="#i-search"/></svg><input placeholder="搜索节点" /></div>
+              <div class="node-list" id="nodeList">
+                <div class="node-row selected" data-step-id="s1" data-type="app" tabindex="0">
+                  <span class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序"><svg class="ico"><use href="#i-drag"/></svg></span>
+                  <span class="node-num">1</span><span class="node-ic">开</span>
+                  <span class="node-copy"><span class="node-name">打开设置</span><span class="node-type">app · 启动应用</span></span>
+                  <span class="node-tools"><label class="switch" title="启用节点"><input type="checkbox" checked><span class="track"></span></label><button class="icon-btn tiny" data-toast="演示稿：删除节点" title="删除节点"><svg class="ico"><use href="#i-x"/></svg></button></span>
+                </div>
+                <div class="node-row" data-step-id="s2" data-type="click" tabindex="0">
+                  <span class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序"><svg class="ico"><use href="#i-drag"/></svg></span>
+                  <span class="node-num">2</span><span class="node-ic">点</span>
+                  <span class="node-copy"><span class="node-name">点击「网络和互联网」</span><span class="node-type">click · 点击元素</span></span>
+                  <span class="node-tools"><label class="switch" title="启用节点"><input type="checkbox" checked><span class="track"></span></label><button class="icon-btn tiny" data-toast="演示稿：删除节点" title="删除节点"><svg class="ico"><use href="#i-x"/></svg></button></span>
+                </div>
+                <div class="node-row" data-step-id="s3" data-type="wait" tabindex="0">
+                  <span class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序"><svg class="ico"><use href="#i-drag"/></svg></span>
+                  <span class="node-num">3</span><span class="node-ic">等</span>
+                  <span class="node-copy"><span class="node-name">等待「WLAN」出现</span><span class="node-type">wait · 等待条件 · when</span></span>
+                  <span class="node-tools"><label class="switch" title="启用节点"><input type="checkbox" checked><span class="track"></span></label><button class="icon-btn tiny" data-toast="演示稿：删除节点" title="删除节点"><svg class="ico"><use href="#i-x"/></svg></button></span>
+                </div>
+                <div class="node-row" data-step-id="s4" data-type="click" tabindex="0">
+                  <span class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序"><svg class="ico"><use href="#i-drag"/></svg></span>
+                  <span class="node-num">4</span><span class="node-ic">点</span>
+                  <span class="node-copy"><span class="node-name">点击 WLAN</span><span class="node-type">click · 点击元素</span></span>
+                  <span class="node-tools"><label class="switch" title="启用节点"><input type="checkbox" checked><span class="track"></span></label><button class="icon-btn tiny" data-toast="演示稿：删除节点" title="删除节点"><svg class="ico"><use href="#i-x"/></svg></button></span>
+                </div>
+                <div class="node-row" data-step-id="s5" data-type="click" tabindex="0">
+                  <span class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序"><svg class="ico"><use href="#i-drag"/></svg></span>
+                  <span class="node-num">5</span><span class="node-ic">开</span>
+                  <span class="node-copy"><span class="node-name">打开 WLAN 开关</span><span class="node-type">click · 点击元素</span></span>
+                  <span class="node-tools"><label class="switch" title="启用节点"><input type="checkbox" checked><span class="track"></span></label><button class="icon-btn tiny" data-toast="演示稿：删除节点" title="删除节点"><svg class="ico"><use href="#i-x"/></svg></button></span>
+                </div>
+                <div class="node-row" data-step-id="s6" data-type="screenshot" tabindex="0">
+                  <span class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序"><svg class="ico"><use href="#i-drag"/></svg></span>
+                  <span class="node-num">6</span><span class="node-ic">截</span>
+                  <span class="node-copy"><span class="node-name">截图</span><span class="node-type">screenshot · 截图</span></span>
+                  <span class="node-tools"><label class="switch" title="启用节点"><input type="checkbox" checked><span class="track"></span></label><button class="icon-btn tiny" data-toast="演示稿：删除节点" title="删除节点"><svg class="ico"><use href="#i-x"/></svg></button></span>
+                </div>
+                <div class="node-row" data-step-id="s7" data-type="key" tabindex="0">
+                  <span class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序"><svg class="ico"><use href="#i-drag"/></svg></span>
+                  <span class="node-num">7</span><span class="node-ic">键</span>
+                  <span class="node-copy"><span class="node-name">返回上一级</span><span class="node-type">key · 系统按键</span></span>
+                  <span class="node-tools"><label class="switch" title="启用节点"><input type="checkbox" checked><span class="track"></span></label><button class="icon-btn tiny" data-toast="演示稿：删除节点" title="删除节点"><svg class="ico"><use href="#i-x"/></svg></button></span>
+                </div>
+                <div class="node-row" data-step-id="s8" data-type="click" tabindex="0">
+                  <span class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序"><svg class="ico"><use href="#i-drag"/></svg></span>
+                  <span class="node-num">8</span><span class="node-ic">点</span>
+                  <span class="node-copy"><span class="node-name">点击「已连接的设备」</span><span class="node-type">click · 点击元素</span></span>
+                  <span class="node-tools"><label class="switch" title="启用节点"><input type="checkbox" checked><span class="track"></span></label><button class="icon-btn tiny" data-toast="演示稿：删除节点" title="删除节点"><svg class="ico"><use href="#i-x"/></svg></button></span>
+                </div>
+                <div class="node-row" data-step-id="s9" data-type="assert" tabindex="0">
+                  <span class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序"><svg class="ico"><use href="#i-drag"/></svg></span>
+                  <span class="node-num">9</span><span class="node-ic">断</span>
+                  <span class="node-copy"><span class="node-name">断言前台应用 = 设置</span><span class="node-type">assert · 断言</span></span>
+                  <span class="node-tools"><label class="switch" title="启用节点"><input type="checkbox" checked><span class="track"></span></label><button class="icon-btn tiny" data-toast="演示稿：删除节点" title="删除节点"><svg class="ico"><use href="#i-x"/></svg></button></span>
+                </div>
+                <div class="node-row" data-step-id="s10" data-type="key" tabindex="0">
+                  <span class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序"><svg class="ico"><use href="#i-drag"/></svg></span>
+                  <span class="node-num">10</span><span class="node-ic">键</span>
+                  <span class="node-copy"><span class="node-name">完成</span><span class="node-type">key · 系统按键</span></span>
+                  <span class="node-tools"><label class="switch" title="启用节点"><input type="checkbox" checked><span class="track"></span></label><button class="icon-btn tiny" data-toast="演示稿：删除节点" title="删除节点"><svg class="ico"><use href="#i-x"/></svg></button></span>
+                </div>
+              </div>
+              <div class="node-list-foot"><span>拖动左侧手柄排序</span><span class="tag">Alt+↑/↓ 也可移动</span></div>
+            </div>
+
+            <div class="card node-form-card">
+              <div class="card-head"><h2>节点设置</h2><span class="tag blue" id="formNodeType">app</span></div>
+              <div class="card-body">
+                <div class="field-row">
+                  <label class="field"><span>节点名称</span><input class="input" id="nodeNameInput" value="打开设置" /></label>
+                  <label class="field"><span>节点类型</span><select class="select" id="nodeTypeSelect"><option value="app">app 应用</option><option value="click">click 点击</option><option value="wait">wait 等待</option><option value="screenshot">screenshot 截图</option></select></label>
+                </div>
+                <label class="field"><span>package</span><input class="input mono" value="com.android.settings" /></label>
+                <label class="field"><span>activity（可选）</span><input class="input mono" placeholder=".Settings" /></label>
+                <div class="field-row">
+                  <label class="field"><span>超时 (ms)</span><input class="input mono" type="number" value="8000" /></label>
+                  <label class="field"><span>动作前停顿 (ms)</span><input class="input mono" type="number" value="0" /></label>
+                </div>
+                <div class="field-row">
+                  <label class="field"><span>失败重试</span><input class="input mono" type="number" value="1" /></label>
+                  <label class="field"><span>失败策略</span><select class="select"><option>中止运行</option><option>继续执行</option><option>跳到节点</option></select></label>
+                </div>
+                <label class="field"><span>节点注释</span><input class="input" placeholder="可选" /></label>
+                <div class="hint">拖动左侧节点排序会自动标为未保存；保存时写回脚本 JSON。搜索过滤时拖拽会禁用。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ 录制 -->
+      <section class="view" id="view-recorder">
+        <div class="scripts-head">
+          <div class="scripts-title"><h1>录制草稿</h1><span class="tag" id="recorderCount">4</span></div>
+          <span class="spacer"></span>
+          <div class="scripts-actions" id="recorderActions">
+            <button class="icon-btn" data-toast="演示稿：刷新录制列表" title="刷新录制列表"><svg class="ico"><use href="#i-refresh"/></svg></button>
+            <button class="btn primary" id="newPhysicalBtn"><svg class="ico"><use href="#i-plus"/></svg>新建真机录制</button>
+          </div>
+        </div>
+
+        <div class="recording-notice">
+          <svg class="ico"><use href="#i-info"/></svg>
+          <span>本页只收录<strong>操作录制草稿</strong>（镜像录制 / 真机录制）。视频录制和设备录屏在控制台手动页，不进入此列表；<strong>视频文件刷新即丢失</strong>。</span>
+          <span class="spacer"></span>
+          <button class="btn ghost sm" id="goConsoleRecord"><svg class="ico"><use href="#i-video"/></svg>去控制台录制</button>
+        </div>
+
+        <div id="recorderList">
+          <div class="card table-card">
+            <div class="library-toolbar">
+              <select class="select" style="width: 140px"><option>全部模式</option><option>镜像录制</option><option>真机录制</option></select>
+              <select class="select" style="width: 140px"><option>全部状态</option><option>录制中</option><option>已暂停</option><option>已停止</option></select>
+              <span class="spacer"></span>
+              <span class="hint">录制停止后可查看事件并转成脚本。</span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr><th>名称 / ID</th><th style="width:86px">状态</th><th style="width:100px">模式</th><th style="width:130px">设备</th><th style="width:64px">事件</th><th style="width:130px">开始时间</th><th>关联脚本</th><th style="width:110px">操作</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><button class="cell-link" data-recording-id="rec_7f3a">登录流程 · 镜像</button><div class="cell-sub">rec_7f3a</div></td>
+                  <td><span class="tag red">录制中</span></td><td><span class="tag blue">镜像录制</span></td><td class="mono small">Pixel 8 Pro</td><td>24</td><td class="small muted">11-23 16:32</td>
+                  <td><button class="cell-link" data-open-editor="登录并打开设置">登录并打开设置</button></td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-recording-id="rec_7f3a">详情</button></div></td>
+                </tr>
+                <tr>
+                  <td><button class="cell-link" data-recording-id="rec_6d21">检查 WLAN · 镜像</button><div class="cell-sub">rec_6d21</div></td>
+                  <td><span class="tag">已停止</span></td><td><span class="tag blue">镜像录制</span></td><td class="mono small">Pixel 8 Pro</td><td>38</td><td class="small muted">11-23 15:48</td>
+                  <td><button class="cell-link" data-open-editor="检查 WLAN 开关状态">检查 WLAN 开关状态</button></td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-recording-id="rec_6d21">详情</button></div></td>
+                </tr>
+                <tr>
+                  <td><button class="cell-link" data-recording-id="rec_5b90">设置菜单 · 真机</button><div class="cell-sub">rec_5b90</div></td>
+                  <td><span class="tag">已停止</span></td><td><span class="tag violet">真机录制</span></td><td class="mono small">Xiaomi 14</td><td>17</td><td class="small muted">11-23 14:20</td>
+                  <td><span class="muted small">尚未生成</span></td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-recording-id="rec_5b90">详情</button></div></td>
+                </tr>
+                <tr>
+                  <td><button class="cell-link" data-recording-id="rec_4c12">通知中心 · 真机</button><div class="cell-sub">rec_4c12</div></td>
+                  <td><span class="tag amber">已暂停</span></td><td><span class="tag violet">真机录制</span></td><td class="mono small">Xiaomi 14</td><td>9</td><td class="small muted">11-23 11:05</td>
+                  <td><span class="muted small">尚未生成</span></td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-recording-id="rec_4c12">详情</button></div></td>
+                </tr>
+                <tr class="hidden" id="liveRecordingRow">
+                  <td><button class="cell-link" data-recording-id="rec_live">设置菜单 · 真机实时</button><div class="cell-sub">rec_live</div></td>
+                  <td><span class="tag red" id="liveRowStatus">录制中</span></td><td><span class="tag violet">真机录制</span></td><td class="mono small">Pixel 8 Pro</td><td id="liveRowCount">0</td><td class="small muted" id="liveRowStarted">11-23 17:48</td>
+                  <td><span class="muted small">尚未生成</span></td>
+                  <td><div class="actions-cell"><button class="btn ghost sm" data-recording-id="rec_live">详情</button></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="recordingDetail" class="hidden">
+          <div class="run-detail-head">
+            <button class="btn ghost sm" id="backToRecorder"><svg class="ico"><use href="#i-back"/></svg>录制草稿</button>
+            <h2 id="recordingDetailTitle">录制详情</h2>
+            <span class="tag red" id="recordingDetailStatus">录制中</span>
+            <span class="tag blue" id="recordingDetailMode">镜像录制</span>
+            <span class="spacer"></span>
+            <button class="btn sm" id="recordingPauseBtn"><svg class="ico"><use href="#i-pause"/></svg><span>暂停</span></button>
+            <button class="btn sm danger" id="recordingStopBtn"><svg class="ico"><use href="#i-stop"/></svg>停止</button>
+            <button class="btn sm" id="convertRecording"><svg class="ico"><use href="#i-script"/></svg>转脚本</button>
+            <button class="btn sm danger" id="deleteRecordingBtn" data-toast="演示稿：删除录制">删除</button>
+          </div>
+
+          <div class="recording-livebar hidden" id="recordingLiveBar">
+            <span class="dot live-pulse"></span>
+            <strong id="recordingLiveText">录制中</strong>
+            <span class="hint">已记录 <b id="recLiveCount">0</b> 个事件</span>
+            <span class="spacer"></span>
+            <span class="hint" id="recLiveHint">等待第 1 个事件…</span>
+          </div>
+
+          <div class="card" style="margin-bottom: 12px">
+            <div class="card-body">
+              <div class="recording-summary">
+                <div class="kv"><span>录制 ID</span><strong class="mono" id="recId">rec_7f3a</strong></div>
+                <div class="kv"><span>设备</span><strong class="mono" id="recDevice">Pixel 8 Pro</strong></div>
+                <div class="kv"><span>事件数</span><strong id="recEventCount">24</strong></div>
+                <div class="kv"><span>开始时间</span><strong id="recStarted">11-23 16:32</strong></div>
+                <div class="kv"><span>结束时间</span><strong id="recEnded">—</strong></div>
+                <div class="kv"><span>关联脚本</span><strong id="recScript">登录并打开设置</strong></div>
+              </div>
+              <div class="hint recording-detail-note">真机录制通过 getevent 采集触摸；转脚本前建议先确认触摸设备与标定。</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>录制事件</h2><span class="tag blue" id="recDetailEventCount">24</span><span class="hint" style="margin-left:auto">按录制顺序</span></div>
+            <div class="card-body" id="recordingEventsWrap" style="padding: 0; max-height: 430px; overflow: auto">
+              <table class="data-table events-table">
+                <thead><tr><th style="width:56px">#</th><th style="width:90px">类型</th><th>目标 / 坐标</th><th style="width:84px">置信度</th><th style="width:100px">时间</th></tr></thead>
+                <tbody id="recordingEvents"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ 设置 -->
+      <section class="view" id="view-settings">
+        <div class="settings-layout">
+          <aside class="card settings-nav">
+            <button class="settings-tab active" data-stab="general">通用</button>
+            <button class="settings-tab" data-stab="toolchain">工具链</button>
+            <button class="settings-tab" data-stab="execution">执行</button>
+            <button class="settings-tab" data-stab="storage">存储</button>
+            <button class="settings-tab" data-stab="about">关于</button>
+            <div class="settings-note">配置优先级：默认 &lt; 文件 &lt; 数据库 &lt; 环境变量。外观偏好即时记住到本机，其余设置保存后持久化。</div>
+          </aside>
+
+          <div class="settings-main">
+            <div class="settings-pane active" id="set-general">
+              <div class="card settings-card">
+                <div class="card-head"><h2>外观</h2><span class="hint">浅深色 · 跟随系统</span></div>
+                <div class="card-body">
+                  <div class="theme-choices">
+                    <button class="theme-choice" data-theme-choice="light">
+                      <div class="theme-preview"><span class="tp-rail"></span><span class="tp-body"></span></div>
+                      <strong>浅色</strong><small>当前工作区风格</small>
+                    </button>
+                    <button class="theme-choice" data-theme-choice="dark">
+                      <div class="theme-preview"><span class="tp-rail"></span><span class="tp-body"></span></div>
+                      <strong>深色</strong><small>夜间/低光环境</small>
+                    </button>
+                    <button class="theme-choice" data-theme-choice="system">
+                      <div class="theme-preview"><span class="tp-rail"></span><span class="tp-body"></span></div>
+                      <strong>跟随系统</strong><small>自动匹配系统外观</small>
+                    </button>
+                  </div>
+                  <div class="hint" style="margin-top:8px">切换后立即预览并记住到当前浏览器；不写入后端配置。</div>
+                </div>
+              </div>
+              <div class="card settings-card">
+                <div class="card-head"><h2>语言</h2><span class="tag">当前仅简体中文</span></div>
+                <div class="card-body">
+                  <label class="field" style="max-width:360px"><span>界面语言</span>
+                    <select class="select"><option>简体中文（zh-CN）</option><option disabled>English（规划中）</option></select>
+                  </label>
+                  <div class="hint" style="margin-top:7px">完整中英双语需要抽取全站文案，放到后续版本；本版先保留入口。</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-pane" id="set-toolchain">
+              <div class="tool-grid">
+                <section class="card tool-card">
+                  <div class="card-body">
+                    <div class="tool-head"><svg class="ico"><use href="#i-terminal"/></svg>ADB<span class="tag green">正常</span></div>
+                    <div class="tool-row"><span>路径</span><code>~/Library/Android/sdk/platform-tools/adb</code></div>
+                    <div class="tool-row"><span>版本</span><code>1.0.41</code></div>
+                    <div class="tool-row"><span>在线设备</span><code>1</code></div>
+                    <label class="field"><span>adb 路径</span><input class="input mono" placeholder="留空自动探测" /></label>
+                    <label class="field"><span>连接超时 (s)</span><input class="input mono" type="number" value="20" /></label>
+                    <button class="btn sm" data-toast="演示稿：重新探测 ADB"><svg class="ico"><use href="#i-refresh"/></svg>重新探测</button>
+                  </div>
+                </section>
+                <section class="card tool-card">
+                  <div class="card-body">
+                    <div class="tool-head"><svg class="ico"><use href="#i-chip"/></svg>uiautomator2<span class="tag green">可用</span></div>
+                    <div class="tool-row"><span>驱动</span><code>U2Driver</code></div>
+                    <div class="tool-row"><span>设备服务</span><code>首次操作时检查/安装</code></div>
+                    <div class="tool-row"><span>备注</span><code>不在此页触发安装</code></div>
+                    <div class="hint" style="margin-top:7px">层级树、元素定位、文本输入都依赖该驱动。</div>
+                  </div>
+                </section>
+                <section class="card tool-card">
+                  <div class="card-body">
+                    <div class="tool-head"><svg class="ico"><use href="#i-phone"/></svg>scrcpy-server<span class="tag green">已锁定</span></div>
+                    <div class="tool-row"><span>版本</span><code>5.0.1</code></div>
+                    <div class="tool-row"><span>内置 jar</span><code>vendor/scrcpy-server-v5.0.1.jar</code></div>
+                    <div class="tool-row"><span>校验</span><code>启动前 SHA256 校验/必要时重推</code></div>
+                    <label class="field"><span>自定义 jar 路径</span><input class="input mono" placeholder="留空使用内置 jar" /></label>
+                    <div class="hint" style="margin-top:7px">镜像画质、帧率和码率在「执行 → 镜像」配置。</div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div class="settings-pane" id="set-execution">
+              <div class="card settings-card">
+                <div class="card-head"><h2>镜像</h2><span class="tag blue">scrcpy 5.0.1</span></div>
+                <div class="card-body">
+                  <div class="preset-grid">
+                    <button class="preset" data-preset="smooth"><div class="preset-name">流畅优先</div><div class="preset-detail">1200px · 30fps · 6Mbps</div><div class="preset-note">低带宽，远程/弱网</div></button>
+                    <button class="preset active" data-preset="balanced"><div class="preset-name">均衡 <span class="tag green">默认</span></div><div class="preset-detail">1600px · 30fps · 8Mbps</div><div class="preset-note">日常调试推荐</div></button>
+                    <button class="preset" data-preset="sharp"><div class="preset-name">清晰优先</div><div class="preset-detail">1920px · 30fps · 16Mbps</div><div class="preset-note">看细节/截图核对</div></button>
+                  </div>
+                  <div class="preset-current">当前：<b id="presetLabel">均衡（默认）</b> · 保存后停止并重新启动镜像生效</div>
+                  <div class="field-grid">
+                    <label class="field"><span>最大边 (px)</span><input class="input mono" id="maxSize" type="number" value="1600" min="480" max="2560" /></label>
+                    <label class="field"><span>帧率 (fps)</span><input class="input mono" id="maxFps" type="number" value="30" min="5" max="120" /></label>
+                    <label class="field"><span>码率 (Mbps)</span><input class="input mono" id="bitRate" type="number" value="8" min="1" max="32" /></label>
+                    <label class="field"><span>裁剪 w:h:x:y</span><input class="input mono" id="cropField" placeholder="留空不裁剪" /></label>
+                  </div>
+                  <div class="hint" style="margin-top:8px">改动任意字段会自动切换为「自定义」；三档预设只是快速填值，不会额外保存配置键。</div>
+                </div>
+              </div>
+
+              <div class="exec-grid">
+                <section class="card exec-card">
+                  <div class="card-head"><h2>运行节奏</h2><span class="tag blue">engine</span></div>
+                  <div class="card-body">
+                    <div class="field-row">
+                      <label class="field"><span>轮询间隔 (ms)</span><input class="input mono" type="number" value="350" /></label>
+                      <label class="field"><span>默认节点超时 (ms)</span><input class="input mono" type="number" value="8000" /></label>
+                    </div>
+                    <div class="field-row" style="margin-top:8px">
+                      <label class="field"><span>单次运行总时长 (ms)</span><input class="input mono" type="number" value="1800000" /></label>
+                      <label class="field"><span>步骤总预算</span><input class="input mono" type="number" value="2000" /></label>
+                    </div>
+                  </div>
+                </section>
+                <section class="card exec-card">
+                  <div class="card-head"><h2>录制与定位</h2><span class="tag blue">recording</span></div>
+                  <div class="card-body">
+                    <div class="switch-row"><span>点击前抓层级（录制更准）</span><label class="switch"><input type="checkbox" checked><span class="track"></span></label></div>
+                    <div class="switch-row"><span>录后确认清单</span><label class="switch"><input type="checkbox" checked><span class="track"></span></label></div>
+                    <label class="field" style="margin-top:8px"><span>录制转脚本定位方式</span><select class="select"><option>绝对坐标（推荐）</option><option>元素定位（失败退回坐标）</option></select></label>
+                  </div>
+                </section>
+                <section class="card exec-card">
+                  <div class="card-head"><h2>采集</h2><span class="tag blue">capture</span></div>
+                  <div class="card-body">
+                    <div class="switch-row"><span>运行自动采集 logcat</span><label class="switch"><input type="checkbox"><span class="track"></span></label></div>
+                    <div class="switch-row"><span>网络抓包（可选）</span><label class="switch"><input type="checkbox"><span class="track"></span></label></div>
+                    <div class="hint" style="margin-top:7px">采集内容会进入运行产物与报告。</div>
+                  </div>
+                </section>
+                <section class="card exec-card">
+                  <div class="card-head"><h2>访问与安全</h2><span class="tag blue">security</span></div>
+                  <div class="card-body">
+                    <label class="field"><span>访问令牌</span><input class="input mono" placeholder="留空不校验（仅本机）" /></label>
+                    <div class="hint" style="margin-top:7px">对外暴露服务时建议设置；修改后需重启后端生效。</div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div class="settings-pane" id="set-storage">
+              <div class="card settings-card">
+                <div class="card-head"><h2>存储</h2><span class="hint">数据目录 / 保留策略</span></div>
+                <div class="card-body">
+                  <div class="field-row">
+                    <label class="field"><span>数据目录</span><input class="input mono" value="~/.autotest/data" /></label>
+                    <label class="field"><span>保留天数</span><input class="input mono" type="number" value="30" /></label>
+                  </div>
+                  <div class="hint" style="margin-top:8px">修改数据目录后需重启后端；SQLite 不会热切换。</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-pane" id="set-about">
+              <div class="card settings-card">
+                <div class="card-head"><h2>关于 AutoTest</h2><span class="tag green">正常</span></div>
+                <div class="card-body">
+                  <div class="kv-grid">
+                    <div class="kv"><span>前端版本</span><strong>0.2.5</strong></div>
+                    <div class="kv"><span>后端版本</span><strong>0.2.5</strong></div>
+                    <div class="kv"><span>数据目录</span><strong class="mono">~/.autotest/data</strong></div>
+                    <div class="kv"><span>页面构建</span><strong>2026-11-23</strong></div>
+                    <div class="kv"><span>提交</span><strong class="mono">mock</strong></div>
+                    <div class="kv"><span>配置优先级</span><strong>默认 &lt; 文件 &lt; 数据库 &lt; 环境变量</strong></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="savebar">
+              <span class="save-count">未保存 2 项</span>
+              <button class="btn primary" id="saveSettings"><svg class="ico"><use href="#i-check"/></svg>保存设置</button>
+              <button class="btn" id="discardSettings">放弃更改</button>
+              <span class="spacer"></span>
+              <span class="hint">只保存改动过的项 · 来源标记仅在覆盖时显示</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="modal-mask hidden" id="modalMask">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-head">
+      <h2 id="modalTitle">运行报告</h2>
+      <button class="icon-btn" id="modalClose" title="关闭" aria-label="关闭"><svg class="ico"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot" id="modalFoot"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (selector, scope) => (scope || document).querySelector(selector);
+  const $$ = (selector, scope) => Array.from((scope || document).querySelectorAll(selector));
+  const root = document.documentElement;
+  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  const THEME_KEY = 'autotest.mock.theme';
+
+  // ------------------------------------------------------------ toast
+  let toastTimer = 0;
+  function toast(message) {
+    const el = $('#toast');
+    el.textContent = message;
+    el.classList.add('show');
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => el.classList.remove('show'), 1800);
+  }
+
+  // ------------------------------------------------------------ theme
+  function readTheme() {
+    try {
+      return localStorage.getItem(THEME_KEY) || 'light';
+    } catch (error) {
+      return 'light';
+    }
+  }
+  let themeChoice = readTheme();
+  function resolveTheme(choice) {
+    if (choice === 'system') return media.matches ? 'dark' : 'light';
+    return choice;
+  }
+  function applyTheme(choice, persist) {
+    themeChoice = choice;
+    const resolved = resolveTheme(choice);
+    root.classList.toggle('dark', resolved === 'dark');
+    $$('[data-theme-choice]').forEach((button) => {
+      button.classList.toggle('active', button.dataset.themeChoice === choice);
+    });
+    if (persist) {
+      try {
+        localStorage.setItem(THEME_KEY, choice);
+      } catch (error) {
+        /* file:// 或隐私模式下忽略 */
+      }
+    }
+  }
+  applyTheme(themeChoice, false);
+  media.addEventListener('change', () => {
+    if (themeChoice === 'system') applyTheme('system', false);
+  });
+  $('#themeBtn').addEventListener('click', () => {
+    applyTheme(root.classList.contains('dark') ? 'light' : 'dark', true);
+    toast(root.classList.contains('dark') ? '已切换到深色' : '已切换到浅色');
+  });
+
+  // ------------------------------------------------------------ views
+  function showView(view) {
+    $$('.view').forEach((el) => el.classList.toggle('active', el.id === 'view-' + view));
+    $$('[data-nav]').forEach((el) => el.classList.toggle('active', el.dataset.nav === view));
+    if (view === 'scripts') {
+      setScriptSubView('library');
+    } else if (view === 'recorder') {
+      setRecorderSubView('list');
+    } else {
+      $('#crumbPage').textContent = view === 'settings' ? '设置' : '控制台';
+    }
+    window.scrollTo({ top: 0 });
+    closeMenus();
+  }
+  $('#topSettingsBtn').addEventListener('click', () => showView('settings'));
+  $$('[data-nav]').forEach((el) => el.addEventListener('click', () => showView(el.dataset.nav)));
+
+  // ------------------------------------------------------------ scripts
+  function setScriptSubView(name) {
+    const isLibrary = name === 'library';
+    const isRuns = name === 'runs';
+    const isEditor = name === 'editor';
+    const isDetail = name === 'run-detail';
+    const runsActive = isRuns || isDetail;
+    $('#scriptLibrary').classList.toggle('hidden', !isLibrary);
+    $('#scriptRuns').classList.toggle('hidden', !isRuns);
+    $('#runDetail').classList.toggle('hidden', !isDetail);
+    $('#scriptEditor').classList.toggle('hidden', !isEditor);
+    $('#scriptActions').classList.toggle('hidden', !isLibrary);
+    $$('#scriptTabs [data-script-tab]').forEach((button) => {
+      const active = (runsActive && button.dataset.scriptTab === 'runs') || (!runsActive && button.dataset.scriptTab === 'library');
+      button.classList.toggle('active', active);
+    });
+    $('#crumbPage').textContent = isDetail ? '运行详情' : isRuns ? '运行记录' : isEditor ? '编辑器' : '脚本库';
+  }
+
+  // ------------------------------------------------------------ 录制草稿
+  const RECORDING_DETAILS = {
+    rec_7f3a: {
+      name: '登录流程 · 镜像', id: 'rec_7f3a', mode: '镜像录制', modeTone: 'blue',
+      status: '录制中', statusTone: 'red', device: 'Pixel 8 Pro', events: 24,
+      started: '11-23 16:32', ended: '—', script: '登录并打开设置',
+      eventRows: [
+        { seq: 1, kind: 'tap', target: 'point (0.42, 0.31)', confidence: 'high', time: '16:32:18' },
+        { seq: 2, kind: 'tap', target: 'text = "网络和互联网"', confidence: 'high', time: '16:32:21' },
+        { seq: 3, kind: 'swipe', target: '(0.50, 0.72) → (0.50, 0.30)', confidence: 'high', time: '16:32:24' },
+        { seq: 4, kind: 'text', target: '"hello autotest"', confidence: 'high', time: '16:32:28' },
+        { seq: 5, kind: 'key', target: 'back', confidence: 'high', time: '16:32:30' },
+        { seq: 6, kind: 'tap', target: 'resource_id = …/wifi_settings', confidence: 'medium', time: '16:32:33' }
+      ]
+    },
+    rec_6d21: {
+      name: '检查 WLAN · 镜像', id: 'rec_6d21', mode: '镜像录制', modeTone: 'blue',
+      status: '已停止', statusTone: '', device: 'Pixel 8 Pro', events: 38,
+      started: '11-23 15:48', ended: '11-23 15:52', script: '检查 WLAN 开关状态',
+      eventRows: [
+        { seq: 1, kind: 'tap', target: 'point (0.42, 0.30)', confidence: 'high', time: '15:48:11' },
+        { seq: 2, kind: 'tap', target: 'text = "WLAN"', confidence: 'high', time: '15:48:16' },
+        { seq: 3, kind: 'wait', target: 'visible text = "WLAN"', confidence: 'high', time: '15:48:18' },
+        { seq: 4, kind: 'tap', target: 'resource_id = …/switch_widget', confidence: 'medium', time: '15:48:24' },
+        { seq: 5, kind: 'assert', target: 'WLAN 已开启', confidence: 'high', time: '15:48:30' },
+        { seq: 6, kind: 'key', target: 'back', confidence: 'high', time: '15:48:33' }
+      ]
+    },
+    rec_5b90: {
+      name: '设置菜单 · 真机', id: 'rec_5b90', mode: '真机录制', modeTone: 'violet',
+      status: '已停止', statusTone: '', device: 'Xiaomi 14', events: 17,
+      started: '11-23 14:20', ended: '11-23 14:22', script: '尚未生成',
+      eventRows: [
+        { seq: 1, kind: 'tap', target: 'point (0.48, 0.62)', confidence: 'high', time: '14:20:08' },
+        { seq: 2, kind: 'swipe', target: '(0.50, 0.78) → (0.50, 0.42)', confidence: 'medium', time: '14:20:12' },
+        { seq: 3, kind: 'tap', target: 'text = "关于手机"', confidence: 'high', time: '14:20:17' },
+        { seq: 4, kind: 'screenshot', target: '手动截图', confidence: 'high', time: '14:20:21' },
+        { seq: 5, kind: 'key', target: 'back', confidence: 'high', time: '14:20:24' }
+      ]
+    },
+    rec_4c12: {
+      name: '通知中心 · 真机', id: 'rec_4c12', mode: '真机录制', modeTone: 'violet',
+      status: '已暂停', statusTone: 'amber', device: 'Xiaomi 14', events: 9,
+      started: '11-23 11:05', ended: '—', script: '尚未生成',
+      eventRows: [
+        { seq: 1, kind: 'swipe', target: '(0.50, 0.05) → (0.50, 0.42)', confidence: 'high', time: '11:05:06' },
+        { seq: 2, kind: 'tap', target: 'point (0.30, 0.28)', confidence: 'medium', time: '11:05:10' },
+        { seq: 3, kind: 'text', target: '"night mode"', confidence: 'high', time: '11:05:14' },
+        { seq: 4, kind: 'key', target: 'back', confidence: 'high', time: '11:05:17' }
+      ]
+    }
+  };
+  let currentRecordingId = 'rec_7f3a';
+  const CONFIDENCE_META = {
+    high: { label: '高', tone: 'green' },
+    medium: { label: '中', tone: 'amber' },
+    low: { label: '低', tone: 'red' }
+  };
+
+  function setRecorderSubView(name) {
+    const isList = name === 'list';
+    $('#recorderList').classList.toggle('hidden', !isList);
+    $('#recordingDetail').classList.toggle('hidden', isList);
+    $('#recorderActions').classList.toggle('hidden', !isList);
+    $('#crumbPage').textContent = isList ? '录制草稿' : '录制详情';
+  }
+
+  function renderRecordingDetail(id) {
+    const rec = RECORDING_DETAILS[id] || RECORDING_DETAILS.rec_7f3a;
+    const active = rec.status === '录制中' || rec.status === '已暂停';
+    const statusTone = rec.status === '录制中' ? 'red' : rec.status === '已暂停' ? 'amber' : '';
+    $('#recordingDetailTitle').textContent = '录制详情 · ' + rec.name;
+    const statusTag = $('#recordingDetailStatus');
+    statusTag.className = 'tag ' + statusTone;
+    statusTag.textContent = rec.status;
+    const modeTag = $('#recordingDetailMode');
+    modeTag.className = 'tag ' + rec.modeTone;
+    modeTag.textContent = rec.mode;
+    $('#recId').textContent = rec.id;
+    $('#recDevice').textContent = rec.device;
+    $('#recEventCount').textContent = rec.events;
+    $('#recStarted').textContent = rec.started;
+    $('#recEnded').textContent = rec.ended;
+    $('#recScript').textContent = rec.script;
+    $('#recDetailEventCount').textContent = rec.events;
+
+    $('#recordingPauseBtn').classList.toggle('hidden', !active);
+    $('#recordingStopBtn').classList.toggle('hidden', !active);
+    $('#convertRecording').classList.toggle('hidden', active);
+    $('#deleteRecordingBtn').classList.toggle('hidden', active);
+    $('#recordingLiveBar').classList.toggle('hidden', !active);
+    if (active) {
+      $('#recordingLiveText').textContent = rec.status;
+      $('#recLiveCount').textContent = rec.events;
+      $('#recLiveHint').textContent = rec.status === '已暂停'
+        ? '已暂停，事件不会追加'
+        : rec.events > 0
+          ? '事件通过 WS 实时追加；视觉稿逐条模拟'
+          : '等待第 1 个事件…';
+      $('#recordingPauseBtn').innerHTML = rec.status === '已暂停'
+        ? '<svg class="ico"><use href="#i-play"/></svg><span>继续</span>'
+        : '<svg class="ico"><use href="#i-pause"/></svg><span>暂停</span>';
+    }
+
+    const rows = rec.eventRows.map((event) => {
+      const confidence = CONFIDENCE_META[event.confidence] || CONFIDENCE_META.medium;
+      return '<tr>' +
+        '<td class="mono">' + event.seq + '</td>' +
+        '<td><span class="tag">' + event.kind + '</span></td>' +
+        '<td class="mono small">' + event.target + '</td>' +
+        '<td><span class="tag ' + confidence.tone + '">' + confidence.label + '</span></td>' +
+        '<td class="small muted">' + event.time + '</td>' +
+        '</tr>';
+    }).join('');
+    const more = rec.events > rec.eventRows.length
+      ? '<tr><td colspan="5" class="hint" style="text-align:center;padding:10px">演示仅展示前 ' + rec.eventRows.length + ' 条，共 ' + rec.events + ' 条</td></tr>'
+      : '';
+    $('#recordingEvents').innerHTML = rows + more;
+    const wrap = $('#recordingEventsWrap');
+    if (wrap) wrap.scrollTop = id === 'rec_live' ? wrap.scrollHeight : 0;
+
+    if (id === 'rec_live') {
+      $('#liveRecordingRow').classList.remove('hidden');
+      const rowStatus = $('#liveRowStatus');
+      rowStatus.className = 'tag ' + statusTone;
+      rowStatus.textContent = rec.status;
+      $('#liveRowCount').textContent = rec.events;
+      $('#liveRowStarted').textContent = rec.started;
+      $('#recorderCount').textContent = '5';
+    }
+  }
+
+  function openRecordingDetail(id) {
+    currentRecordingId = id;
+    renderRecordingDetail(id);
+    setRecorderSubView('detail');
+    window.scrollTo({ top: 0 });
+  }
+
+  function openConsoleManual(tab) {
+    showView('console');
+    setDock('manual');
+    const button = $('.manual-tab[data-manual="' + tab + '"]');
+    if (button) button.click();
+  }
+
+  let liveTimer = null;
+  let liveSeq = 0;
+  const LIVE_TEMPLATES = [
+    { kind: 'tap', target: 'point (0.48, 0.62)', confidence: 'high' },
+    { kind: 'swipe', target: '(0.50, 0.78) → (0.50, 0.42)', confidence: 'medium' },
+    { kind: 'tap', target: 'text = "关于手机"', confidence: 'high' },
+    { kind: 'text', target: '"night mode"', confidence: 'high' },
+    { kind: 'key', target: 'back', confidence: 'high' },
+    { kind: 'tap', target: 'resource_id = …/switch_widget', confidence: 'medium' },
+    { kind: 'screenshot', target: '手动截图', confidence: 'high' }
+  ];
+  function nowClock() {
+    const now = new Date();
+    return [now.getHours(), now.getMinutes(), now.getSeconds()].map((value) => String(value).padStart(2, '0')).join(':');
+  }
+  function startLivePhysicalRecording() {
+    if (liveTimer) {
+      window.clearInterval(liveTimer);
+      liveTimer = null;
+    }
+    liveSeq = 0;
+    const startTime = nowClock().slice(0, 5);
+    RECORDING_DETAILS.rec_live = {
+      name: '设置菜单 · 真机实时', id: 'rec_live', mode: '真机录制', modeTone: 'violet',
+      status: '录制中', device: 'Pixel 8 Pro', events: 0, started: '11-23 ' + startTime,
+      ended: '—', script: '尚未生成', eventRows: []
+    };
+    openRecordingDetail('rec_live');
+    toast('演示稿：真机录制已开始，事件会逐条出现');
+    liveTimer = window.setInterval(() => {
+      const rec = RECORDING_DETAILS.rec_live;
+      if (!rec || rec.status !== '录制中') return;
+      const template = LIVE_TEMPLATES[liveSeq % LIVE_TEMPLATES.length];
+      liveSeq += 1;
+      rec.events += 1;
+      rec.eventRows.push({
+        seq: rec.events,
+        kind: template.kind,
+        target: template.target,
+        confidence: template.confidence,
+        time: nowClock()
+      });
+      renderRecordingDetail('rec_live');
+    }, 1500);
+  }
+
+  function openNewRecordingDialog() {
+    openModal({
+      title: '新建真机录制',
+      body:
+        '<label class="field"><span>设备</span><select class="select"><option>Pixel 8 Pro · 39121FDH200</option><option>Xiaomi 14 · 192.168.1.20:5555</option></select></label>' +
+        '<label class="field" style="margin-top:8px"><span>录制名称（可选）</span><input class="input" placeholder="例如：设置菜单操作" /></label>' +
+        '<div class="hint" style="margin-top:8px">真机录制通过 getevent 采集触摸；开始前请确认触摸设备与 2 点标定。录制期间请勿同时运行脚本。</div>',
+      footer: '<button class="btn sm" data-modal-close>取消</button><button class="btn primary sm" id="modalStartRecording">开始录制</button>'
+    });
+    $('#modalStartRecording').addEventListener('click', () => {
+      closeModal();
+      startLivePhysicalRecording();
+    });
+  }
+
+  function openConvertRecordingDialog() {
+    const rec = RECORDING_DETAILS[currentRecordingId] || RECORDING_DETAILS.rec_7f3a;
+    openModal({
+      title: '将录制转换为脚本',
+      body:
+        '<label class="field"><span>脚本名称</span><input class="input" id="convertScriptName" value="' + rec.name.replace(/ · .*$/, '') + '" /></label>' +
+        '<label class="field" style="margin-top:8px"><span>定位方式</span><select class="select"><option>绝对坐标（推荐：游戏/自绘界面）</option><option>元素定位（失败退回坐标）</option></select></label>' +
+        '<div class="hint" style="margin-top:8px">生成后可在脚本编辑器里继续调整节点、条件和失败策略。</div>',
+      footer: '<button class="btn sm" data-modal-close>取消</button><button class="btn primary sm" id="modalConvertRecording">生成脚本</button>'
+    });
+    $('#modalConvertRecording').addEventListener('click', () => {
+      closeModal();
+      toast('演示稿：已生成脚本');
+    });
+  }
+
+  $$('[data-recording-id]').forEach((button) => {
+    button.addEventListener('click', () => openRecordingDetail(button.dataset.recordingId));
+  });
+  $('#backToRecorder').addEventListener('click', () => setRecorderSubView('list'));
+  $('#convertRecording').addEventListener('click', openConvertRecordingDialog);
+  $('#recordingPauseBtn').addEventListener('click', () => {
+    const rec = RECORDING_DETAILS[currentRecordingId];
+    if (!rec || !['录制中', '已暂停'].includes(rec.status)) return;
+    rec.status = rec.status === '录制中' ? '已暂停' : '录制中';
+    renderRecordingDetail(currentRecordingId);
+    toast(rec.status === '已暂停' ? '录制已暂停' : '录制已继续');
+  });
+  $('#recordingStopBtn').addEventListener('click', () => {
+    const rec = RECORDING_DETAILS[currentRecordingId];
+    if (!rec || !['录制中', '已暂停'].includes(rec.status)) return;
+    rec.status = '已停止';
+    rec.ended = '11-23 ' + nowClock().slice(0, 5);
+    if (liveTimer) {
+      window.clearInterval(liveTimer);
+      liveTimer = null;
+    }
+    renderRecordingDetail(currentRecordingId);
+    toast('录制已停止，可查看事件并转脚本');
+  });
+  $('#newPhysicalBtn').addEventListener('click', openNewRecordingDialog);
+  $('#goConsoleRecord').addEventListener('click', () => openConsoleManual('record'));
+  $('#consolePhysicalLink').addEventListener('click', () => {
+    showView('recorder');
+    openNewRecordingDialog();
+  });
+
+  function selectNode(row) {
+    if (!row) return;
+    $$('.node-row', $('#nodeList')).forEach((el) => el.classList.toggle('selected', el === row));
+    const name = row.querySelector('.node-name')?.textContent || '';
+    const input = $('#nodeNameInput');
+    if (input) input.value = name;
+    const type = row.dataset.type || 'node';
+    $('#formNodeType').textContent = type;
+    const typeSelect = $('#nodeTypeSelect');
+    if (typeSelect) typeSelect.value = type;
+  }
+
+  function openEditor(name) {
+    $('#editorTitle').textContent = name || '登录并打开设置';
+    setScriptSubView('editor');
+    selectNode($('#nodeList .node-row'));
+    window.scrollTo({ top: 0 });
+  }
+
+  const RUN_STEP_SETS = {
+    login: [
+      ['打开设置', 'app'],
+      ['点击「网络和互联网」', 'click'],
+      ['等待「WLAN」出现', 'wait'],
+      ['点击 WLAN', 'click'],
+      ['打开 WLAN 开关', 'click'],
+      ['截图', 'screenshot'],
+      ['返回上一级', 'key'],
+      ['点击「已连接的设备」', 'click'],
+      ['断言前台应用 = 设置', 'assert'],
+      ['完成', 'key']
+    ],
+    wlan: [
+      ['打开设置', 'app'],
+      ['点击「网络和互联网」', 'click'],
+      ['点击 WLAN', 'click'],
+      ['读取 WLAN 开关状态', 'assert'],
+      ['断言 WLAN 已开启', 'assert'],
+      ['返回上一级', 'key'],
+      ['打开通知中心', 'key'],
+      ['截图', 'screenshot'],
+      ['记录结果', 'shell'],
+      ['完成', 'key']
+    ],
+    cache: [
+      ['打开设置', 'app'],
+      ['点击「应用」', 'click'],
+      ['选择目标应用', 'click'],
+      ['点击「存储」', 'click'],
+      ['点击「清除缓存」', 'click'],
+      ['强制停止应用', 'app'],
+      ['重新启动应用', 'app'],
+      ['等待首屏', 'wait'],
+      ['截图', 'screenshot'],
+      ['完成', 'key']
+    ],
+    about: [
+      ['打开设置', 'app'],
+      ['点击「关于手机」', 'click'],
+      ['点击「版本号」', 'click'],
+      ['连续点击版本号', 'click'],
+      ['截图', 'screenshot'],
+      ['返回上一级', 'key'],
+      ['打开「系统更新」', 'click'],
+      ['截图', 'screenshot'],
+      ['记录版本', 'shell'],
+      ['完成', 'key']
+    ]
+  };
+  function stepsOf(set) {
+    return RUN_STEP_SETS[set].map(([name, type], index) => ({ id: 's' + (index + 1), name, type }));
+  }
+
+  const RUN_STATUS_META = {
+    queued: { label: '排队中', tone: '' },
+    running: { label: '运行中', tone: 'blue' },
+    paused: { label: '已暂停', tone: 'amber' },
+    succeeded: { label: '成功', tone: 'green' },
+    failed: { label: '失败', tone: 'red' },
+    stopped: { label: '已停止', tone: '' }
+  };
+  const RUN_STEP_META = {
+    pending: { label: '未执行', tone: '' },
+    running: { label: '执行中', tone: 'blue' },
+    passed: { label: '通过', tone: 'green' },
+    failed: { label: '失败', tone: 'red' },
+    skipped: { label: '跳过', tone: '' }
+  };
+
+  const RUN_DETAILS = {
+    '128': {
+      script: '登录并打开设置', device: 'Pixel 8 Pro', status: 'running',
+      started: '11-23 16:40', ended: '—', duration: '18s', current: 3,
+      steps: stepsOf('login'),
+      statuses: ['passed', 'passed', 'passed', 'running', 'pending', 'pending', 'pending', 'pending', 'pending', 'pending'],
+      durations: ['1.8s', '0.9s', '0.4s', '—', '—', '—', '—', '—', '—', '—'],
+      events: [
+        { seq: 12, time: '16:40:22', text: 'step_started · 点击 WLAN' },
+        { seq: 11, time: '16:40:21', text: 'step_finished · 等待「WLAN」出现 · passed' },
+        { seq: 10, time: '16:40:20', text: 'when_result · met=true · waited 0.4s' },
+        { seq: 9, time: '16:40:19', text: 'step_started · 等待「WLAN」出现' },
+        { seq: 8, time: '16:40:18', text: 'run_state · running · step_index=3' }
+      ]
+    },
+    '127': {
+      script: '检查 WLAN 开关状态', device: 'Pixel 8 Pro', status: 'succeeded',
+      started: '11-23 16:24', ended: '11-23 16:24', duration: '42s', current: -1,
+      steps: stepsOf('wlan'),
+      statuses: Array(10).fill('passed'),
+      durations: ['1.6s', '0.8s', '0.7s', '0.3s', '0.2s', '0.6s', '0.5s', '1.1s', '1.4s', '0.2s'],
+      events: [
+        { seq: 28, time: '16:25:06', text: 'run_finished · succeeded · 42s' },
+        { seq: 27, time: '16:25:05', text: 'step_finished · 完成 · passed' },
+        { seq: 26, time: '16:25:04', text: 'step_started · 完成' },
+        { seq: 1, time: '16:24:24', text: 'run_started · 检查 WLAN 开关状态' }
+      ]
+    },
+    '126': {
+      script: '清理缓存并重启应用', device: 'Xiaomi 14', status: 'failed',
+      started: '11-23 15:58', ended: '11-23 15:58', duration: '31s', current: 5, failedIndex: 5,
+      error: '未找到元素：清除缓存（resource_id com.android.settings:id/clear_cache）',
+      steps: stepsOf('cache'),
+      statuses: ['passed', 'passed', 'passed', 'passed', 'passed', 'failed', 'pending', 'pending', 'pending', 'pending'],
+      durations: ['1.4s', '0.9s', '1.2s', '0.7s', '0.6s', '3.2s', '—', '—', '—', '—'],
+      events: [
+        { seq: 24, time: '15:58:31', text: 'error · ELEMENT_NOT_FOUND · 清除缓存' },
+        { seq: 23, time: '15:58:28', text: 'step_retry · 清除缓存 · attempt 2' },
+        { seq: 22, time: '15:58:24', text: 'step_finished · 清除缓存 · failed' },
+        { seq: 21, time: '15:58:21', text: 'step_started · 清除缓存' },
+        { seq: 20, time: '15:58:20', text: 'run_state · running · step_index=5' }
+      ]
+    },
+    '125': {
+      script: '打开关于手机并截图', device: 'Pixel 8 Pro', status: 'stopped',
+      started: '11-23 15:31', ended: '11-23 15:31', duration: '12s', current: -1,
+      steps: stepsOf('about'),
+      statuses: ['passed', 'passed', 'skipped', 'pending', 'pending', 'pending', 'pending', 'pending', 'pending', 'pending'],
+      durations: ['1.2s', '0.8s', '—', '—', '—', '—', '—', '—', '—', '—'],
+      events: [
+        { seq: 9, time: '15:31:42', text: 'run_finished · stopped · 12s' },
+        { seq: 8, time: '15:31:41', text: 'step_skipped · 点击「版本号」 · after_stop' },
+        { seq: 7, time: '15:31:40', text: 'run_state · stopping' },
+        { seq: 1, time: '15:31:30', text: 'run_started · 打开关于手机并截图' }
+      ]
+    }
+  };
+
+  let currentDetailRun = '128';
+
+  function renderRunDetail(id) {
+    const run = RUN_DETAILS[id] || RUN_DETAILS['128'];
+    const meta = RUN_STATUS_META[run.status] || RUN_STATUS_META.running;
+    const statuses = run.statuses || [];
+    const passed = statuses.filter((status) => status === 'passed').length;
+    const failed = statuses.filter((status) => status === 'failed').length;
+    const skipped = statuses.filter((status) => status === 'skipped').length;
+    const done = statuses.filter((status) => !['pending', 'running'].includes(status)).length;
+    const total = run.steps.length;
+    const currentNumber = run.current >= 0 ? run.current + 1 : done;
+    const percent = total ? Math.round((currentNumber / total) * 100) : 0;
+    const currentStep = run.current >= 0 ? run.steps[run.current] : null;
+
+    $('#runDetailTitle').textContent = '运行 #' + id;
+    const statusEl = $('#runDetailStatus');
+    statusEl.className = 'tag ' + meta.tone;
+    statusEl.textContent = meta.label;
+    $('#runDetailScript').textContent = run.script;
+    $('#runDetailDevice').textContent = run.device;
+    $('#runDetailStarted').textContent = run.started;
+    $('#runDetailDuration').textContent = run.duration;
+    $('#runDetailProgress').style.width = percent + '%';
+    $('#runDetailStepText').textContent = currentNumber + ' / ' + total + ' · ' + percent + '%';
+    $('#runDetailPassed').textContent = passed;
+    $('#runDetailFailed').textContent = failed;
+    $('#runDetailSkipped').textContent = skipped;
+    $('#runDetailCurrent').textContent = currentStep ? currentStep.id : '—';
+    $('#runDetailWs').textContent = ['running', 'paused'].includes(run.status) ? 'WS 已连接' : '已结束';
+
+    if (String(id) === '128') {
+      const rowStatus = $('#row128Status');
+      if (rowStatus) {
+        rowStatus.className = 'tag ' + meta.tone;
+        rowStatus.textContent = meta.label;
+      }
+      $('#row128Progress').style.width = percent + '%';
+      $('#row128Step').textContent = currentNumber + '/' + total;
+    }
+
+    $('#runDetailSteps').innerHTML = run.steps.map((step, index) => {
+      const status = statuses[index] || 'pending';
+      const stepMeta = RUN_STEP_META[status] || RUN_STEP_META.pending;
+      const error = index === run.failedIndex && run.error ? '<span class="run-step-error">' + run.error + '</span>' : '';
+      return '<div class="run-step-row' + (index === run.current ? ' current' : '') + '">' +
+        '<span class="run-step-index">' + String(index + 1).padStart(2, '0') + '</span>' +
+        '<span class="run-step-main"><span class="run-step-name">' + step.name + '</span><span class="run-step-sub">' + step.id + ' · ' + step.type + '</span>' + error + '</span>' +
+        '<span class="tag ' + stepMeta.tone + '">' + stepMeta.label + '</span>' +
+        '<span class="run-step-duration">' + (run.durations?.[index] || '—') + '</span>' +
+        '</div>';
+    }).join('');
+
+    $('#runDetailEvents').innerHTML = run.events.map((event) =>
+      '<div class="run-event-item"><span class="run-event-seq">#' + event.seq + '</span><span class="run-event-time">' + event.time + '</span><span class="run-event-text">' + event.text + '</span></div>'
+    ).join('');
+    $('#runDetailEventCount').textContent = String(run.events.length);
+
+    $('#runInfoId').textContent = '#' + id;
+    $('#runInfoScript').textContent = run.script;
+    $('#runInfoDevice').textContent = run.device;
+    $('#runInfoStatus').textContent = meta.label;
+    $('#runInfoStarted').textContent = run.started;
+    $('#runInfoEnded').textContent = run.ended || '—';
+    $('#runInfoDebug').textContent = '否';
+
+    const active = ['running', 'paused'].includes(run.status);
+    $('#runDetailPause').classList.toggle('hidden', !active);
+    $('#runDetailStop').classList.toggle('hidden', !active);
+    if (run.status === 'running') {
+      $('#runDetailPause').innerHTML = '<svg class="ico"><use href="#i-pause"/></svg><span>暂停</span>';
+    } else if (run.status === 'paused') {
+      $('#runDetailPause').innerHTML = '<svg class="ico"><use href="#i-play"/></svg><span>继续</span>';
+    }
+  }
+
+  function openRunDetail(id) {
+    currentDetailRun = String(id);
+    renderRunDetail(currentDetailRun);
+    setScriptSubView('run-detail');
+    window.scrollTo({ top: 0 });
+  }
+
+  $$('[data-open-editor]').forEach((button) => {
+    button.addEventListener('click', () => openEditor(button.dataset.openEditor));
+  });
+  $$('[data-run-id]').forEach((button) => {
+    button.addEventListener('click', () => openRunDetail(button.dataset.runId));
+  });
+  $('#backToRuns').addEventListener('click', () => setScriptSubView('runs'));
+  $('#runDetailPause').addEventListener('click', () => {
+    const run = RUN_DETAILS[currentDetailRun];
+    if (!run || !['running', 'paused'].includes(run.status)) return;
+    run.status = run.status === 'running' ? 'paused' : 'running';
+    renderRunDetail(currentDetailRun);
+    toast(run.status === 'paused' ? '运行已暂停' : '继续运行');
+  });
+  function stopCurrentDetailRun() {
+    const run = RUN_DETAILS[currentDetailRun];
+    if (!run || !['running', 'paused'].includes(run.status)) return;
+    if (run.current >= 0) run.statuses[run.current] = 'skipped';
+    run.status = 'stopped';
+    run.current = -1;
+    run.ended = '11-23 16:41';
+    renderRunDetail(currentDetailRun);
+    toast('已请求停止运行');
+  }
+
+  function openStopConfirm() {
+    const run = RUN_DETAILS[currentDetailRun];
+    if (!run || !['running', 'paused'].includes(run.status)) return;
+    openModal({
+      title: '停止运行 #' + currentDetailRun,
+      body: '<p class="modal-text">停止运行？正在执行的动作最多等待 5s 后强制中断。</p><div class="modal-sub">停止后已执行的步骤、截图和日志会保留，可在运行记录里查看。</div>',
+      footer: '<button class="btn sm" data-modal-close>取消</button><button class="btn danger sm" id="modalStopConfirm">停止运行</button>'
+    });
+    $('#modalStopConfirm').addEventListener('click', () => {
+      closeModal();
+      stopCurrentDetailRun();
+    });
+  }
+
+  $('#runDetailStop').addEventListener('click', openStopConfirm);
+  $$('#scriptTabs [data-script-tab]').forEach((button) => {
+    button.addEventListener('click', () => setScriptSubView(button.dataset.scriptTab));
+  });
+  $('#backToLibrary').addEventListener('click', () => setScriptSubView('library'));
+  $('#editorRunsBtn').addEventListener('click', () => setScriptSubView('runs'));
+
+  // 脚本编辑器节点拖拽排序（视觉稿演示）
+  (function setupNodeDrag() {
+    const list = $('#nodeList');
+    if (!list) return;
+    let dragged = null;
+    let dropTarget = null;
+    let dropAfter = false;
+
+    function clearDrop() {
+      $$('.node-row', list).forEach((row) => row.classList.remove('drop-before', 'drop-after'));
+    }
+    function renumber() {
+      $$('.node-num', list).forEach((num, index) => {
+        num.textContent = String(index + 1);
+      });
+    }
+    function moveRow(row, direction) {
+      const previous = row.previousElementSibling;
+      const next = row.nextElementSibling;
+      if (direction < 0 && previous) list.insertBefore(row, previous);
+      if (direction > 0 && next) list.insertBefore(next, row);
+      renumber();
+      selectNode(row);
+    }
+
+    $$('.node-row', list).forEach((row) => {
+      row.addEventListener('click', () => selectNode(row));
+      row.addEventListener('keydown', (event) => {
+        if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+        event.preventDefault();
+        moveRow(row, event.key === 'ArrowUp' ? -1 : 1);
+        toast('节点顺序已调整（演示）');
+      });
+      row.addEventListener('dragover', (event) => {
+        if (!dragged || row === dragged) return;
+        event.preventDefault();
+        const rect = row.getBoundingClientRect();
+        dropAfter = event.clientY > rect.top + rect.height / 2;
+        dropTarget = row;
+        clearDrop();
+        row.classList.add(dropAfter ? 'drop-after' : 'drop-before');
+      });
+      row.addEventListener('dragleave', (event) => {
+        if (!row.contains(event.relatedTarget)) row.classList.remove('drop-before', 'drop-after');
+      });
+      row.addEventListener('drop', (event) => {
+        event.preventDefault();
+        if (!dragged || !dropTarget || dropTarget === dragged) return;
+        if (dropAfter) dropTarget.after(dragged);
+        else dropTarget.before(dragged);
+        clearDrop();
+        renumber();
+        selectNode(dragged);
+        toast('节点顺序已调整（演示）');
+      });
+    });
+
+    $$('.drag-handle', list).forEach((handle) => {
+      handle.addEventListener('dragstart', (event) => {
+        dragged = handle.closest('.node-row');
+        if (!dragged) return;
+        dragged.classList.add('dragging');
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', dragged.dataset.stepId || 'node');
+        }
+      });
+      handle.addEventListener('dragend', () => {
+        if (dragged) dragged.classList.remove('dragging');
+        clearDrop();
+        dragged = null;
+        dropTarget = null;
+      });
+    });
+
+    $$('.node-tools, .drag-handle', list).forEach((el) => {
+      el.addEventListener('click', (event) => event.stopPropagation());
+    });
+  })();
+
+  // ------------------------------------------------------------ menus
+  function closeMenus() {
+    $('#deviceMenu').classList.add('hidden');
+    $('#deviceBtn').setAttribute('aria-expanded', 'false');
+    $('#moreMenu').classList.add('hidden');
+    $('#moreBtn').setAttribute('aria-expanded', 'false');
+    $('#effectPopover').classList.add('hidden');
+    $('#effectBtn').setAttribute('aria-expanded', 'false');
+  }
+  $('#deviceBtn').addEventListener('click', (event) => {
+    event.stopPropagation();
+    const menu = $('#deviceMenu');
+    const open = menu.classList.contains('hidden');
+    closeMenus();
+    menu.classList.toggle('hidden', !open);
+    $('#deviceBtn').setAttribute('aria-expanded', String(open));
+  });
+  $('#moreBtn').addEventListener('click', (event) => {
+    event.stopPropagation();
+    const menu = $('#moreMenu');
+    const open = menu.classList.contains('hidden');
+    closeMenus();
+    menu.classList.toggle('hidden', !open);
+    $('#moreBtn').setAttribute('aria-expanded', String(open));
+  });
+  $('#effectBtn').addEventListener('click', (event) => {
+    event.stopPropagation();
+    const menu = $('#effectPopover');
+    const open = menu.classList.contains('hidden');
+    closeMenus();
+    menu.classList.toggle('hidden', !open);
+    $('#effectBtn').setAttribute('aria-expanded', String(open));
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('#deviceDropdown')) {
+      $('#deviceMenu').classList.add('hidden');
+      $('#deviceBtn').setAttribute('aria-expanded', 'false');
+    }
+    if (!event.target.closest('#actionRail')) {
+      $('#moreMenu').classList.add('hidden');
+      $('#moreBtn').setAttribute('aria-expanded', 'false');
+    }
+    if (!event.target.closest('#effectMenuWrap')) {
+      $('#effectPopover').classList.add('hidden');
+      $('#effectBtn').setAttribute('aria-expanded', 'false');
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeMenus();
+  });
+
+  // device picker
+  $$('.device-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      $$('.device-row').forEach((el) => el.classList.remove('active'));
+      row.classList.add('active');
+      $('.device-btn .device-name').textContent = row.dataset.name;
+      $('.device-btn .device-serial').textContent = row.dataset.serial;
+      $('#resText').textContent = row.dataset.res;
+      closeMenus();
+      toast('已选择设备：' + row.dataset.name);
+    });
+  });
+
+  // rail / menu actions
+  $$('[data-key]').forEach((button) => {
+    button.addEventListener('click', () => {
+      closeMenus();
+      toast('已发送：' + button.dataset.key);
+    });
+  });
+  $$('[data-toast]').forEach((button) => {
+    button.addEventListener('click', () => {
+      closeMenus();
+      toast(button.dataset.toast);
+    });
+  });
+
+  // 触控特效弹层
+  const fxTap = $('#fxTap');
+  const fxRipple = $('#fxRipple');
+  const fxSwipe = $('#fxSwipe');
+  function updateEffectBadge() {
+    fxRipple.disabled = !fxTap.checked;
+    const active = (fxTap.checked ? 1 : 0) + (fxTap.checked && fxRipple.checked ? 1 : 0) + (fxSwipe.checked ? 1 : 0);
+    const badge = $('#effectCount');
+    badge.textContent = String(active);
+    badge.classList.toggle('on', active > 0);
+    $('#effectBtn').title = active > 0 ? `${active} 个特效已开启` : '触控特效全部关闭';
+  }
+  [fxTap, fxRipple, fxSwipe].forEach((input) => input.addEventListener('change', updateEffectBadge));
+  $('#fxAllOn').addEventListener('click', () => {
+    fxTap.checked = true;
+    fxRipple.checked = true;
+    fxSwipe.checked = true;
+    updateEffectBadge();
+    toast('已开启全部触控特效');
+  });
+  $('#fxAllOff').addEventListener('click', () => {
+    fxTap.checked = false;
+    fxRipple.checked = false;
+    fxSwipe.checked = false;
+    updateEffectBadge();
+    toast('已关闭全部触控特效');
+  });
+  updateEffectBadge();
+
+  // ------------------------------------------------------------ modal / dialogs
+  const modalMask = $('#modalMask');
+  function closeModal() {
+    modalMask.classList.add('hidden');
+    $('#modalBody').innerHTML = '';
+    $('#modalFoot').innerHTML = '';
+    document.body.style.overflow = '';
+  }
+  function openModal(options) {
+    $('#modalTitle').textContent = options.title;
+    $('#modalBody').innerHTML = options.body;
+    $('#modalFoot').innerHTML = options.footer || '<button class="btn sm" data-modal-close>关闭</button>';
+    modalMask.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    $$('[data-modal-close]', modalMask).forEach((button) => button.addEventListener('click', closeModal));
+    $$('[data-modal-download]', modalMask).forEach((button) => button.addEventListener('click', () => {
+      toast('演示稿：报告 zip 已开始下载');
+      closeModal();
+    }));
+  }
+  $('#modalClose').addEventListener('click', closeModal);
+  modalMask.addEventListener('click', (event) => {
+    if (event.target === modalMask) closeModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeModal();
+  });
+
+  function openReportDialog() {
+    const run = RUN_DETAILS[currentDetailRun] || RUN_DETAILS['128'];
+    const meta = RUN_STATUS_META[run.status] || RUN_STATUS_META.running;
+    const passed = run.statuses.filter((status) => status === 'passed').length;
+    const failed = run.statuses.filter((status) => status === 'failed').length;
+    const skipped = run.statuses.filter((status) => status === 'skipped').length;
+    const body =
+      '<div class="report-summary">' +
+        '<div class="report-kv"><span>运行</span><strong>#' + currentDetailRun + '</strong></div>' +
+        '<div class="report-kv"><span>脚本</span><strong>' + run.script + '</strong></div>' +
+        '<div class="report-kv"><span>设备</span><strong>' + run.device + '</strong></div>' +
+        '<div class="report-kv"><span>状态</span><strong>' + meta.label + '</strong></div>' +
+        '<div class="report-kv"><span>通过 / 失败 / 跳过</span><strong>' + passed + ' / ' + failed + ' / ' + skipped + '</strong></div>' +
+        '<div class="report-kv"><span>耗时</span><strong>' + run.duration + '</strong></div>' +
+      '</div>' +
+      '<div class="report-section"><strong>报告内容</strong><div class="report-files">' +
+        '<div class="report-file"><svg class="ico"><use href="#i-script"/></svg><span>index.html</span><span class="spacer"></span><small>HTML 汇总</small></div>' +
+        '<div class="report-file"><svg class="ico"><use href="#i-terminal"/></svg><span>junit.xml</span><span class="spacer"></span><small>JUnit XML</small></div>' +
+        '<div class="report-file"><svg class="ico"><use href="#i-camera"/></svg><span>screenshots/</span><span class="spacer"></span><small>失败截图</small></div>' +
+      '</div></div>' +
+      '<div class="report-section"><strong>生成时间</strong><div class="modal-sub">11-23 16:41 · 单次运行报告</div></div>';
+    openModal({
+      title: '运行报告 · #' + currentDetailRun,
+      body,
+      footer: '<button class="btn sm" data-modal-close>关闭</button><button class="btn primary sm" data-modal-download>下载 zip</button>'
+    });
+  }
+
+  function openPreviewDialog(kind) {
+    if (kind === 'screenshot') {
+      const body =
+        '<div class="shot-preview">' +
+          '<div class="shot-status"><span>9:41</span><span>▮▮▮</span></div>' +
+          '<div class="shot-body">' +
+            '<div class="shot-title">设置</div>' +
+            '<div class="shot-search">搜索设置</div>' +
+            '<div class="shot-row"><span>网络和互联网</span><span>›</span></div>' +
+            '<div class="shot-row"><span>已连接的设备</span><span>›</span></div>' +
+            '<div class="shot-row"><span>应用</span><span>›</span></div>' +
+            '<div class="shot-row"><span>通知</span><span>›</span></div>' +
+            '<div class="shot-row"><span>电池</span><span>›</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="modal-sub" style="text-align:center;margin-top:9px">screenshot.png · 1344 × 2992 · 182 KB</div>';
+      openModal({ title: '截图预览 · screenshot.png', body });
+      return;
+    }
+    if (kind === 'logcat') {
+      const body =
+        '<pre class="log-pre">11-23 16:40:18.221 I/AutoTest: run #128 started · 登录并打开设置\n' +
+        '11-23 16:40:18.402 I/AutoTest: step s1 · app launch com.android.settings\n' +
+        '11-23 16:40:19.118 I/AutoTest: step s2 · click text="网络和互联网"\n' +
+        '11-23 16:40:19.888 I/AutoTest: step s3 · wait text="WLAN" state=visible\n' +
+        '11-23 16:40:20.305 I/AutoTest: when_result · met=true · waited 417ms\n' +
+        '11-23 16:40:20.812 I/AutoTest: step s4 · click text="WLAN"\n' +
+        '11-23 16:40:21.004 I/ActivityManager: START u0 {act=android.settings.WIFI_SETTINGS}\n' +
+        '11-23 16:40:21.620 I/AutoTest: step s4 · waiting for hierarchy settle\n' +
+        '11-23 16:40:22.002 D/UiAutomator: dump hierarchy depth=18 nodes=142\n' +
+        '11-23 16:40:22.224 I/AutoTest: screenshot saved · run_128/s4.png</pre>';
+      openModal({ title: 'logcat · Pixel 8 Pro', body });
+      return;
+    }
+    const body =
+      '<pre class="hierarchy-pre">&lt;?xml version="1.0" encoding="UTF-8"?&gt;\n' +
+      '&lt;hierarchy rotation="0"&gt;\n' +
+      '  &lt;node class="android.widget.FrameLayout" package="com.android.settings" bounds="[0,0][1344,2992]"&gt;\n' +
+      '    &lt;node text="设置" class="android.widget.TextView" resource-id="com.android.settings:id/action_bar_title" bounds="[84,120][420,204]" /&gt;\n' +
+      '    &lt;node text="搜索设置" class="android.widget.EditText" resource-id="com.android.settings:id/search_bar" bounds="[48,252][1296,396]" /&gt;\n' +
+      '    &lt;node text="网络和互联网" class="android.widget.TextView" bounds="[180,468][720,552]" clickable="true" /&gt;\n' +
+      '    &lt;node text="已连接的设备" class="android.widget.TextView" bounds="[180,612][720,696]" clickable="true" /&gt;\n' +
+      '    &lt;node text="应用" class="android.widget.TextView" bounds="[180,756][720,840]" clickable="true" /&gt;\n' +
+      '  &lt;/node&gt;\n' +
+      '&lt;/hierarchy&gt;</pre>';
+    openModal({ title: '层级树 · Pixel 8 Pro', body });
+  }
+
+  $$('[data-dialog]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const kind = button.dataset.dialog;
+      if (kind === 'report') openReportDialog();
+      else openPreviewDialog(kind);
+    });
+  });
+
+  // ------------------------------------------------------------ mirror
+  let mirrorOn = true;
+  function setMirror(on) {
+    mirrorOn = on;
+    $('#phoneScreen').classList.toggle('off', !on);
+    $('#stagePlaceholder').classList.toggle('show', !on);
+    $('#mirrorToggle').classList.toggle('primary', !on);
+    $('#mirrorToggle').classList.toggle('danger', on);
+    $('#mirrorToggle span').textContent = on ? '断开镜像' : '启动镜像';
+    $('#stageFpsBadge').classList.toggle('hidden', !on);
+    $('#stageFps').textContent = '60 fps';
+    $('#mirrorStatusline').classList.toggle('hidden', !on);
+    $('#toolbarHint').textContent = on ? '按住拖动可直接操作设备' : '启动镜像后可直接在画面上操作';
+    $('#keyframeBtn').disabled = !on;
+    toast(on ? '镜像已启动（视觉稿演示）' : '镜像已断开（视觉稿演示）');
+  }
+  $('#mirrorToggle').addEventListener('click', () => setMirror(!mirrorOn));
+  $('#placeholderStart').addEventListener('click', () => setMirror(true));
+  $('#refreshMirror').addEventListener('click', () => {
+    const button = $('#refreshMirror');
+    button.classList.add('spin');
+    window.setTimeout(() => button.classList.remove('spin'), 700);
+    toast('已刷新镜像连接与设备状态');
+  });
+
+  // ------------------------------------------------------------ dock tabs
+  function setDock(name) {
+    $$('.dock-tab').forEach((el) => el.classList.toggle('active', el.dataset.dock === name));
+    $('#pane-manual').classList.toggle('active', name === 'manual');
+    $('#pane-auto').classList.toggle('active', name === 'auto');
+  }
+  $$('.dock-tab').forEach((el) => el.addEventListener('click', () => setDock(el.dataset.dock)));
+
+  // manual function tabs
+  $$('.manual-tab').forEach((button) => {
+    button.addEventListener('click', () => {
+      $$('.manual-tab').forEach((el) => el.classList.toggle('active', el === button));
+      $$('.manual-page').forEach((page) => {
+        page.classList.toggle('active', page.dataset.manualPage === button.dataset.manual);
+      });
+    });
+  });
+
+  // variables
+  $('#varsBtn').addEventListener('click', () => {
+    $('#varsPanel').classList.toggle('hidden');
+    $('#varsBtn').classList.toggle('active');
+  });
+
+  // ------------------------------------------------------------ run demo
+  const nodes = [
+    { name: '打开设置', type: 'app', status: 'passed', duration: '1.8s' },
+    { name: '点击「网络和互联网」', type: 'click', status: 'passed', duration: '0.9s' },
+    { name: '等待「WLAN」出现', type: 'wait', status: 'passed', duration: '0.4s' },
+    { name: '点击 WLAN', type: 'click', status: 'running', duration: '—' },
+    { name: '打开 WLAN 开关', type: 'click', status: 'pending', duration: '—' },
+    { name: '返回上一级', type: 'key', status: 'pending', duration: '—' },
+    { name: '点击「已连接的设备」', type: 'click', status: 'pending', duration: '—' },
+    { name: '截图', type: 'screenshot', status: 'pending', duration: '—' },
+    { name: '断言前台应用 = 设置', type: 'assert', status: 'pending', duration: '—' },
+    { name: '完成', type: 'key', status: 'pending', duration: '—' }
+  ];
+  let runState = 'idle';
+  let current = 3;
+  let seconds = 18;
+  let timer = 0;
+
+  const statusMeta = {
+    pending: { label: '未执行', tone: '' },
+    running: { label: '执行中', tone: 'blue' },
+    passed: { label: '通过', tone: 'green' },
+    failed: { label: '失败', tone: 'red' },
+    skipped: { label: '跳过', tone: '' }
+  };
+
+  function renderRun() {
+    const list = $('#runNodes');
+    list.innerHTML = nodes.map((node, index) => {
+      const meta = statusMeta[node.status] || statusMeta.pending;
+      const isCurrent = node.status === 'running';
+      return '<div class="node-row' + (isCurrent ? ' current' : '') + '">' +
+        '<span class="node-index">' + String(index + 1).padStart(2, '0') + '</span>' +
+        '<span class="node-body"><span class="node-name">' + node.name + '</span>' +
+        '<span class="node-sub"><span class="mono">' + node.type + '</span><span>' + node.duration + '</span></span>' +
+        '</span>' +
+        '<span class="node-status tag ' + meta.tone + '">' + meta.label + '</span>' +
+        '</div>';
+    }).join('');
+
+    const passed = nodes.filter((node) => node.status === 'passed').length;
+    const done = nodes.filter((node) => node.status !== 'pending' && node.status !== 'running').length;
+    $('#passedCount').textContent = passed;
+    $('#runProgress').style.width = Math.round((done / nodes.length) * 100) + '%';
+    $('#runStepText').textContent = Math.min(current + 1, nodes.length) + ' / ' + nodes.length;
+    $('#runDuration').textContent = seconds + 's';
+    $('#runTime').textContent = '00:' + String(seconds).padStart(2, '0');
+
+    const badge = $('#runBadge');
+    badge.classList.toggle('hidden', !['running', 'paused'].includes(runState));
+    badge.classList.toggle('paused', runState === 'paused');
+    badge.textContent = runState === 'paused' ? '已暂停' : '运行中';
+
+    const tag = $('#runStatusTag');
+    const pause = $('#pauseBtn');
+    if (runState === 'paused') {
+      tag.textContent = '已暂停';
+      tag.className = 'tag amber';
+      pause.innerHTML = '<svg class="ico"><use href="#i-play"/></svg>继续';
+      pause.disabled = false;
+    } else if (runState === 'running') {
+      tag.textContent = '运行中';
+      tag.className = 'tag blue';
+      pause.innerHTML = '<svg class="ico"><use href="#i-pause"/></svg>暂停';
+      pause.disabled = false;
+    } else if (runState === 'succeeded') {
+      tag.textContent = '成功';
+      tag.className = 'tag green';
+      pause.disabled = true;
+    } else if (runState === 'stopped') {
+      tag.textContent = '已停止';
+      tag.className = 'tag';
+      pause.disabled = true;
+    }
+    $('#stopBtn').disabled = runState !== 'running' && runState !== 'paused';
+    $('#runTerminal').classList.toggle('hidden', !['succeeded', 'stopped'].includes(runState));
+    if (runState === 'succeeded') {
+      $('#runTerminalTitle').textContent = '运行完成';
+      $('#terminalPassed').textContent = String(nodes.length);
+      $('#terminalDuration').textContent = seconds + 's';
+    }
+    if (runState === 'stopped') {
+      $('#runTerminalTitle').textContent = '运行已停止';
+      $('#terminalPassed').textContent = String(passed);
+      $('#terminalDuration').textContent = seconds + 's';
+    }
+    const currentRow = list.querySelector('.node-row.current');
+    if (currentRow) currentRow.scrollIntoView({ block: 'nearest' });
+  }
+
+  function tick() {
+    if (runState !== 'running') return;
+    seconds += 1;
+    if (current < nodes.length) {
+      nodes[current].status = 'passed';
+      nodes[current].duration = (Math.random() * 1.4 + 0.4).toFixed(1) + 's';
+      current += 1;
+      if (current < nodes.length) {
+        nodes[current].status = 'running';
+      } else {
+        runState = 'succeeded';
+        window.clearInterval(timer);
+      }
+    }
+    renderRun();
+  }
+
+  function startRun(name) {
+    window.clearInterval(timer);
+    runState = 'running';
+    current = 3;
+    seconds = 18;
+    nodes.forEach((node, index) => {
+      node.status = index < 3 ? 'passed' : index === 3 ? 'running' : 'pending';
+      node.duration = index < 3 ? (Math.random() * 1.5 + 0.3).toFixed(1) + 's' : '—';
+    });
+    $('#runScriptName').textContent = name;
+    $('#autoList').classList.add('hidden');
+    $('#autoRun').classList.remove('hidden');
+    $('#autoRun').classList.add('show');
+    renderRun();
+    timer = window.setInterval(tick, 1400);
+  }
+
+  $$('.run-script').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const row = button.closest('.script-row');
+      startRun(row ? row.querySelector('.script-title').textContent : '登录并打开设置');
+    });
+  });
+  $$('.script-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      toast('演示稿：打开脚本编辑器「' + row.querySelector('.script-title').textContent + '」');
+    });
+  });
+  $('#pauseBtn').addEventListener('click', () => {
+    if (runState === 'running') {
+      runState = 'paused';
+      toast('运行已暂停，手动控制解锁');
+    } else if (runState === 'paused') {
+      runState = 'running';
+      toast('继续运行');
+    }
+    renderRun();
+  });
+  $('#stopBtn').addEventListener('click', () => {
+    if (runState !== 'running' && runState !== 'paused') return;
+    runState = 'stopped';
+    if (current < nodes.length && nodes[current].status === 'running') nodes[current].status = 'skipped';
+    window.clearInterval(timer);
+    renderRun();
+    toast('已请求停止运行');
+  });
+  $('#detailBtn').addEventListener('click', () => {
+    showView('scripts');
+    openRunDetail('128');
+  });
+  $('#backToList').addEventListener('click', () => {
+    window.clearInterval(timer);
+    runState = 'idle';
+    $('#autoRun').classList.remove('show');
+    $('#autoList').classList.remove('hidden');
+    $('#runBadge').classList.add('hidden');
+    setDock('auto');
+  });
+
+  // ------------------------------------------------------------ settings tabs
+  $$('.settings-tab').forEach((button) => {
+    button.addEventListener('click', () => {
+      $$('.settings-tab').forEach((el) => el.classList.toggle('active', el === button));
+      $$('.settings-pane').forEach((pane) => pane.classList.toggle('active', pane.id === 'set-' + button.dataset.stab));
+    });
+  });
+
+  // theme choices in settings
+  $$('[data-theme-choice]').forEach((button) => {
+    button.addEventListener('click', () => {
+      applyTheme(button.dataset.themeChoice, true);
+      toast('已预览主题：' + button.querySelector('strong').textContent);
+    });
+  });
+
+  // mirror presets
+  const PRESETS = {
+    smooth: { label: '流畅优先', maxSize: 1200, maxFps: 30, bitRate: 6 },
+    balanced: { label: '均衡（默认）', maxSize: 1600, maxFps: 30, bitRate: 8 },
+    sharp: { label: '清晰优先', maxSize: 1920, maxFps: 30, bitRate: 16 }
+  };
+  function syncPreset() {
+    const values = {
+      maxSize: Number($('#maxSize').value),
+      maxFps: Number($('#maxFps').value),
+      bitRate: Number($('#bitRate').value)
+    };
+    let matched = null;
+    Object.keys(PRESETS).forEach((key) => {
+      const preset = PRESETS[key];
+      if (preset.maxSize === values.maxSize && preset.maxFps === values.maxFps && preset.bitRate === values.bitRate) {
+        matched = key;
+      }
+    });
+    $$('[data-preset]').forEach((button) => button.classList.toggle('active', button.dataset.preset === matched));
+    $('#presetLabel').textContent = matched ? PRESETS[matched].label : '自定义';
+  }
+  function applyPreset(key) {
+    const preset = PRESETS[key];
+    if (!preset) return;
+    $('#maxSize').value = preset.maxSize;
+    $('#maxFps').value = preset.maxFps;
+    $('#bitRate').value = preset.bitRate;
+    syncPreset();
+  }
+  $$('[data-preset]').forEach((button) => button.addEventListener('click', () => applyPreset(button.dataset.preset)));
+  ['#maxSize', '#maxFps', '#bitRate'].forEach((selector) => {
+    $(selector).addEventListener('input', syncPreset);
+  });
+  applyPreset('balanced');
+
+  // save / discard
+  $('#saveSettings').addEventListener('click', () => {
+    $('.save-count').textContent = '已保存';
+    $('.save-count').style.color = 'var(--green)';
+    toast('演示稿：已保存设置');
+    window.setTimeout(() => {
+      $('.save-count').textContent = '未保存 0 项';
+      $('.save-count').style.color = '';
+    }, 1600);
+  });
+  $('#discardSettings').addEventListener('click', () => {
+    applyPreset('balanced');
+    applyTheme('light', true);
+    toast('演示稿：已放弃未保存改动');
+  });
+})();
+</script>
+</body>
+</html>

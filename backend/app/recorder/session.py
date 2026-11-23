@@ -23,7 +23,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import func, select
@@ -533,6 +533,10 @@ def _valid_payload_target(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 # ================================================================ 物理录制
+# 物理触摸轨迹上限：120Hz 下约 2s，足够覆盖常见滑动；超出后保留最后一点。
+_MAX_PHYSICAL_PATH_SAMPLES = 240
+
+
 @dataclass
 class _GestureState:
     start_t: float
@@ -541,6 +545,7 @@ class _GestureState:
     last_t: float
     last_x: int
     last_y: int
+    samples: list[dict[str, int]] = field(default_factory=list)
 
 
 def _touch_device_meta(device: Any) -> dict[str, Any]:
@@ -816,10 +821,31 @@ class PhysicalRecorder(_BaseRecorder):
         if self._gesture is None:
             if not down:
                 return
-            self._gesture = _GestureState(t, mapped_x, mapped_y, t, mapped_x, mapped_y)
+            self._gesture = _GestureState(
+                t,
+                mapped_x,
+                mapped_y,
+                t,
+                mapped_x,
+                mapped_y,
+                samples=[{"x": mapped_x, "y": mapped_y, "dt_ms": 0}],
+            )
             return
         gesture = self._gesture
         gesture.last_t, gesture.last_x, gesture.last_y = t, mapped_x, mapped_y
+        elapsed = max(0, int(round((t - gesture.start_t) * 1000)))
+        sample = {"x": mapped_x, "y": mapped_y, "dt_ms": elapsed}
+        if len(gesture.samples) < _MAX_PHYSICAL_PATH_SAMPLES:
+            # 保留抬手点/坐标变化点；静止停顿由 duration_ms 与最后 dt 的差额体现。
+            if (
+                not gesture.samples
+                or mapped_x != gesture.samples[-1]["x"]
+                or mapped_y != gesture.samples[-1]["y"]
+                or not down
+            ):
+                gesture.samples.append(sample)
+        else:
+            gesture.samples[-1] = sample
         if not down:
             self._finish_gesture()
 
@@ -858,6 +884,8 @@ class PhysicalRecorder(_BaseRecorder):
             start = {"x": gesture.start_x, "y": gesture.start_y}
             end = {"x": gesture.last_x, "y": gesture.last_y}
             body["from"], body["to"] = start, end
+            if len(gesture.samples) >= 2:
+                body["path"] = list(gesture.samples)
             target, _confidence, _reason = self._attribute_now(start["x"], start["y"])
             body["node"], body["target"] = target, target
             body["confidence_reason"] = "物理滑动（起点归因仅作参考）"

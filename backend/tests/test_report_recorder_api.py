@@ -93,6 +93,11 @@ def test_create_list_get_pause_resume_stop(api) -> None:
     listing = api.client.get("/api/recordings").json()
     assert listing["total"] == 1
     assert listing["items"][0]["id"] == recording["id"]
+    assert api.client.get("/api/recordings?mode=web").json()["total"] == 1
+    assert api.client.get("/api/recordings?mode=physical").json()["total"] == 0
+    paged = api.client.get("/api/recordings?limit=1&offset=1").json()
+    assert paged["total"] == 1
+    assert paged["items"] == []
 
     paused = api.client.post(f"/api/recordings/{recording['id']}/pause").json()
     assert paused["status"] == "paused"

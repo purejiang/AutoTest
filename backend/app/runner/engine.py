@@ -667,6 +667,11 @@ def _step_timeout(ctx: RunContext, step: Any) -> int:
         raw = ctx.limits.get("default_timeout_ms", 8000)
     low = int(ctx.limits.get("step_min_timeout_ms", 100) or 100)
     high = min(int(ctx.limits.get("step_max_timeout_ms", 600_000) or 600_000), 600_000)
+    # 手势本身的时长是动作耗时（长按/滑动/拖拽），节点超时必须覆盖它；
+    # 否则录制的 8s+ 长滑会被默认 8s 节点超时硬切成失败。
+    duration = getattr(getattr(step, "params", None), "duration_ms", None)
+    if isinstance(duration, int) and duration > 0:
+        raw = max(int(raw), duration + 2000)
     return max(low, min(int(raw), high))
 
 

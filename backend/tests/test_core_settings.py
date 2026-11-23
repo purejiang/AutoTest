@@ -19,6 +19,25 @@ def test_default_response_shape(core_client) -> None:
     assert body["sources"]["runtime.data_dir"] == "file"
     keys = {item["key"] for item in body["schema"]}
     assert {"adb.path", "engine.poll_interval_ms", "scrcpy.max_size"} <= keys
+    assert {"adb.connect_timeout_s", "scrcpy.jar"} <= keys
+    assert body["effective"]["adb.connect_timeout_s"] == 20
+    assert body["effective"]["scrcpy.jar"] == ""
+
+
+def test_new_toolchain_keys_are_editable(core_client) -> None:
+    response = core_client.put(
+        "/api/settings",
+        json={"values": {"adb.connect_timeout_s": 45, "scrcpy.jar": "/tmp/scrcpy-server.jar"}},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["effective"]["adb.connect_timeout_s"] == 45
+    assert body["effective"]["scrcpy.jar"] == "/tmp/scrcpy-server.jar"
+    assert body["sources"]["adb.connect_timeout_s"] == "db"
+    assert body["sources"]["scrcpy.jar"] == "db"
+
+    out_of_range = core_client.put("/api/settings", json={"values": {"adb.connect_timeout_s": 999}})
+    assert out_of_range.status_code == 422
 
 
 def test_db_layer_overrides_file_layer(core_client) -> None:

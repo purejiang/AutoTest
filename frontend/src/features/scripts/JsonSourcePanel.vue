@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { basicSetup } from 'codemirror'
 import { json } from '@codemirror/lang-json'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import { oneDark } from '@codemirror/theme-one-dark'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Check, MagicStick } from '@element-plus/icons-vue'
 
 import type { ScriptValidation } from '@/types/api'
+import { useTheme } from '@/composables/useTheme'
 import StatusTag from '@/components/StatusTag.vue'
 
 const props = defineProps<{
@@ -27,7 +29,10 @@ const host = ref<HTMLDivElement | null>(null)
 let view: EditorView | null = null
 let applyingExternal = false
 
-const theme = EditorView.theme({
+const { resolvedTheme } = useTheme()
+
+// 浅色主题保持 v0.2.4 观感；深色用 one-dark 打底，再用项目 token 对齐背景/边框。
+const lightTheme = EditorView.theme({
   '&': { height: '100%', backgroundColor: '#ffffff', fontSize: '12px' },
   '.cm-scroller': {
     overflow: 'auto',
@@ -37,6 +42,32 @@ const theme = EditorView.theme({
   '.cm-gutters': { backgroundColor: '#fafbfd', borderRight: '1px solid #eef2f7', color: '#94a3b8' },
   '&.cm-focused': { outline: 'none' },
 })
+
+const darkTheme = [
+  oneDark,
+  EditorView.theme({
+    '&': { height: '100%', backgroundColor: 'var(--surface)', fontSize: '12px' },
+    '.cm-scroller': {
+      overflow: 'auto',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    },
+    '.cm-content': { padding: '8px 0' },
+    '.cm-gutters': {
+      backgroundColor: 'var(--surface-2)',
+      borderRight: '1px solid var(--line)',
+      color: 'var(--muted-2)',
+    },
+    '.cm-activeLine': { backgroundColor: 'var(--surface-2)' },
+    '.cm-activeLineGutter': { backgroundColor: 'var(--surface-2)' },
+    '&.cm-focused': { outline: 'none' },
+  }),
+]
+
+const themeCompartment = new Compartment()
+
+function themeExtensions() {
+  return resolvedTheme.value === 'dark' ? darkTheme : lightTheme
+}
 
 onMounted(async () => {
   await nextTick()
@@ -48,13 +79,21 @@ onMounted(async () => {
       extensions: [
         basicSetup,
         json(),
-        theme,
+        themeCompartment.of(themeExtensions()),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged || applyingExternal) return
           emit('update:text', update.state.doc.toString())
         }),
       ],
     }),
+  })
+})
+
+// 主题切换只重配主题 compartment，不动文档/选区，也不触发 update:text。
+watch(resolvedTheme, (value) => {
+  if (!view) return
+  view.dispatch({
+    effects: themeCompartment.reconfigure(value === 'dark' ? darkTheme : lightTheme),
   })
 })
 
@@ -85,7 +124,9 @@ onBeforeUnmount(() => {
       </span>
       <div class="row" style="gap: 4px">
         <el-button size="small" :icon="MagicStick" @click="emit('format')">格式化</el-button>
-        <el-button size="small" type="primary" plain :icon="Check" @click="emit('apply')">应用到表单</el-button>
+        <el-button size="small" type="primary" plain :icon="Check" @click="emit('apply')"
+          >应用到表单</el-button
+        >
       </div>
     </div>
 
@@ -100,7 +141,9 @@ onBeforeUnmount(() => {
     <div v-if="validation" class="validation-list">
       <div class="row" style="margin-bottom: 4px">
         <strong class="small">校验结果</strong>
-        <StatusTag :tone="validation.valid ? 'green' : 'red'">{{ validation.valid ? '通过' : '未通过' }}</StatusTag>
+        <StatusTag :tone="validation.valid ? 'green' : 'red'">{{
+          validation.valid ? '通过' : '未通过'
+        }}</StatusTag>
         <span class="hint">错误 {{ validation.errors.length }} · 警告 {{ validation.warnings.length }}</span>
       </div>
       <div
@@ -131,3 +174,24 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 深色下容器/校验列表跟随项目 token，避免写死浅色背景；浅色保持原有观感。 */
+.json-editor-host :deep(.cm-editor) {
+  background: var(--surface);
+}
+
+html.dark .json-editor-host {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.validation-list {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.validation-item:hover {
+  background: var(--surface-hover);
+}
+</style>

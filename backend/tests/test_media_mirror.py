@@ -548,3 +548,33 @@ async def test_keyframe_flush_preserves_control_messages() -> None:
         assert binaries and binaries[-1][12:] == KEY_PAYLOAD
     finally:
         session.stop()
+
+
+def test_scrcpy_inject_path_keeps_move_timings(monkeypatch) -> None:
+    """scrcpy 轨迹注入：DOWN → 逐点 MOVE（按 dt 等待）→ 等到 duration 再 UP。"""
+    server = object.__new__(scrcpy.ScrcpyServer)
+    sent: list[bytes] = []
+    sleeps: list[float] = []
+    clock = [0.0]
+
+    monkeypatch.setattr(server, "send_control", lambda payload: sent.append(payload) or True)
+    monkeypatch.setattr(scrcpy.time, "monotonic", lambda: clock[0])
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(scrcpy.time, "sleep", fake_sleep)
+
+    samples = [(0, 10, 20), (100, 50, 60), (300, 70, 80)]
+    assert server.inject_path(samples, 500, 1080, 1920) is True
+
+    assert [payload[1] for payload in sent] == [
+        scrcpy.MOTION_DOWN,
+        scrcpy.MOTION_MOVE,
+        scrcpy.MOTION_MOVE,
+        scrcpy.MOTION_UP,
+    ]
+    # 100ms、200ms 两段移动 + 最后停到 500ms（last dt=300ms）
+    assert len(sleeps) == 3
+    assert sum(sleeps) == pytest.approx(0.5, abs=0.05)

@@ -1,22 +1,41 @@
 <script setup lang="ts">
-import { Delete, Plus, Refresh, VideoCamera } from '@element-plus/icons-vue'
+import { Delete, InfoFilled, Plus, Refresh, VideoCamera } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, type TableInstance } from 'element-plus'
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { describeApiError } from '@/api/client'
 import { useBulkDeleteRecordings, useDeleteRecording, useRecordings } from '@/api/recordings'
-import type { Recording } from '@/types/api'
-import { formatDateTime, recordingModeMeta, recordingStatusMeta } from '@/lib/format'
+import type { Recording, RecordingMode, RecordingStatus } from '@/types/api'
+import {
+  formatShortDateTime,
+  recordingModeMeta,
+  recordingStatusMeta,
+} from '@/lib/format'
 import { notifyBulkDeleteResult } from '@/lib/bulk'
 import PageHead from '@/components/PageHead.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import CreateRecordingDialog from './CreateRecordingDialog.vue'
 
+type ModeFilter = 'all' | RecordingMode
+type StatusFilter = 'all' | RecordingStatus
+
 const router = useRouter()
+const route = useRoute()
 const page = ref(1)
 const PAGE_SIZE = 20
-const recordingsQuery = useRecordings({ limit: 100 }, { refetchInterval: 5000 })
+
+const modeFilter = ref<ModeFilter>('all')
+const statusFilter = ref<StatusFilter>('all')
+
+// 模式 / 状态都下推到后端，分页按接口 total 做服务端 offset。
+const listParams = computed(() => ({
+  status: statusFilter.value === 'all' ? undefined : statusFilter.value,
+  mode: modeFilter.value === 'all' ? undefined : modeFilter.value,
+  limit: PAGE_SIZE,
+  offset: (page.value - 1) * PAGE_SIZE,
+}))
+const recordingsQuery = useRecordings(listParams, { refetchInterval: 5000 })
 const deleteMutation = useDeleteRecording()
 const bulkDeleteMutation = useBulkDeleteRecordings()
 const createOpen = ref(false)
@@ -24,8 +43,15 @@ const recordingsTableRef = ref<TableInstance>()
 const selectedRecordings = ref<Recording[]>([])
 
 const recordings = computed(() => recordingsQuery.data.value?.items ?? [])
+/** 接口 total（带当前筛选），不要用 items.length 当数量。 */
 const total = computed(() => recordingsQuery.data.value?.total ?? 0)
-const paged = computed(() => recordings.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+const paged = computed(() => recordings.value)
+const emptyDescription = computed(() =>
+  modeFilter.value === 'all' && statusFilter.value === 'all'
+    ? '还没有录制草稿。去控制台在镜像上开启录制，或新建真机录制。'
+    : '没有匹配的录制草稿，调整筛选或新建真机录制。',
+)
 
 function isSelectableRecording(recording: Recording): boolean {
   return recording.status === 'stopped'
@@ -43,6 +69,10 @@ function clearSelection(): void {
 async function refreshRecordings(): Promise<void> {
   clearSelection()
   await recordingsQuery.refetch()
+}
+
+function goConsoleRecord(): void {
+  void router.push({ path: '/console', query: { tab: 'manual', manual: 'record' } })
 }
 
 async function bulkDeleteRecordings(): Promise<void> {
@@ -67,11 +97,30 @@ async function bulkDeleteRecordings(): Promise<void> {
   }
 }
 
+watch([modeFilter, statusFilter], () => {
+  page.value = 1
+  clearSelection()
+})
+
 watch(page, () => clearSelection())
+
+watch(pageCount, (maxPage) => {
+  if (page.value > maxPage) page.value = maxPage
+})
 
 function onCreated(recording: Recording): void {
   void router.push(`/recorder/${recording.id}`)
 }
+
+function openPhysicalFromQuery(): void {
+  if (route.query.new !== 'physical') return
+  createOpen.value = true
+  const nextQuery = { ...route.query }
+  delete nextQuery.new
+  void router.replace({ path: route.path, query: nextQuery })
+}
+
+watch(() => route.query.new, () => openPhysicalFromQuery(), { immediate: true })
 
 async function remove(recording: Recording): Promise<void> {
   try {
@@ -87,6 +136,7 @@ async function remove(recording: Recording): Promise<void> {
     await deleteMutation.mutateAsync(recording.id)
     ElMessage.success('录制已删除')
     clearSelection()
+    await recordingsQuery.refetch()
   } catch {
     // 全局错误提示
   }
@@ -98,16 +148,25 @@ async function remove(recording: Recording): Promise<void> {
     <PageHead
       title="录制草稿"
       :count="total"
-      subtitle="镜像录制在设备页镜像工具条开始；真机录制作为辅助"
+      subtitle="只收录镜像录制 / 真机录制等操作录制"
     >
       <template #actions>
         <el-button :icon="Refresh" :loading="recordingsQuery.isFetching.value" @click="refreshRecordings">
           刷新
         </el-button>
-        <el-button :icon="VideoCamera" @click="router.push('/devices')">去设备页录制</el-button>
         <el-button type="primary" :icon="Plus" @click="createOpen = true">新建真机录制</el-button>
       </template>
     </PageHead>
+
+    <div class="recording-notice">
+      <el-icon><InfoFilled /></el-icon>
+      <span>
+        本页只收录<strong>操作录制草稿</strong>（镜像录制 / 真机录制）。视频录制与设备录屏不进入此列表，
+        <strong>视频刷新即丢失</strong>。
+      </span>
+      <span class="spacer" />
+      <el-button size="small" :icon="VideoCamera" @click="goConsoleRecord">去控制台录制</el-button>
+    </div>
 
     <el-alert
       v-if="recordingsQuery.isError.value"
@@ -125,9 +184,25 @@ async function remove(recording: Recording): Promise<void> {
     </el-alert>
 
     <div class="card table-card">
+      <div class="recording-toolbar">
+        <el-select v-model="modeFilter" size="small" style="width: 140px">
+          <el-option label="全部模式" value="all" />
+          <el-option label="镜像录制" value="web" />
+          <el-option label="真机录制" value="physical" />
+        </el-select>
+        <el-select v-model="statusFilter" size="small" style="width: 140px">
+          <el-option label="全部状态" value="all" />
+          <el-option label="录制中" value="recording" />
+          <el-option label="已暂停" value="paused" />
+          <el-option label="已停止" value="stopped" />
+        </el-select>
+        <span class="spacer" />
+        <span class="hint">录制停止后可查看事件并转成脚本。</span>
+      </div>
+
       <div v-if="selectedRecordings.length > 0" class="batch-bar">
         <strong>已选 {{ selectedRecordings.length }} 条</strong>
-        <span class="small">录制中/暂停中的录制不可删除</span>
+        <span class="small">录制中 / 暂停中的录制不可删除</span>
         <span class="spacer" />
         <el-button
           size="small"
@@ -139,6 +214,7 @@ async function remove(recording: Recording): Promise<void> {
         </el-button>
         <el-button size="small" @click="clearSelection">取消</el-button>
       </div>
+
       <el-table
         ref="recordingsTableRef"
         v-loading="recordingsQuery.isLoading.value"
@@ -160,7 +236,7 @@ async function remove(recording: Recording): Promise<void> {
             <StatusTag :tone="recordingStatusMeta(row.status).tone">{{ recordingStatusMeta(row.status).label }}</StatusTag>
           </template>
         </el-table-column>
-        <el-table-column label="模式" width="96">
+        <el-table-column label="模式" width="100">
           <template #default="{ row }">
             <StatusTag :tone="recordingModeMeta(row.mode).tone">{{ recordingModeMeta(row.mode).label }}</StatusTag>
           </template>
@@ -171,8 +247,8 @@ async function remove(recording: Recording): Promise<void> {
         <el-table-column label="事件" width="70">
           <template #default="{ row }">{{ row.event_count ?? 0 }}</template>
         </el-table-column>
-        <el-table-column label="开始时间" width="150">
-          <template #default="{ row }"><span class="small muted">{{ formatDateTime(row.started_at) }}</span></template>
+        <el-table-column label="开始时间" width="130">
+          <template #default="{ row }"><span class="small muted">{{ formatShortDateTime(row.started_at) }}</span></template>
         </el-table-column>
         <el-table-column label="关联脚本" min-width="170">
           <template #default="{ row }">
@@ -196,6 +272,7 @@ async function remove(recording: Recording): Promise<void> {
                 link
                 type="danger"
                 :icon="Delete"
+                title="删除录制"
                 :disabled="row.status === 'recording' || row.status === 'paused'"
                 @click="remove(row)"
               />
@@ -203,9 +280,9 @@ async function remove(recording: Recording): Promise<void> {
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty description="还没有录制草稿。去设备页在镜像上开启录制，或新建真机录制。">
+          <el-empty :description="emptyDescription">
             <div class="row" style="justify-content: center">
-              <el-button type="primary" @click="router.push('/devices')">去设备页录制</el-button>
+              <el-button type="primary" :icon="VideoCamera" @click="goConsoleRecord">去控制台录制</el-button>
               <el-button :icon="Plus" @click="createOpen = true">新建真机录制</el-button>
             </div>
           </el-empty>
@@ -216,7 +293,7 @@ async function remove(recording: Recording): Promise<void> {
         <el-pagination
           v-model:current-page="page"
           :page-size="PAGE_SIZE"
-          :total="recordings.length"
+          :total="total"
           layout="prev, pager, next"
           small
           background
@@ -227,3 +304,41 @@ async function remove(recording: Recording): Promise<void> {
     <CreateRecordingDialog :open="createOpen" mode="physical" @close="createOpen = false" @created="onCreated" />
   </div>
 </template>
+
+<style scoped>
+.recording-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.recording-notice .spacer {
+  flex: 1;
+}
+
+.recording-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.recording-toolbar .spacer {
+  flex: 1;
+}
+
+@media (max-width: 900px) {
+  .recording-notice {
+    align-items: flex-start;
+  }
+}
+</style>

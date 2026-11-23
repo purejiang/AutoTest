@@ -249,7 +249,7 @@ POST /api/runs/{id}/debug {action:"step"|"continue"|"run_from", step_id?}。
   （step/events/artifacts/产物目录）。不存在 → failed NOT_FOUND；单条失败不影响其他条。
 
 ### 7.4 录制（be-report）
-POST /api/recordings {name?,serial,mode}；GET /api/recordings?status=&limit=；
+POST /api/recordings {name?,serial,mode}；GET /api/recordings?status=&mode=&limit=&offset=（v0.2.5 起支持 mode/offset）；
 GET /api/recordings/{id}；POST /api/recordings/{id}/pause|resume|stop；
 GET /api/recordings/{id}/events?since_seq=&limit=；DELETE /api/recordings/{id}/events/{seq}；
 POST /api/recordings/{id}/to_script {name?,include_kinds?,exclude_seqs?}
@@ -277,6 +277,10 @@ DELETE /api/settings/{key}；POST /api/settings/reset；
 GET /api/settings/scrcpy/options（白名单+校验，渲染表单用）；
 GET /api/health → {status,version,db,adb:{path,version,devices},data_dir}。
 
+v0.2.5 起 `SETTINGS_SCHEMA` 补充两个 `DEFAULTS` 已有但未展示的 key：
+`adb.connect_timeout_s`（int，1..120，工具链 → ADB）、`scrcpy.jar`（string，工具链 → scrcpy-server，留空用 vendor 内置 jar）。
+不改 settings 表结构、不做 migration；主题/语言只存前端 localStorage。
+
 ## 8. 录制挂钩（`app/recorder/hooks.py`，Lead 已写）
 
 ```python
@@ -288,6 +292,14 @@ hooks.on_action(serial, "swipe", {...})
 ```
 kind ∈ tap|long_press|swipe|drag|input|key|app。
 RecorderSession 需实现：`before_pointer() -> dict|None`、`handle(kind, payload, pre)`、`note_manual(kind, payload)`。
+
+v0.2.5 手势回放补充：
+- 录制事件 `swipe/drag` 可带 `path:[{x,y,dt_ms}]`（物理录制与镜像录制都采集；最多 240 点）。
+- 回放优先级：当前设备有活跃镜像会话 → 通过 scrcpy control 通道按 `dt_ms` 逐点注入 DOWN/MOVE/UP，
+  保留轨迹形状、变速和末端停顿；没有镜像会话 → 退化为两点 u2 swipe。
+- 不再使用 u2 `swipePoints` 回放录制轨迹（部分 Unity/游戏设备上会长时间不返回，卡到节点超时）；
+  无轨迹的手动 drag 节点仍走驱动原生 drag。
+- 节点超时自动覆盖 `duration_ms + 2s`，避免长按/长滑被默认 8s 超时截断。
 物理录制：`app.android.getevent.stream_events(serial, on_touch, on_key, stop_event)` 产出
 `TouchSample{t,x,y,down,tracking_id,pressure}` / `KeyEvent{t,keycode,down}`，PhysicalRecorder 消费并转换。
 
@@ -331,13 +343,23 @@ RecorderSession 需实现：`before_pointer() -> dict|None`、`handle(kind, payl
 
 ## 12. 前端页面（fe-core 与 fe-mirror 边界）
 
-路由：`/devices`（镜像+控制+录制工具条）、`/scripts`、`/scripts/:id`（节点列表+表单+JSON 源码+校验）、
-`/runs`、`/runs/:id`（实时监控）、`/recorder`（录制列表+确认清单+转脚本）、`/settings`。
+v0.2.5 路由与导航：
+- 主导航四项：`/console`（控制台）、`/scripts`（脚本）、`/recorder`（录制）、`/settings`（设置）；
+  顶部栏不再放页面切换，设备选择在控制台镜像卡头部。
+- `/` → `/console`；`/devices` → `/console`（旧链接兼容）；`/runs` → `/scripts?tab=runs`；`/runs/:id` 保留运行详情。
+- `/scripts` 用 `?tab=library|runs` 区分脚本库与运行记录，数量来自接口 `total`；`/scripts/:id` 编辑；
+  `/recorder?new=physical` 自动打开新建真机录制弹框；`/recorder/:id` 详情。
+- 脚本页/编辑器「运行」统一跳 `/console?tab=auto&script=<id>`，由控制台自动控制用当前设备启动；
+  不再有 RunScriptModal，也不再在编辑器里收集设备/变量。
+
+前端边界：
 - 请求走 `src/api/client.ts`（fetch 封装，统一错误信封提示，baseURL `/api`）；
 - 类型唯一来源 `src/types/api.ts`（Lead 已写，只许向后兼容追加）；
-- `features/mirror/**` 由 fe-mirror 全权负责（canvas+WebCodecs+输入映射+录制工具条 UI 骨架），
-  只依赖 types/api.ts 与 api/client.ts，不 import fe-core 的 features；fe-core 在 /devices 页给 mirror 留挂载点；
-- 录制工具条（开始/暂停/停止/事件数）在 mirror 页，调 §7.4 REST。
+- `features/mirror/**` 提供 canvas/WebCodecs/输入映射与 RecordingBar；控制台 `MirrorStage` 复用，
+  `features/console/**` 负责控制台页面与手动/自动面板；
+- 录制事件实时流：前端 `src/api/useRecordingEventsWs.ts` 连接 `/ws/recordings/{id}?since_seq=`，
+  WS 不可用时回退 4s 轮询；事件表内存上限 1000 条。
+- 主题：`localStorage['autotest.theme'] = light|dark|system`，`<html class="dark">` 切换；不进后端设置。
 
 ## 12.1 运行期补充约定（集成期定稿）
 
@@ -352,7 +374,7 @@ RecorderSession 需实现：`before_pointer() -> dict|None`、`handle(kind, payl
   优先级：默认 < 配置文件 < DB settings < 环境变量。
 - **ScreenRecorder 产物**：设备端 `screenrecord` 录 mp4 → SIGINT 收尾 → `adb pull` → 校验 ftyp/moov → 清理设备端临时文件；
   `stop() -> (Path, size)`，失败不留损坏文件（报 DEVICE_UNAVAILABLE）。
-- **录制工具条唯一入口**：镜像面板内（`RecordingBar`）；设备页不再放第二个录制入口。
+- **录制工具条唯一入口**：控制台 → 手动控制 → 镜像录制（`RecordingBar`，固定 `mode=web`）；真机录制从录制页新建。
 
 ## 13. v1 不做（明确出界）
 

@@ -11,6 +11,11 @@
   --bg: #f2f4f7;
   --surface: #ffffff;
   --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --surface-hover: #fbfcfe;
+  --line-soft: #eef2f7;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 12px 30px rgba(15, 23, 42, 0.13);
   --ink: #18212b;
   --muted: #687385;
   --muted-2: #94a3b8;
@@ -60,6 +65,117 @@
   --el-fill-color-light: #f8fafc;
   --el-fill-color-blank: #ffffff;
   --el-box-shadow-light: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+/* 深色主题：项目 token + Element Plus 官方暗色变量的落到同一套色板。
+   Element 的 dark/css-vars.css 在 main.ts 中先于本文件加载，这里覆盖主色与背景。 */
+html.dark {
+  color-scheme: dark;
+  --bg: #0c1118;
+  --surface: #141b24;
+  --surface-2: #19222e;
+  --surface-3: #202b39;
+  --surface-hover: #1b2532;
+  --line-soft: #1f2a37;
+  --ink: #e6edf5;
+  --muted: #9aa9ba;
+  --muted-2: #6b7c90;
+  --line: #263241;
+  --line-2: #344256;
+  --accent: #4f8ef7;
+  --accent-hover: #6aa1ff;
+  --accent-soft: #172640;
+  --green: #4ade80;
+  --green-soft: #12291b;
+  --amber: #fbbf24;
+  --amber-soft: #2a2110;
+  --red: #f87171;
+  --red-soft: #2c1416;
+  --violet: #a78bfa;
+  --violet-soft: #1e1733;
+  --cyan: #22d3ee;
+  --cyan-soft: #0c2429;
+  --rail-bg: #080c12;
+  --rail-ink: #aebccd;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-md: 0 16px 36px rgba(0, 0, 0, 0.46);
+
+  --el-color-primary: #4f8ef7;
+  --el-color-primary-light-3: #3d6db8;
+  --el-color-primary-light-5: #2f568f;
+  --el-color-primary-light-7: #223f69;
+  --el-color-primary-light-8: #1c3457;
+  --el-color-primary-light-9: #172640;
+  --el-color-primary-dark-2: #6aa1ff;
+  --el-color-success: #4ade80;
+  --el-color-warning: #fbbf24;
+  --el-color-danger: #f87171;
+  --el-color-error: #f87171;
+  --el-text-color-primary: #e6edf5;
+  --el-text-color-regular: #c3cedd;
+  --el-text-color-secondary: #9aa9ba;
+  --el-text-color-placeholder: #6b7c90;
+  --el-border-color: #344256;
+  --el-border-color-light: #263241;
+  --el-border-color-lighter: #1f2a37;
+  --el-border-color-extra-light: #1a2330;
+  --el-fill-color: #202b39;
+  --el-fill-color-light: #19222e;
+  --el-fill-color-lighter: #141b24;
+  --el-fill-color-extra-light: #101720;
+  --el-fill-color-dark: #2a3748;
+  --el-fill-color-darker: #344256;
+  --el-fill-color-blank: #141b24;
+  --el-bg-color: #141b24;
+  --el-bg-color-page: #0c1118;
+  --el-bg-color-overlay: #19222e;
+  --el-mask-color: rgba(4, 7, 11, 0.72);
+  --el-box-shadow-light: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --el-box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+html.dark body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+html.dark .table-card .el-table,
+html.dark .el-table {
+  --el-table-bg-color: var(--surface);
+  --el-table-tr-bg-color: var(--surface);
+  --el-table-header-bg-color: var(--surface-2);
+  --el-table-border-color: var(--line-soft);
+  --el-table-row-hover-bg-color: var(--surface-hover);
+  --el-table-text-color: var(--ink);
+  --el-table-header-text-color: var(--muted);
+}
+
+html.dark .validation-list,
+html.dark .settings-savebar,
+html.dark .tab-btn.active,
+html.dark .pre-block,
+html.dark .event-list {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+html.dark .condition-card {
+  background: var(--surface-2);
+}
+
+html.dark .condition-card.not {
+  background: var(--amber-soft);
+  border-color: var(--amber);
+}
+
+html.dark .el-card,
+html.dark .el-dialog,
+html.dark .el-drawer,
+html.dark .el-message-box,
+html.dark .el-popover,
+html.dark .el-dropdown__popper {
+  background: var(--surface);
+  color: var(--ink);
 }
 
 * {
@@ -2527,4 +2643,141 @@ pre,
   height: 100%;
   border: 0;
   border-radius: 0;
+}
+
+/* ==========================================================================
+   v0.2.5 共享层补充：顶部栏 / 深色覆盖 / 通用控件
+   控制台、脚本、录制、设置各自的布局样式在组件 scoped style 中维护。
+   ========================================================================== */
+.top-actions .theme-btn {
+  color: var(--muted);
+}
+
+.top-settings {
+  margin-left: 4px;
+}
+
+.top-settings .el-icon {
+  margin-right: 3px;
+}
+
+html.dark .topbar {
+  background: rgba(20, 27, 36, 0.94);
+}
+
+html.dark .count-pill {
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+html.dark .progress {
+  background: var(--surface-3);
+}
+
+html.dark .rec-status {
+  border-color: var(--red);
+  background: var(--red-soft);
+}
+
+html.dark .device-chip,
+html.dark .key-btn {
+  background: var(--surface);
+}
+
+html.dark .el-input__wrapper,
+html.dark .el-textarea__inner,
+html.dark .el-select__wrapper {
+  background-color: var(--surface-2);
+}
+
+html.dark .el-button:not(.el-button--primary):not(.el-button--danger):not(.is-text) {
+  --el-button-bg-color: var(--surface);
+  --el-button-border-color: var(--line-2);
+  --el-button-text-color: var(--ink);
+  --el-button-hover-bg-color: var(--surface-2);
+  --el-button-hover-border-color: var(--accent);
+  --el-button-hover-text-color: var(--accent);
+}
+
+html.dark .el-button.is-text {
+  --el-button-text-color: var(--muted);
+  --el-button-hover-text-color: var(--ink);
+  --el-button-hover-bg-color: var(--surface-2);
+}
+
+html.dark .el-tabs__item {
+  color: var(--muted);
+}
+
+html.dark .el-tabs__item.is-active {
+  color: var(--accent);
+}
+
+html.dark .el-pagination {
+  --el-pagination-bg-color: var(--surface-2);
+  --el-pagination-text-color: var(--muted);
+  --el-pagination-button-disabled-bg-color: var(--surface-3);
+}
+
+html.dark .el-empty__description p {
+  color: var(--muted);
+}
+
+html.dark .el-descriptions {
+  --el-descriptions-table-border: 1px solid var(--line);
+}
+
+@media (max-width: 900px) {
+  .top-actions {
+    gap: 4px;
+  }
+  .top-settings span {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .top-settings {
+    width: 28px;
+    padding: 0;
+    margin-left: 0;
+  }
+  .top-settings .el-icon {
+    margin-right: 0;
+  }
+}
+
+/* 深色主题：老页面里写死浅色的局部组件补丁 */
+html.dark .editor-col-head {
+  background: var(--surface-2);
+}
+
+html.dark .node-row {
+  border-bottom-color: var(--line-soft);
+}
+
+html.dark .condition-head {
+  border-bottom-color: var(--line);
+}
+
+html.dark .weekday-btn {
+  background: var(--surface);
+}
+
+html.dark .artifact-thumb {
+  background: var(--surface-2);
+}
+
+html.dark .tool-row {
+  border-bottom-color: var(--line-soft);
+}
+
+html.dark .event-item {
+  border-bottom-color: var(--line-soft);
+}
+
+html.dark .mirror-config-alert {
+  border-color: var(--amber);
+  background: var(--amber-soft);
+  color: var(--amber);
 }

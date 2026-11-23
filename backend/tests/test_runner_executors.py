@@ -97,9 +97,36 @@ def test_long_click_swipe_drag_use_driver_actions(runner_env, monkeypatch):
     assert drag_output["duration_ms"] == 1200
 
 
-def test_swipe_with_recorded_path_replays_exact_trajectory(runner_env, monkeypatch):
-    """录制轨迹：swipe 节点带 path 时按真实轨迹回放（不是两点直线）。"""
+def _fake_mirror_session(monkeypatch):
+    from app import mirror
+
+    class FakeSession:
+        active = True
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[list[tuple[int, int, int]], int]] = []
+
+        def inject_path(self, samples: list[tuple[int, int, int]], duration_ms: int) -> bool:
+            self.calls.append((list(samples), duration_ms))
+            return True
+
+    fake = FakeSession()
+    monkeypatch.setattr(mirror, "get_session", lambda serial: fake)
+    return fake
+
+
+SWIPE_PATH = [
+    {"x": 100, "y": 200, "dt_ms": 0},
+    {"x": 160, "y": 260, "dt_ms": 40},
+    {"x": 220, "y": 340, "dt_ms": 90},
+    {"x": 300, "y": 400, "dt_ms": 140},
+]
+
+
+def test_swipe_with_recorded_path_uses_scrcpy_injection(runner_env, monkeypatch):
+    """有活跃镜像时，swipe 轨迹走 scrcpy control 通道，保留原始 dt（变速/停顿）。"""
     install_selectors(monkeypatch)
+    fake = _fake_mirror_session(monkeypatch)
     script = make_script(
         [
             make_step(
@@ -109,26 +136,49 @@ def test_swipe_with_recorded_path_replays_exact_trajectory(runner_env, monkeypat
                     "from": {"by": "point", "x": 100, "y": 200},
                     "to": {"by": "point", "x": 300, "y": 400},
                     "duration_ms": 450,
-                    "path": [
-                        {"x": 100, "y": 200, "dt_ms": 0},
-                        {"x": 160, "y": 260, "dt_ms": 40},
-                        {"x": 220, "y": 340, "dt_ms": 90},
-                        {"x": 300, "y": 400, "dt_ms": 140},
-                    ],
+                    "path": SWIPE_PATH,
                 },
             )
         ]
     )
     ctx = make_ctx(runner_env, script)
-    steps = RunSnapshot.from_data(script).parsed.steps
+    output = executors.execute_swipe(ctx, parsed_step(script))
 
-    output = executors.execute_swipe(ctx, steps[0])
-
+    assert fake.calls[0][0] == [(0, 100, 200), (40, 160, 260), (90, 220, 340), (140, 300, 400)]
+    assert fake.calls[0][1] == 450
+    assert output["injector"] == "scrcpy"
     assert output["path_points"] == 4
-    call = runner_env.driver.calls_of("swipe_path")[-1]
-    assert call.kwargs["duration_ms"] == 450
-    assert call.kwargs["points"] == [(100, 200), (160, 260), (220, 340), (300, 400)]
-    assert not runner_env.driver.calls_of("swipe"), "带轨迹时不应再走直线 swipe"
+    assert output["duration_ms"] == 450
+    assert runner_env.driver.calls_of("swipe") == []
+    assert runner_env.driver.calls_of("swipe_path") == []
+
+
+def test_swipe_without_mirror_falls_back_to_two_point_swipe(runner_env, monkeypatch):
+    """没有镜像控制通道时用两点 swipe 兜底，不调用容易卡死的 u2 swipePoints。"""
+    install_selectors(monkeypatch)
+    from app import mirror
+
+    monkeypatch.setattr(mirror, "get_session", lambda serial: None)
+    script = make_script(
+        [
+            make_step(
+                "s1",
+                "swipe",
+                {
+                    "from": {"by": "point", "x": 100, "y": 200},
+                    "to": {"by": "point", "x": 300, "y": 400},
+                    "duration_ms": 450,
+                    "path": SWIPE_PATH,
+                },
+            )
+        ]
+    )
+    ctx = make_ctx(runner_env, script)
+    output = executors.execute_swipe(ctx, parsed_step(script))
+
+    assert runner_env.driver.calls_of("swipe")[-1].kwargs["duration_ms"] == 450
+    assert "path_points" not in output
+    assert runner_env.driver.calls_of("swipe_path") == []
 
 
 def test_input_interpolates_clear_and_types(runner_env, monkeypatch):
@@ -448,9 +498,10 @@ def test_execute_step_dispatches(runner_env, monkeypatch):
     assert output["x"] == 540
 
 
-def test_drag_with_recorded_path_prefers_native_drag(runner_env, monkeypatch):
-    """drag 不应走 swipe_points 轨迹回放：真机上可能卡到节点超时。"""
+def test_drag_with_recorded_path_uses_scrcpy_injection(runner_env, monkeypatch):
+    """drag 带录制轨迹时也走 scrcpy 轨迹注入，不再用会超时的 native drag。"""
     install_selectors(monkeypatch)
+    fake = _fake_mirror_session(monkeypatch)
     script = make_script(
         [
             make_step(
@@ -478,34 +529,40 @@ def test_drag_with_recorded_path_prefers_native_drag(runner_env, monkeypatch):
     monkeypatch.setattr(ctx.driver, "drag", native_drag, raising=False)
     output = executors.execute_drag(ctx, parsed_step(script))
 
-    assert calls == [{"x1": 540, "y1": 710, "x2": 540, "y2": 710, "duration_ms": 400}]
+    assert calls == []
+    assert fake.calls[0][0] == [(0, 10, 20), (100, 20, 30), (200, 30, 40)]
+    assert output["injector"] == "scrcpy"
+    assert output["path_points"] == 3
     assert output["duration_ms"] == 400
-    assert runner_env.driver.calls_of("swipe_path") == []
 
 
-def test_long_recorded_swipe_falls_back_to_simple_swipe(runner_env, monkeypatch):
-    """长轨迹在真机可能卡住；超过 12 点时退化为两点 swipe。"""
+def test_drag_with_recorded_path_without_mirror_falls_back_to_swipe(runner_env, monkeypatch):
     install_selectors(monkeypatch)
-    path = [{"x": 100 + i * 10, "y": 200 + i * 20, "dt_ms": i * 20} for i in range(20)]
+    from app import mirror
+
+    monkeypatch.setattr(mirror, "get_session", lambda serial: None)
     script = make_script(
         [
             make_step(
                 "s1",
-                "swipe",
+                "drag",
                 {
-                    "from": {"by": "point", "x": 442, "y": 2455},
-                    "to": {"by": "point", "x": 528, "y": 1421},
-                    "duration_ms": 258,
-                    "path": path,
+                    "from": {"by": "point", "x": 10, "y": 20},
+                    "to": {"by": "point", "x": 30, "y": 40},
+                    "duration_ms": 400,
+                    "path": [
+                        {"x": 10, "y": 20, "dt_ms": 0},
+                        {"x": 20, "y": 30, "dt_ms": 100},
+                        {"x": 30, "y": 40, "dt_ms": 200},
+                    ],
                 },
             )
         ]
     )
     ctx = make_ctx(runner_env, script)
-    output = executors.execute_swipe(ctx, parsed_step(script))
+    output = executors.execute_drag(ctx, parsed_step(script))
 
-    assert runner_env.driver.calls_of("swipe_path") == []
-    swipe_call = runner_env.driver.calls_of("swipe")[-1]
-    assert swipe_call.kwargs["duration_ms"] == 258
-    assert output["duration_ms"] == 258
+    assert output["duration_ms"] == 400
     assert "path_points" not in output
+    assert runner_env.driver.calls_of("swipe")[-1].kwargs["duration_ms"] == 400
+    assert runner_env.driver.calls_of("drag") == []

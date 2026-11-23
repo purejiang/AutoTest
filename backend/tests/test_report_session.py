@@ -269,6 +269,24 @@ def _physical_with_capture(recording_id: str = "rec_phys") -> tuple[rec.Physical
     return recorder, captured
 
 
+def test_physical_drag_records_timed_path(temp_db, monkeypatch) -> None:
+    monkeypatch.setattr(rec, "_map_point", lambda serial, x, y, mapper=None, screen=None: (x, y))
+    recorder, captured = _physical_with_capture()
+    recorder._on_touch(FakeSample(100.0, 500, 1000, True))
+    recorder._on_touch(FakeSample(100.2, 550, 1000, True))
+    recorder._on_touch(FakeSample(100.4, 600, 1000, False))
+
+    assert len(captured) == 1
+    kind, payload, _confidence = captured[0]
+    assert kind == "drag"
+    assert payload["duration_ms"] == 400
+    assert payload["path"] == [
+        {"x": 500, "y": 1000, "dt_ms": 0},
+        {"x": 550, "y": 1000, "dt_ms": 200},
+        {"x": 600, "y": 1000, "dt_ms": 400},
+    ]
+
+
 @pytest.mark.parametrize(
     ("duration_s", "dx", "expected_kind"),
     [

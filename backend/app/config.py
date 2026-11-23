@@ -71,6 +71,14 @@ DEFAULTS: dict[str, Any] = {
 # 设置页展示白名单（GET /api/settings 渲染顺序）
 SETTINGS_SCHEMA: list[dict[str, Any]] = [
     {"key": "adb.path", "type": "string", "title": "adb 路径", "desc": "留空自动探测"},
+    {
+        "key": "adb.connect_timeout_s",
+        "type": "int",
+        "title": "ADB 连接超时(s)",
+        "min": 1,
+        "max": 120,
+        "desc": "网络设备连接/重连的等待上限",
+    },
     {"key": "runtime.data_dir", "type": "string", "title": "数据目录", "desc": "留空使用 ~/.autotest/data"},
     {"key": "engine.poll_interval_ms", "type": "int", "title": "轮询间隔(ms)", "min": 100, "max": 2000},
     {"key": "engine.default_timeout_ms", "type": "int", "title": "默认节点超时(ms)", "min": 500, "max": 600000},
@@ -80,6 +88,12 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
     {"key": "scrcpy.max_fps", "type": "int", "title": "镜像帧率", "min": 5, "max": 120},
     {"key": "scrcpy.video_bit_rate", "type": "int", "title": "镜像码率(bps)", "min": 1_000_000, "max": 32_000_000},
     {"key": "scrcpy.crop", "type": "string", "title": "裁剪 w:h:x:y", "desc": "留空不裁剪"},
+    {
+        "key": "scrcpy.jar",
+        "type": "string",
+        "title": "scrcpy-server jar 路径",
+        "desc": "留空使用 vendor 内置版本",
+    },
     {"key": "recording.click_dump", "type": "bool", "title": "点击前抓层级(录制更准)"},
     {"key": "recording.confirm_before_save", "type": "bool", "title": "录后确认清单"},
     {

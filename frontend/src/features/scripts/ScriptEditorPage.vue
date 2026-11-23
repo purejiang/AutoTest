@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ArrowLeft, Check, Document, Refresh, VideoPlay } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useWindowSize } from '@vueuse/core'
-import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 
 import { describeApiError, validationErrorsOf } from '@/api/client'
 import { useScript, useUpdateScript, useValidateScriptData } from '@/api/scripts'
@@ -15,7 +15,6 @@ import StatusTag from '@/components/StatusTag.vue'
 import JsonSourcePanel from './JsonSourcePanel.vue'
 import NodeForm from './NodeForm.vue'
 import NodeList from './NodeList.vue'
-import RunScriptModal from './RunScriptModal.vue'
 import ScriptSettingsForm from './ScriptSettingsForm.vue'
 import { cloneScriptData, createStep, normalizeDraft, normalizeScriptData } from './nodeDefaults'
 
@@ -35,7 +34,6 @@ const jsonDirty = ref(false)
 const jsonError = ref<string | null>(null)
 const validation = ref<ScriptValidation | null>(null)
 const settingsOpen = ref<string[]>([])
-const runOpen = ref(false)
 const jsonOpen = ref(false)
 const loadedId = ref<string | null>(null)
 
@@ -116,6 +114,62 @@ function moveNode(nodeId: string, direction: -1 | 1): void {
   steps[index] = steps[targetIndex]
   steps[targetIndex] = temp
   applyDraft({ ...data, steps })
+}
+
+/** 拖拽排序：只改本地 steps 并标 dirty，保存仍走顶部按钮；step.id 保持稳定。 */
+function reorderNode(fromId: string, targetId: string, position: 'before' | 'after'): void {
+  const data = draft.value
+  if (!data || fromId === targetId) return
+  const fromIndex = data.steps.findIndex((step) => step.id === fromId)
+  const targetIndex = data.steps.findIndex((step) => step.id === targetId)
+  if (fromIndex < 0 || targetIndex < 0) return
+  const steps = [...data.steps]
+  const moved = steps.splice(fromIndex, 1)[0]
+  let insertAt = targetIndex + (position === 'after' ? 1 : 0)
+  if (fromIndex < insertAt) insertAt -= 1
+  steps.splice(insertAt, 0, moved)
+  if (steps.every((step, index) => step.id === data.steps[index]?.id)) return
+  applyDraft({ ...data, steps })
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  if (target.isContentEditable) return true
+  return Boolean(target.closest('[contenteditable="true"]'))
+}
+
+/** 全局 Alt+↑/↓：移动当前选中节点；输入框/文本域/contenteditable 内不拦截。 */
+function handleAltMove(event: KeyboardEvent): void {
+  if (!event.altKey || event.ctrlKey || event.metaKey) return
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+  if (isEditableTarget(event.target)) return
+  const nodeId = selectedId.value
+  if (!nodeId || !draft.value) return
+  event.preventDefault()
+  moveNode(nodeId, event.key === 'ArrowUp' ? -1 : 1)
+}
+
+onMounted(() => window.addEventListener('keydown', handleAltMove))
+onBeforeUnmount(() => window.removeEventListener('keydown', handleAltMove))
+
+onBeforeRouteLeave(async () => {
+  if (!dirty.value && !jsonDirty.value) return true
+  try {
+    await ElMessageBox.confirm('当前脚本有未保存的修改，离开后修改将丢失。', '未保存的修改', {
+      type: 'warning',
+      confirmButtonText: '离开',
+      cancelButtonText: '留在此页',
+    })
+    return true
+  } catch {
+    return false
+  }
+})
+
+function goRun(): void {
+  void router.push({ path: '/console', query: { tab: 'auto', script: id.value } })
 }
 
 function deleteNode(nodeId: string): void {
@@ -281,7 +335,7 @@ function jumpToPath(path: string): void {
         <el-button type="primary" :icon="Refresh" :loading="updateMutation.isPending.value" :disabled="!dirty && !jsonDirty" @click="handleSave">
           保存
         </el-button>
-        <el-button :icon="VideoPlay" @click="runOpen = true">运行</el-button>
+        <el-button :icon="VideoPlay" @click="goRun">运行</el-button>
         <el-button :icon="Document" @click="jsonOpen = true">JSON</el-button>
       </template>
     </PageHead>
@@ -292,7 +346,7 @@ function jumpToPath(path: string): void {
         :selected-id="selectedId"
         @select="selectedId = $event"
         @add="addNode"
-        @move="moveNode"
+        @reorder="reorderNode"
         @delete="deleteNode"
         @toggle-enabled="toggleNodeEnabled"
       />
@@ -341,12 +395,5 @@ function jumpToPath(path: string): void {
         />
       </div>
     </el-drawer>
-
-    <RunScriptModal
-      :open="runOpen"
-      :script-id="id"
-      :script-name="draft.name"
-      @close="runOpen = false"
-    />
   </div>
 </template>

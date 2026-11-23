@@ -1,20 +1,19 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 import AppLayout from '@/layouts/AppLayout.vue'
-import DevicesPage from '@/features/devices/DevicesPage.vue'
+import ConsolePage from '@/features/console/ConsolePage.vue'
 import ScriptsPage from '@/features/scripts/ScriptsPage.vue'
 import ScriptEditorPage from '@/features/scripts/ScriptEditorPage.vue'
-import RunsPage from '@/features/runs/RunsPage.vue'
 import RunDetailPage from '@/features/runs/RunDetailPage.vue'
 import RecordingsPage from '@/features/recorder/RecordingsPage.vue'
 import RecordingDetailPage from '@/features/recorder/RecordingDetailPage.vue'
 import SettingsPage from '@/features/settings/SettingsPage.vue'
 import NotFoundPage from '@/features/NotFoundPage.vue'
 
+/** 左侧主导航：v0.2.5 只保留四项，运行记录合并进脚本页。 */
 export const NAV_ITEMS = [
-  { path: '/devices', label: '设备', section: '设备', page: '工作台' },
+  { path: '/console', label: '控制台', section: '控制台', page: '工作台' },
   { path: '/scripts', label: '脚本', section: '脚本', page: '列表' },
-  { path: '/runs', label: '运行', section: '运行', page: '列表' },
   { path: '/recorder', label: '录制', section: '录制', page: '草稿' },
   { path: '/settings', label: '设置', section: '设置', page: '配置' },
 ] as const
@@ -24,54 +23,52 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     component: AppLayout,
     children: [
-      { path: '', redirect: '/devices' },
+      { path: '', redirect: '/console' },
       {
-        path: 'devices',
-        name: 'devices',
-        component: DevicesPage,
-        meta: { title: '设备工作台', section: '设备', page: '工作台' },
+        path: 'console',
+        name: 'console',
+        component: ConsolePage,
+        meta: { title: '控制台', breadcrumb: ['控制台'] },
       },
+      // 旧链接兼容：设备页由控制台替代。
+      { path: 'devices', redirect: '/console' },
       {
         path: 'scripts',
         name: 'scripts',
         component: ScriptsPage,
-        meta: { title: '脚本', section: '脚本', page: '列表' },
+        meta: { title: '脚本', breadcrumb: ['脚本', '脚本库'] },
       },
       {
         path: 'scripts/:id',
         name: 'script-editor',
         component: ScriptEditorPage,
-        meta: { title: '脚本编辑器', section: '脚本', page: '编辑器' },
+        meta: { title: '脚本编辑器', breadcrumb: ['脚本', '编辑器'] },
       },
-      {
-        path: 'runs',
-        name: 'runs',
-        component: RunsPage,
-        meta: { title: '运行', section: '运行', page: '列表' },
-      },
+      // 运行列表已合并进脚本页的运行记录 tab。
+      { path: 'runs', redirect: (to) => ({ path: '/scripts', query: { ...to.query, tab: 'runs' } }) },
       {
         path: 'runs/:id',
         name: 'run-detail',
         component: RunDetailPage,
-        meta: { title: '运行详情', section: '运行', page: '详情' },
+        meta: { title: '运行详情', breadcrumb: ['脚本', '运行记录', '详情'] },
       },
       {
         path: 'recorder',
         name: 'recordings',
         component: RecordingsPage,
-        meta: { title: '录制草稿', section: '录制', page: '草稿' },
+        meta: { title: '录制草稿', breadcrumb: ['录制', '录制草稿'] },
       },
       {
         path: 'recorder/:id',
         name: 'recording-detail',
         component: RecordingDetailPage,
-        meta: { title: '录制草稿', section: '录制', page: '详情' },
+        meta: { title: '录制详情', breadcrumb: ['录制', '录制详情'] },
       },
       {
         path: 'settings',
         name: 'settings',
         component: SettingsPage,
-        meta: { title: '设置', section: '设置', page: '配置' },
+        meta: { title: '设置', breadcrumb: ['设置'] },
       },
       { path: ':pathMatch(.*)*', name: 'not-found', component: NotFoundPage },
     ],

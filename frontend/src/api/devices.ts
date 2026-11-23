@@ -271,7 +271,8 @@ export function useDeviceApps(
       itemsOf(
         await get<ItemsLike<AppInfo>>(`${base(resolved.value as string)}/apps`, {
           signal,
-          query: { keyword: keyword.value, type: type.value },
+          // 空 type 不能直接发给后端：默认值需要走后端 third_party，显式传空会被判为非法。
+          query: { keyword: keyword.value, type: type.value || undefined },
         }),
       ),
     enabled: computed(() => Boolean(resolved.value) && toValue(params.enabled ?? true)),

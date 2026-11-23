@@ -877,6 +877,27 @@ class MirrorSession:
         vw, vh = self.video_size()
         return bool(server.inject_swipe(vx1, vy1, vx2, vy2, duration_ms, vw, vh))
 
+    def inject_path(self, samples: list[tuple[int, int, int]], duration_ms: int) -> bool:
+        """回放录制轨迹：samples=[(dt_ms, device_x, device_y)]，保留路径与真实时序。
+
+        使用当前镜像的 scrcpy control 通道，与手动拖动同一个注入器；对 Unity/游戏
+        这类 uiautomator 手势容易卡住的界面也有效。
+        """
+        server = self._injector()
+        if server is None or not samples:
+            return False
+        video_w, video_h = self.video_size()
+        if video_w <= 0 or video_h <= 0:
+            return False
+        converted: list[tuple[int, int, int]] = []
+        for dt, x, y in samples:
+            try:
+                vx, vy = self.device_to_video(int(x), int(y))
+            except Exception:  # noqa: BLE001 - 坐标系未就绪/非法点
+                return False
+            converted.append((int(dt), int(vx), int(vy)))
+        return bool(server.inject_path(converted, int(duration_ms), video_w, video_h))
+
     def inject_key(self, keycode: int) -> bool:
         server = self._injector()
         if server is None:

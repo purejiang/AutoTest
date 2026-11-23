@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Refresh } from '@element-plus/icons-vue'
+import { ArrowLeft, Document, Refresh } from '@element-plus/icons-vue'
 import { useQueryClient } from '@tanstack/vue-query'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -27,6 +27,7 @@ const ui = useUiStore()
 const runId = computed(() => Number(route.params.id))
 const validId = computed(() => Number.isFinite(runId.value) && runId.value > 0)
 const activeTab = ref<'steps' | 'events'>('steps')
+const reportOpen = ref(false)
 
 const runQuery = useRun(computed(() => (validId.value ? runId.value : undefined)))
 const scriptQuery = useScript(computed(() => runQuery.data.value?.script_id ?? undefined))
@@ -88,7 +89,7 @@ function clearEvents(): void {
 <template>
   <div v-if="!validId" class="page">
     <el-result icon="warning" title="无效的运行 ID">
-      <template #extra><el-button type="primary" @click="router.push('/runs')">返回运行列表</el-button></template>
+      <template #extra><el-button type="primary" @click="router.push('/scripts?tab=runs')">返回运行记录</el-button></template>
     </el-result>
   </div>
 
@@ -100,7 +101,7 @@ function clearEvents(): void {
     <el-result icon="warning" title="运行详情加载失败" :sub-title="describeApiError(runQuery.error.value)">
       <template #extra>
         <el-button @click="runQuery.refetch()">重试</el-button>
-        <el-button type="primary" @click="router.push('/runs')">返回运行列表</el-button>
+        <el-button type="primary" @click="router.push('/scripts?tab=runs')">返回运行记录</el-button>
       </template>
     </el-result>
   </div>
@@ -109,7 +110,7 @@ function clearEvents(): void {
     <div class="run-top">
       <div class="grow">
         <div class="run-title-line">
-          <button type="button" class="icon-btn" title="返回运行列表" @click="router.push('/runs')">
+          <button type="button" class="icon-btn" title="返回运行记录" @click="router.push('/scripts?tab=runs')">
             <el-icon><ArrowLeft /></el-icon>
           </button>
           <h1>运行 #{{ run.id }}</h1>
@@ -127,6 +128,7 @@ function clearEvents(): void {
         </div>
       </div>
       <div class="run-actions">
+        <el-button :icon="Document" @click="reportOpen = true">报告</el-button>
         <el-button :icon="Refresh" :loading="runQuery.isFetching.value" @click="runQuery.refetch()">刷新</el-button>
       </div>
     </div>
@@ -215,12 +217,6 @@ function clearEvents(): void {
           </div>
         </section>
         <section class="card">
-          <div class="card-head"><h2>报告</h2></div>
-          <div class="card-body">
-            <RunReportsCard :run-id="run.id" />
-          </div>
-        </section>
-        <section class="card">
           <div class="card-head"><h2>运行信息</h2></div>
           <div class="card-body">
             <table class="mini-table">
@@ -238,5 +234,9 @@ function clearEvents(): void {
         </section>
       </div>
     </div>
+
+    <el-dialog v-model="reportOpen" title="运行报告" width="760px" append-to-body>
+      <RunReportsCard :run-id="run.id" />
+    </el-dialog>
   </div>
 </template>

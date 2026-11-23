@@ -85,6 +85,14 @@ async function handleCreate(): Promise<void> {
         <div class="hint">
           {{ devicesQuery.isError.value ? '设备列表不可用' : '占用中的设备不可选；真机录制通过 getevent 采集触摸。' }}
         </div>
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          title="开始前确认触摸设备与 2 点标定"
+          description="录制期间请勿同时运行脚本；若触摸事件坐标不准，先在设备测试清单里完成 2 点标定。"
+          style="margin-top: 6px"
+        />
       </el-form-item>
       <el-form-item label="名称（可选）">
         <el-input v-model="name" placeholder="例如：登录流程录制" />

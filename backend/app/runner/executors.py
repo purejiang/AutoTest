@@ -266,24 +266,80 @@ def execute_long_click(ctx: RunContext, step: Any) -> dict[str, Any]:
     return {**_resolved_output(resolved), "duration_ms": duration}
 
 
+def _recorded_path_samples(path: Any, max_points: int = 240) -> list[tuple[int, int, int]]:
+    """读取录制轨迹 [(dt_ms, x, y)]，保留原始时间戳（不重采样）。
+
+    scrcpy 控制通道可以按每条 MOVE 的真实间隔注入，因此这里不做等时间重采样，
+    直接把录制时的手指轨迹和速度/停顿交给注入器。
+    """
+    samples: list[tuple[int, int, int]] = []
+    for item in path or []:
+        try:
+            # 运行时是 Pydantic GestureSample；单测/直接调用也可能传原始 dict。
+            t = int((item.get("dt_ms", 0) if isinstance(item, dict) else getattr(item, "dt_ms", 0)) or 0)
+            x = int((item.get("x", 0) if isinstance(item, dict) else getattr(item, "x", 0)) or 0)
+            y = int((item.get("y", 0) if isinstance(item, dict) else getattr(item, "y", 0)) or 0)
+        except (TypeError, ValueError):
+            continue
+        samples.append((max(0, t), x, y))
+    if len(samples) < 2:
+        return []
+    samples.sort(key=lambda item: item[0])
+    merged: list[tuple[int, int, int]] = []
+    for sample in samples:
+        if merged and sample[0] <= merged[-1][0]:
+            merged[-1] = sample
+        else:
+            merged.append(sample)
+    if len(merged) > max_points:
+        step = max(1, (len(merged) + max_points - 1) // max_points)
+        reduced = merged[::step]
+        if reduced[-1] != merged[-1]:
+            reduced.append(merged[-1])
+        merged = reduced
+    return merged
+
+
+def _try_scrcpy_path(
+    ctx: RunContext,
+    samples: list[tuple[int, int, int]],
+    duration_ms: int,
+    output: dict[str, Any],
+) -> bool:
+    """有活跃镜像时用 scrcpy control 通道回放轨迹（含变速/停顿），最贴近录制。"""
+    serial = getattr(ctx.driver, "serial", None)
+    if not serial or len(samples) < 2:
+        return False
+    try:
+        from ..mirror import get_session
+
+        session = get_session(str(serial))
+        if session is None or not getattr(session, "active", False):
+            return False
+        if not session.inject_path(samples, duration_ms):
+            return False
+    except Exception as exc:  # noqa: BLE001 - 镜像/控制通道不可用时回退 u2
+        logger.warning("scrcpy path replay failed, fallback to u2: %s", exc)
+        return False
+    output["duration_ms"] = max(int(duration_ms or 0), samples[-1][0])
+    output["path_points"] = len(samples)
+    output["injector"] = "scrcpy"
+    return True
+
+
 def _execute_gesture(ctx: RunContext, step: Any, default_duration: int) -> dict[str, Any]:
     start = _resolve(ctx, step.params.from_)
     end = _resolve(ctx, step.params.to)
     duration = int(getattr(step.params, "duration_ms", default_duration) or default_duration)
-    path = getattr(step.params, "path", None)
     output: dict[str, Any] = {
         "from": _resolved_output(start),
         "to": _resolved_output(end),
         "duration_ms": duration,
     }
-    if path:
-        points = [(int(sample.x), int(sample.y)) for sample in path]
-        # 短轨迹回放更贴近录制手势；长轨迹在部分真机上会让 u2 swipePoints 长时间不返回，
-        # 直接退化为两点 swipe，避免 8s 节点超时。drag 已单独优先走原生 drag。
-        if len(points) <= 12:
-            ctx.driver.swipe_path(points, duration_ms=duration)
-            output["path_points"] = len(points)
-            return output
+    samples = _recorded_path_samples(getattr(step.params, "path", None))
+    if samples and _try_scrcpy_path(ctx, samples, duration, output):
+        return output
+    # 没有镜像控制通道时退化为两点头滑动；u2 的 swipePoints 在部分游戏/设备上会卡死。
     ctx.driver.swipe(start.x, start.y, end.x, end.y, duration_ms=duration)
     return output
 
@@ -293,25 +349,36 @@ def execute_swipe(ctx: RunContext, step: Any) -> dict[str, Any]:
 
 
 def execute_drag(ctx: RunContext, step: Any) -> dict[str, Any]:
-    """拖拽优先走驱动原生 drag。
+    """拖拽回放：录制带轨迹时优先用当前镜像的 scrcpy 控制通道按原时序重演。
 
-    录制节点带 path 时，drag 的轨迹回放（u2 swipe_points）在真机上可能长时间不返回，
-    导致 8s 节点超时。drag 的语义是“按住拖到目标点”，用原生 drag 更稳定；曲线轨迹
-    仍由 swipe 节点负责回放。
+    v0.2.5 之前 drag 一律走原生 drag，完全丢掉录制轨迹；Unity/游戏界面上
+    native drag 还会长时间不返回，把节点卡到超时。没有镜像通道时退化为两点
+    swipe，只有“无轨迹的手动 drag 节点”才继续使用驱动原生 drag。
     """
     start = _resolve(ctx, step.params.from_)
     end = _resolve(ctx, step.params.to)
     duration = int(getattr(step.params, "duration_ms", 1000) or 1000)
+    output: dict[str, Any] = {
+        "from": _resolved_output(start),
+        "to": _resolved_output(end),
+        "duration_ms": duration,
+    }
+    samples = _recorded_path_samples(getattr(step.params, "path", None))
+    if samples and _try_scrcpy_path(ctx, samples, duration, output):
+        return output
+
+    # 录制出来的“慢滑动”如果拿不到镜像通道，走两点 swipe 比 native drag 更稳：
+    # 真机上 native drag 在 Unity 等界面会长时间不返回，直接把节点卡到超时。
+    if samples:
+        ctx.driver.swipe(start.x, start.y, end.x, end.y, duration_ms=duration)
+        return output
+
     drag_fn = getattr(ctx.driver, "drag", None)
     if callable(drag_fn):
         drag_fn(start.x, start.y, end.x, end.y, duration_ms=duration)
     else:
         ctx.driver.swipe(start.x, start.y, end.x, end.y, duration_ms=duration)
-    return {
-        "from": _resolved_output(start),
-        "to": _resolved_output(end),
-        "duration_ms": duration,
-    }
+    return output
 
 
 def execute_input(ctx: RunContext, step: Any) -> dict[str, Any]:

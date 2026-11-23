@@ -266,16 +266,21 @@ def _cleanup_failed_recording(recording_id: str, serial: str) -> None:
 @router.get("/api/recordings")
 def list_recordings(
     status: str | None = Query(default=None),
+    mode: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     with session_scope() as db:
-        condition = Recording.status == status if status else None
+        conditions = []
+        if status:
+            conditions.append(Recording.status == status)
+        if mode:
+            conditions.append(Recording.mode == mode)
         count_statement = select(func.count()).select_from(Recording)
         list_statement = select(Recording).order_by(Recording.created_at.desc(), Recording.id.desc())
-        if condition is not None:
-            count_statement = count_statement.where(condition)
-            list_statement = list_statement.where(condition)
+        if conditions:
+            count_statement = count_statement.where(*conditions)
+            list_statement = list_statement.where(*conditions)
         total = int(db.scalar(count_statement) or 0)
         rows = list(db.scalars(list_statement.limit(limit).offset(offset)))
         script_names = _script_names(

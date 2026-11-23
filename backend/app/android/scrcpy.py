@@ -1247,6 +1247,47 @@ class ScrcpyServer:
         time.sleep(step_sleep)
         return self.send_control(build_inject_touch(MOTION_UP, x2, y2, w, h))
 
+    def inject_path(
+        self,
+        samples: list[tuple[int, int, int]],
+        duration_ms: int,
+        video_w: int | None = None,
+        video_h: int | None = None,
+    ) -> bool:
+        """按录制轨迹与时间戳注入 DOWN/MOVE/UP（scrcpy 控制通道，保留路径与变速）。
+
+        samples: [(dt_ms, x, y)]，坐标为视频帧坐标；dt_ms 相对按下时刻。
+        录制路径最后一点可能早于抬手（手指停顿），这里会等到 duration_ms 再 UP。
+        """
+        if not samples:
+            return False
+        w, h = (int(video_w), int(video_h)) if video_w and video_h else self.video_size()
+        if w <= 0 or h <= 0:
+            return False
+        ordered = sorted(
+            (int(max(0, dt)), int(x), int(y)) for dt, x, y in samples
+        )
+        first_dt, first_x, first_y = ordered[0]
+        if first_dt > 0:
+            time.sleep(min(10.0, first_dt / 1000.0))
+        if not self.send_control(build_inject_touch(MOTION_DOWN, first_x, first_y, w, h)):
+            return False
+        started = time.monotonic()
+        last_x, last_y = first_x, first_y
+        for dt, x, y in ordered[1:]:
+            delay = dt / 1000.0 - (time.monotonic() - started)
+            if delay > 0:
+                time.sleep(min(10.0, delay))
+            if not self.send_control(build_inject_touch(MOTION_MOVE, x, y, w, h)):
+                self.send_control(build_inject_touch(MOTION_UP, last_x, last_y, w, h))
+                return False
+            last_x, last_y = x, y
+        total = max(int(duration_ms or 0), ordered[-1][0])
+        delay = total / 1000.0 - (time.monotonic() - started)
+        if delay > 0:
+            time.sleep(min(10.0, delay))
+        return self.send_control(build_inject_touch(MOTION_UP, last_x, last_y, w, h))
+
     def inject_key(self, keycode: int) -> bool:
         if not self.send_control(build_inject_keycode(int(keycode), MOTION_DOWN)):
             return False

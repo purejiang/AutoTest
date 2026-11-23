@@ -18,14 +18,16 @@ import { formatBytes } from '@/lib/format'
 const props = withDefaults(
   defineProps<{
     serial: string
-    /** 镜像 canvas（CanvasRenderer 的输出） */
+    /** 镜像 canvas（CanvasRenderer 的输出）；与 getSource 二选一 */
     source?: HTMLCanvasElement | null
+    /** 延迟取镜像 canvas（控制台拆分后 canvas 在子组件里，录制时再取） */
+    getSource?: (() => HTMLCanvasElement | null) | null
     /** 取触控特效覆盖层 canvas；关闭特效/未挂载时返回 null */
     overlay?: (() => HTMLCanvasElement | null) | null
     /** 镜像是否正在播放 */
     enabled?: boolean
   }>(),
-  { source: null, overlay: null, enabled: true },
+  { source: null, getSource: null, overlay: null, enabled: true },
 )
 
 type RecorderPhase = 'idle' | 'recording' | 'paused' | 'stopped'
@@ -103,6 +105,15 @@ function overlayCanvas(): HTMLCanvasElement | null {
   }
 }
 
+function mirrorCanvas(): HTMLCanvasElement | null {
+  if (props.source) return props.source
+  try {
+    return props.getSource?.() ?? null
+  } catch {
+    return null
+  }
+}
+
 function drawComposite(): void {
   rafId = requestAnimationFrame(drawComposite)
   const canvas = composite
@@ -112,7 +123,7 @@ function drawComposite(): void {
   const height = canvas.height
   ctx.fillStyle = '#000000'
   ctx.fillRect(0, 0, width, height)
-  const source = props.source
+  const source = mirrorCanvas()
   if (source && source.width > 0 && source.height > 0) {
     try {
       ctx.drawImage(source, 0, 0, width, height)
@@ -223,7 +234,7 @@ function start(): void {
     error.value = '镜像尚未开始播放，无法录制。'
     return
   }
-  const source = props.source
+  const source = mirrorCanvas()
   if (!source || source.width < 2 || source.height < 2) {
     error.value = '镜像画面尚未就绪，等第一帧出来后再试。'
     return

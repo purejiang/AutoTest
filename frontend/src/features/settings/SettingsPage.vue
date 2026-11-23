@@ -1,8 +1,17 @@
 <script setup lang="ts">
-import { Delete, Refresh, RefreshLeft, Setting } from '@element-plus/icons-vue'
+import {
+  Cellphone,
+  Check,
+  Connection,
+  Cpu,
+  Delete,
+  MoreFilled,
+  Refresh,
+  RefreshLeft,
+} from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useWindowSize } from '@vueuse/core'
 import { computed, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import { describeApiError } from '@/api/client'
 import {
@@ -16,13 +25,19 @@ import {
 } from '@/api/settings'
 import type { SettingEntry } from '@/types/api'
 import { formatBytes, formatDateTime, prettyJson } from '@/lib/format'
+import { useTheme, type ThemeChoice } from '@/composables/useTheme'
 import PageHead from '@/components/PageHead.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import MirrorConfigCard from './MirrorConfigCard.vue'
 import SettingField from './SettingField.vue'
 
 const APP_VERSION = __APP_VERSION__
 const APP_COMMIT = __APP_COMMIT__
 const APP_BUILD_TIME = __APP_BUILD_TIME__
+
+// 与后端 settings_service.scrcpy_options 保持一致；工具栏只展示，不在这里改画质。
+const SCRCPY_SERVER_VERSION = '5.0.1'
+const SCRCPY_VENDOR_JAR = 'vendor/scrcpy-server-v5.0.1.jar'
 
 const settingsQuery = useSettings()
 const updateMutation = useUpdateSettings()
@@ -32,24 +47,62 @@ const healthQuery = useHealth()
 const statsQuery = useMaintenanceStats()
 const cleanupMutation = useCleanup()
 
-type SettingsGroup = 'general' | 'toolchain' | 'storage' | 'about'
+const { theme, resolvedTheme, setTheme } = useTheme()
 
-const activeTab = ref<SettingsGroup>('general')
-const { width: viewportWidth } = useWindowSize()
-// 桌面左右布局；窄屏改成顶部横向 tab，避免左侧导航把内容挤出视口。
-const tabPosition = computed(() => (viewportWidth.value <= 900 ? 'top' : 'left'))
+type SettingsTab = 'general' | 'toolchain' | 'execution' | 'storage' | 'about'
+
+const TABS: Array<{ key: SettingsTab; label: string }> = [
+  { key: 'general', label: '通用' },
+  { key: 'toolchain', label: '工具链' },
+  { key: 'execution', label: '执行' },
+  { key: 'storage', label: '存储' },
+  { key: 'about', label: '关于' },
+]
+
+const route = useRoute()
+const router = useRouter()
+
+function isSettingsTab(value: unknown): value is SettingsTab {
+  return typeof value === 'string' && TABS.some((tab) => tab.key === value)
+}
+
+// tab 与 URL 同步，便于刷新/深链回测；非法值归一到通用。
+const activeTab = computed<SettingsTab>({
+  get: () => (isSettingsTab(route.query.tab) ? route.query.tab : 'general'),
+  set: (tab) => {
+    if (route.query.tab === tab) return
+    void router.replace({ path: '/settings', query: { ...route.query, tab } })
+  },
+})
+const language = ref('zh-CN')
+
+const THEME_CHOICES = [
+  { value: 'light', label: '浅色', note: '当前工作区风格' },
+  { value: 'dark', label: '深色', note: '夜间 / 低光环境' },
+  { value: 'system', label: '跟随系统', note: '自动匹配系统外观' },
+] as const
+
 const values = reactive<Record<string, any>>({})
 const loaded = ref<Record<string, unknown>>({})
 const retentionDays = ref<number | undefined>(undefined)
 const dryRun = ref(true)
 
+function cloneRecord<T>(input: T): T {
+  return JSON.parse(JSON.stringify(input)) as T
+}
+
+// 用 loaded 的深拷贝重置本地编辑值，不触发任何后端请求。
+function restoreLoadedValues(): void {
+  for (const key of Object.keys(values)) delete values[key]
+  Object.assign(values, cloneRecord(loaded.value))
+}
+
 watch(
   () => settingsQuery.data.value,
   (data) => {
     if (!data) return
-    loaded.value = JSON.parse(JSON.stringify(data.effective)) as Record<string, unknown>
-    for (const key of Object.keys(values)) delete values[key]
-    Object.assign(values, JSON.parse(JSON.stringify(data.effective)) as Record<string, unknown>)
+    loaded.value = cloneRecord(data.effective) as Record<string, unknown>
+    restoreLoadedValues()
   },
   { immediate: true },
 )
@@ -63,79 +116,18 @@ watch(
 )
 
 const settings = computed(() => settingsQuery.data.value ?? null)
+const sources = computed(() => settings.value?.sources ?? {})
 
-// 镜像画质预设：只是“一键填三项参数”的快捷方式，保存的仍是 max_size/max_fps/video_bit_rate。
-// 因此不需要额外的后端 key；三项被手动改动后会自然显示为“自定义”。
-const MIRROR_PRESETS = [
-  {
-    value: 'smooth',
-    label: '流畅优先',
-    detail: '1200px / 60fps / 10Mbps',
-    maxSize: 1200,
-    maxFps: 60,
-    videoBitRate: 10_000_000,
-  },
-  {
-    value: 'balanced',
-    label: '均衡（推荐）',
-    detail: '1600px / 60fps / 16Mbps',
-    maxSize: 1600,
-    maxFps: 60,
-    videoBitRate: 16_000_000,
-  },
-  {
-    value: 'sharp',
-    label: '清晰优先',
-    detail: '1600px / 30fps / 24Mbps',
-    maxSize: 1600,
-    maxFps: 30,
-    videoBitRate: 24_000_000,
-  },
-] as const
+// 每个 key 只出现在一个分组里；只渲染后端 SETTINGS_SCHEMA 里已有的 key。
+type KeyGroup = 'adb' | 'scrcpyJar' | 'engine' | 'recording' | 'capture' | 'security' | 'storage'
 
-type MirrorPresetValue = (typeof MIRROR_PRESETS)[number]['value'] | 'custom'
-
-const mirrorPreset = computed<MirrorPresetValue>(() => {
-  const maxSize = Number(values['scrcpy.max_size'])
-  const maxFps = Number(values['scrcpy.max_fps'])
-  const videoBitRate = Number(values['scrcpy.video_bit_rate'])
-  const matched = MIRROR_PRESETS.find(
-    (preset) =>
-      preset.maxSize === maxSize &&
-      preset.maxFps === maxFps &&
-      preset.videoBitRate === videoBitRate,
-  )
-  return matched?.value ?? 'custom'
-})
-
-const mirrorPresetLabel = computed(() => {
-  const matched = MIRROR_PRESETS.find((preset) => preset.value === mirrorPreset.value)
-  return matched ? `${matched.label}：${matched.detail}` : '自定义（下面三项手动组合）'
-})
-
-function applyMirrorPreset(value: unknown): void {
-  const preset = MIRROR_PRESETS.find((item) => item.value === value)
-  if (!preset) return
-  values['scrcpy.max_size'] = preset.maxSize
-  values['scrcpy.max_fps'] = preset.maxFps
-  values['scrcpy.video_bit_rate'] = preset.videoBitRate
-}
-
-// 设置页按“通用 / 工具链 / 存储 / 关于”分组；每个 key 只出现一次。
-const GROUP_KEYS: Record<Exclude<SettingsGroup, 'about'>, string[]> = {
-  general: [
-    'engine.poll_interval_ms',
-    'engine.default_timeout_ms',
-    'engine.max_total_ms',
-    'engine.max_steps',
-    'recording.click_dump',
-    'recording.confirm_before_save',
-    'recording.target_mode',
-    'capture.logcat_auto_attach',
-    'capture.network.enabled',
-    'security.token',
-  ],
-  toolchain: ['adb.path', 'scrcpy.max_size', 'scrcpy.max_fps', 'scrcpy.video_bit_rate', 'scrcpy.crop'],
+const GROUP_KEYS: Record<KeyGroup, string[]> = {
+  adb: ['adb.path', 'adb.connect_timeout_s'],
+  scrcpyJar: ['scrcpy.jar'],
+  engine: ['engine.poll_interval_ms', 'engine.default_timeout_ms', 'engine.max_total_ms', 'engine.max_steps'],
+  recording: ['recording.click_dump', 'recording.confirm_before_save', 'recording.target_mode'],
+  capture: ['capture.logcat_auto_attach', 'capture.network.enabled'],
+  security: ['security.token'],
   storage: [
     'runtime.data_dir',
     'retention.days',
@@ -144,19 +136,39 @@ const GROUP_KEYS: Record<Exclude<SettingsGroup, 'about'>, string[]> = {
   ],
 }
 
-function entriesFor(group: Exclude<SettingsGroup, 'about'>): SettingEntry[] {
+const schemaByKey = computed<Record<string, SettingEntry>>(() => {
+  const out: Record<string, SettingEntry> = {}
+  for (const entry of settings.value?.schema ?? []) out[entry.key] = entry
+  return out
+})
+
+const schemaKeys = computed(() => new Set(Object.keys(schemaByKey.value)))
+
+function entriesFor(group: KeyGroup): SettingEntry[] {
   const keys = GROUP_KEYS[group]
-  return settings.value?.schema.filter((entry) => keys.includes(entry.key)) ?? []
+  return (settings.value?.schema ?? []).filter((entry) => keys.includes(entry.key))
 }
 
+// 保存条只统计后端 schema key 的改动；主题 / 语言是纯前端偏好，不产生未保存项。
 const changedKeys = computed(() =>
-  Object.keys(values).filter(
-    (key) => JSON.stringify(values[key]) !== JSON.stringify(loaded.value[key]),
-  ),
+  Object.keys(values)
+    .filter((key) => schemaKeys.value.has(key))
+    .filter((key) => JSON.stringify(values[key]) !== JSON.stringify(loaded.value[key])),
 )
+
+// 只有存在未保存的后端改动时才显示操作条；关于页不显示，避免遮挡健康信息。
+const showSavebar = computed(() => activeTab.value !== 'about' && changedKeys.value.length > 0)
+
+// 干净状态用页头的一个小标签代替常驻保存条，保持轻量。
+const showSavedTag = computed(
+  () => Boolean(settings.value) && activeTab.value !== 'about' && changedKeys.value.length === 0,
+)
+
 const health = computed(() => healthQuery.data.value)
 const stats = computed(() => statsQuery.data.value)
 const cleanupResult = computed(() => cleanupMutation.data.value ?? null)
+
+const hasOverrides = computed(() => Object.values(sources.value).some((source) => source !== 'default'))
 
 const cleanupSummary = computed(() => {
   const data = cleanupResult.value
@@ -183,7 +195,37 @@ const cleanupSummary = computed(() => {
 })
 
 function sourceOf(entry: SettingEntry): 'default' | 'file' | 'db' | 'env' {
-  return settings.value?.sources[entry.key] ?? 'default'
+  return sources.value[entry.key] ?? 'default'
+}
+
+function onMirrorChange(key: string, value: unknown): void {
+  values[key] = value
+}
+
+async function confirmDeleteOverride(key: string, title: string): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`删除「${title}」的覆盖，回到默认值？`, '删除覆盖', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await deleteOverrideMutation.mutateAsync(key)
+    ElMessage.success('已删除覆盖')
+  } catch {
+    // 全局错误提示
+  }
+}
+
+function deleteOverride(entry: SettingEntry): void {
+  void confirmDeleteOverride(entry.key, entry.title)
+}
+
+function clearMirrorKey(key: string): void {
+  void confirmDeleteOverride(key, schemaByKey.value[key]?.title ?? key)
 }
 
 async function saveSettings(): Promise<void> {
@@ -191,14 +233,42 @@ async function saveSettings(): Promise<void> {
     ElMessage.info('没有改动需要保存')
     return
   }
+  // 保存成功后 query 数据会刷新并重置 values，这里先快照，避免提示里变成 0 项。
+  const count = changedKeys.value.length
+  const mirrorTouched = changedKeys.value.some((key) => key.startsWith('scrcpy.'))
   const payload: Record<string, unknown> = {}
   for (const key of changedKeys.value) payload[key] = values[key]
   try {
     await updateMutation.mutateAsync(payload)
-    ElMessage.success(`已保存 ${changedKeys.value.length} 项设置`)
+    ElMessage.success(`已保存 ${count} 项设置${mirrorTouched ? ' · 镜像参数需停止并重新启动镜像生效' : ''}`)
   } catch {
     // 全局错误提示
   }
+}
+
+// 放弃本地编辑：回到最近一次加载/保存后的值，不请求后端。
+async function discardChanges(): Promise<void> {
+  const count = changedKeys.value.length
+  if (count === 0) return
+  try {
+    await ElMessageBox.confirm(`放弃 ${count} 项未保存的改动，恢复为上次加载的值？`, '放弃更改', {
+      type: 'warning',
+      confirmButtonText: '放弃更改',
+      cancelButtonText: '继续编辑',
+    })
+  } catch {
+    return
+  }
+  restoreLoadedValues()
+  ElMessage.info('已放弃未保存的更改')
+}
+
+function onMoreCommand(command: string): void {
+  if (command === 'reset') {
+    void resetSettings()
+    return
+  }
+  if (command === 'reload') void reloadSettings()
 }
 
 async function resetSettings(): Promise<void> {
@@ -219,22 +289,19 @@ async function resetSettings(): Promise<void> {
   }
 }
 
-async function deleteOverride(entry: SettingEntry): Promise<void> {
-  try {
-    await ElMessageBox.confirm(
-      `删除「${entry.title}」的覆盖，回到默认值？`,
-      '删除覆盖',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
-    )
-  } catch {
-    return
+async function reloadSettings(): Promise<void> {
+  if (changedKeys.value.length > 0) {
+    try {
+      await ElMessageBox.confirm(
+        `有 ${changedKeys.value.length} 项未保存的改动，重新加载会丢弃这些改动。`,
+        '重新加载设置',
+        { type: 'warning', confirmButtonText: '重新加载', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
   }
-  try {
-    await deleteOverrideMutation.mutateAsync(entry.key)
-    ElMessage.success('已删除覆盖')
-  } catch {
-    // 全局错误提示
-  }
+  await settingsQuery.refetch()
 }
 
 async function runCleanup(): Promise<void> {
@@ -250,11 +317,18 @@ async function runCleanup(): Promise<void> {
     }
   }
   try {
-    await cleanupMutation.mutateAsync({ retention_days: retentionDays.value, dry_run: dryRun.value })
+    await cleanupMutation.mutateAsync({
+      retention_days: retentionDays.value,
+      dry_run: dryRun.value,
+    })
     ElMessage.success(dryRun.value ? '演练完成（未删除任何数据）' : '清理完成')
   } catch {
     // 全局错误提示
   }
+}
+
+function applyThemeChoice(choice: ThemeChoice): void {
+  setTheme(choice)
 }
 </script>
 
@@ -262,280 +336,908 @@ async function runCleanup(): Promise<void> {
   <div class="page">
     <PageHead title="设置" subtitle="配置优先级：默认 &lt; 文件 &lt; 数据库 &lt; 环境变量">
       <template #actions>
-        <StatusTag v-if="settings && Object.values(settings.sources).some((source) => source !== 'default')" tone="amber">
-          存在覆盖项
-        </StatusTag>
+        <StatusTag v-if="hasOverrides" tone="amber">存在覆盖项</StatusTag>
+        <StatusTag v-else-if="showSavedTag" tone="green" dot>已保存</StatusTag>
+        <el-dropdown trigger="click" placement="bottom-end" @command="onMoreCommand">
+          <el-button
+            size="small"
+            class="page-more"
+            :icon="MoreFilled"
+            title="更多设置操作"
+            aria-label="更多设置操作"
+          />
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="reset" :icon="RefreshLeft" :disabled="resetMutation.isPending.value">
+                恢复默认
+              </el-dropdown-item>
+              <el-dropdown-item command="reload" :icon="Refresh">重新加载</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </template>
     </PageHead>
 
-    <div v-if="settingsQuery.isLoading.value" class="card"><div class="card-body"><el-skeleton :rows="8" animated /></div></div>
+    <div v-if="settingsQuery.isLoading.value" class="card">
+      <div class="card-body"><el-skeleton :rows="8" animated /></div>
+    </div>
     <el-result
       v-else-if="settingsQuery.isError.value || !settings"
       icon="warning"
       title="设置加载失败"
       :sub-title="describeApiError(settingsQuery.error.value)"
     >
-      <template #extra><el-button type="primary" @click="settingsQuery.refetch()">重试</el-button></template>
+      <template #extra>
+        <el-button type="primary" @click="settingsQuery.refetch()">重试</el-button>
+      </template>
     </el-result>
 
-    <el-tabs v-else v-model="activeTab" :tab-position="tabPosition" class="settings-tabs">
-      <el-tab-pane label="通用" name="general">
-        <div class="card">
-          <div class="card-head">
-            <h2>通用设置</h2>
-            <span class="hint">执行节奏、录制行为、日志采集与访问令牌</span>
-          </div>
-          <div class="card-body">
-            <div class="settings-grid">
-              <SettingField
-                v-for="entry in entriesFor('general')"
-                :key="entry.key"
-                :entry="entry"
-                :model-value="values[entry.key]"
-                :source="sourceOf(entry)"
-                @update:model-value="values[entry.key] = $event"
-                @clear="deleteOverride(entry)"
-              />
-            </div>
-          </div>
+    <div v-else class="settings-layout">
+      <aside class="card settings-nav">
+        <button
+          v-for="tab in TABS"
+          :key="tab.key"
+          type="button"
+          class="settings-tab"
+          :class="{ active: activeTab === tab.key }"
+          @click="activeTab = tab.key"
+        >
+          {{ tab.label }}
+        </button>
+        <div class="settings-note">
+          配置优先级：默认 &lt; 文件 &lt; 数据库 &lt; 环境变量。外观偏好即时记住到本机，其余设置保存后持久化。
         </div>
-      </el-tab-pane>
+      </aside>
 
-      <el-tab-pane label="工具链" name="toolchain">
-        <div class="card" style="margin-bottom: 10px">
-          <div class="card-head">
-            <h2>镜像画质</h2>
-            <span class="hint">一键套用分辨率 / 帧率 / 码率；保存后停止并重新启动镜像生效</span>
-          </div>
-          <div class="card-body">
-            <el-radio-group :model-value="mirrorPreset" @update:model-value="applyMirrorPreset">
-              <el-radio-button
-                v-for="preset in MIRROR_PRESETS"
-                :key="preset.value"
-                :value="preset.value"
-              >
-                {{ preset.label }}
-              </el-radio-button>
-              <el-radio-button value="custom" disabled>自定义</el-radio-button>
-            </el-radio-group>
-            <div class="hint" style="margin-top: 8px">
-              当前：{{ mirrorPresetLabel }}。预设只改下面的最大边 / 帧率 / 码率，保存前仍可手动微调。
+      <div class="settings-main" :class="{ 'has-unsaved': showSavebar }">
+        <!-- ============================================================ 通用 -->
+        <div v-if="activeTab === 'general'" class="settings-pane">
+          <section class="card settings-card">
+            <div class="card-head">
+              <h2>外观</h2>
+              <span class="hint">浅深色 · 跟随系统</span>
             </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-head">
-            <h2>工具链设置</h2>
-            <span class="hint">adb 路径与 scrcpy 镜像参数</span>
-          </div>
-          <div class="card-body">
-            <div class="settings-grid">
-              <SettingField
-                v-for="entry in entriesFor('toolchain')"
-                :key="entry.key"
-                :entry="entry"
-                :model-value="values[entry.key]"
-                :source="sourceOf(entry)"
-                @update:model-value="values[entry.key] = $event"
-                @clear="deleteOverride(entry)"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div class="tool-grid" style="margin-top: 10px">
-          <section class="card tool-card">
             <div class="card-body">
-              <div class="tool-head"><el-icon :size="18"><Setting /></el-icon><strong>ADB</strong>
-                <StatusTag :tone="health?.adb ? 'green' : 'gray'">{{ health?.adb ? '正常' : '未知' }}</StatusTag>
-              </div>
-              <div class="tool-row"><span>路径</span><code>{{ health?.adb?.path ?? '—' }}</code></div>
-              <div class="tool-row"><span>版本</span><code>{{ health?.adb?.version ?? '—' }}</code></div>
-              <div class="tool-row"><span>在线设备</span><code>{{ health?.adb?.devices ?? '—' }}</code></div>
-              <div class="tool-actions">
-                <el-button size="small" :loading="healthQuery.isFetching.value" @click="healthQuery.refetch()">重新探测</el-button>
-              </div>
-            </div>
-          </section>
-          <section class="card tool-card">
-            <div class="card-body">
-              <div class="tool-head"><el-icon :size="18"><Setting /></el-icon><strong>uiautomator2</strong>
-                <StatusTag tone="green">可用</StatusTag>
-              </div>
-              <div class="tool-row"><span>驱动</span><code>后端 U2Driver</code></div>
-              <div class="tool-row"><span>设备服务</span><code>首次操作时检查/安装</code></div>
-              <div class="tool-row"><span>备注</span><code>不在此页触发安装</code></div>
-            </div>
-          </section>
-          <section class="card tool-card">
-            <div class="card-body">
-              <div class="tool-head"><el-icon :size="18"><Setting /></el-icon><strong>scrcpy-server</strong>
-                <StatusTag tone="green">已锁定</StatusTag>
-              </div>
-              <div class="tool-row"><span>版本</span><code>5.0.1</code></div>
-              <div class="tool-row"><span>本地 jar</span><code>vendor/scrcpy-server-v5.0.1.jar</code></div>
-              <div class="tool-row"><span>校验</span><code>启动前 SHA256 校验/必要时重推</code></div>
-            </div>
-          </section>
-        </div>
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          title="排障顺序：ADB → uiautomator2 → scrcpy jar/版本"
-          description="工具链状态缓存 5 秒，可手动刷新；健康信息由后端 /api/health 提供。"
-          style="margin-top: 12px"
-        />
-      </el-tab-pane>
-
-      <el-tab-pane label="存储" name="storage">
-        <el-alert
-          type="warning"
-          :closable="false"
-          show-icon
-          title="数据目录 / 前端目录修改后需重启后端生效"
-          description="SQLite 数据库引擎不会热切换；产物挂载会按新目录动态解析。"
-          style="margin-bottom: 10px"
-        />
-        <div class="card">
-          <div class="card-head">
-            <h2>存储设置</h2>
-            <span class="hint">数据库目录、产物目录与保留策略</span>
-          </div>
-          <div class="card-body">
-            <div class="settings-grid">
-              <SettingField
-                v-for="entry in entriesFor('storage')"
-                :key="entry.key"
-                :entry="entry"
-                :model-value="values[entry.key]"
-                :source="sourceOf(entry)"
-                @update:model-value="values[entry.key] = $event"
-                @clear="deleteOverride(entry)"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top: 10px">
-          <div class="card-head">
-            <h2>存储统计</h2>
-            <el-button size="small" :icon="Refresh" :loading="statsQuery.isFetching.value" @click="statsQuery.refetch()">
-              刷新统计
-            </el-button>
-          </div>
-          <div class="card-body">
-            <el-skeleton v-if="statsQuery.isLoading.value" :rows="4" animated />
-            <el-alert
-              v-else-if="statsQuery.isError.value"
-              type="warning"
-              :closable="false"
-              show-icon
-              title="统计加载失败"
-              :description="describeApiError(statsQuery.error.value)"
-            />
-            <template v-else-if="stats">
-              <div class="settings-grid">
-                <div class="kv"><span>DB 体积</span><strong>{{ formatBytes(stats.db_size) }}</strong></div>
-                <div class="kv"><span>产物体积</span><strong>{{ formatBytes(stats.artifacts_size) }}</strong></div>
-                <div class="kv"><span>运行数</span><strong>{{ stats.runs }}</strong></div>
-                <div class="kv"><span>产物数</span><strong>{{ stats.artifacts }}</strong></div>
-                <div class="kv"><span>最早运行</span><strong>{{ formatDateTime(stats.oldest_run_at) }}</strong></div>
-                <div class="kv"><span>保留天数</span><strong>{{ stats.retention_days }}</strong></div>
-              </div>
-              <div class="maintenance-actions">
-                <span class="small">保留天数</span>
-                <el-input-number v-model="retentionDays" size="small" :min="1" :max="3650" controls-position="right" style="width: 120px" />
-                <el-checkbox v-model="dryRun" size="small">仅演练（dry_run，不删除）</el-checkbox>
-                <el-button
-                  :type="dryRun ? 'default' : 'danger'"
-                  :icon="Delete"
-                  :loading="cleanupMutation.isPending.value"
-                  @click="runCleanup"
+              <div class="theme-choices">
+                <button
+                  v-for="choice in THEME_CHOICES"
+                  :key="choice.value"
+                  type="button"
+                  class="theme-choice"
+                  :class="{ active: theme === choice.value }"
+                  :data-theme-choice="choice.value"
+                  @click="applyThemeChoice(choice.value)"
                 >
-                  执行清理
-                </el-button>
+                  <span class="theme-preview" aria-hidden="true">
+                    <span class="tp-rail" />
+                    <span class="tp-body" />
+                  </span>
+                  <strong>{{ choice.label }}</strong>
+                  <small>{{ choice.note }}</small>
+                </button>
               </div>
-              <div v-if="cleanupResult" style="margin-top: 12px">
-                <el-alert v-if="cleanupSummary" type="info" :closable="false" show-icon :title="cleanupSummary" />
-                <pre class="pre-block" style="margin-top: 8px">{{ prettyJson(cleanupResult) }}</pre>
+              <div class="hint" style="margin-top: 8px">
+                切换后立即预览并记住到当前浏览器；不写入后端配置。当前生效：{{
+                  resolvedTheme === 'dark' ? '深色' : '浅色'
+                }}（顶部栏主题按钮与这里同步）。
               </div>
-            </template>
-          </div>
-        </div>
-      </el-tab-pane>
-
-      <el-tab-pane label="关于" name="about">
-        <div class="card">
-          <div class="card-head">
-            <h2>关于 AutoTest</h2>
-            <StatusTag :tone="health?.status === 'ok' ? 'green' : 'amber'">{{ health?.status ?? '未知' }}</StatusTag>
-          </div>
-          <div class="card-body">
-            <div class="settings-grid">
-              <div class="kv"><span>前端版本</span><strong>{{ APP_VERSION }}</strong></div>
-              <div class="kv"><span>前端提交</span><strong class="code-text">{{ APP_COMMIT }}</strong></div>
-              <div class="kv"><span>页面构建</span><strong>{{ formatDateTime(APP_BUILD_TIME) }}</strong></div>
-              <div class="kv"><span>后端版本</span><strong>{{ health?.version ?? '—' }}</strong></div>
-              <div class="kv"><span>数据目录</span><strong class="code-text">{{ health?.data_dir ?? '—' }}</strong></div>
-              <div class="kv"><span>配置优先级</span><strong>默认 &lt; 文件 &lt; 数据库 &lt; 环境变量</strong></div>
             </div>
-            <div class="hint" style="margin-top: 10px">
-              单机 Android UI 自动化平台：设备控制、脚本编排、录制回放、运行观测与报告。
+          </section>
+
+          <section class="card settings-card">
+            <div class="card-head">
+              <h2>语言</h2>
+              <StatusTag tone="blue">当前仅简体中文</StatusTag>
             </div>
-          </div>
+            <div class="card-body">
+              <div class="field" style="max-width: 360px">
+                <span class="field-label">界面语言</span>
+                <el-select v-model="language" size="small" style="width: 100%">
+                  <el-option label="简体中文（zh-CN）" value="zh-CN" />
+                  <el-option label="English（规划中）" value="en-US" disabled />
+                </el-select>
+              </div>
+              <div class="hint" style="margin-top: 7px">
+                完整中英双语需要抽取全站文案，放到后续版本；本版先保留入口，不做半汉半英。
+              </div>
+            </div>
+          </section>
         </div>
 
-        <div class="card" style="margin-top: 10px">
-          <div class="card-head">
-            <h2>健康信息</h2>
-            <el-button size="small" :icon="Refresh" :loading="healthQuery.isFetching.value" @click="healthQuery.refetch()">刷新</el-button>
+        <!-- ============================================================ 工具链 -->
+        <div v-else-if="activeTab === 'toolchain'" class="settings-pane">
+          <div class="tool-grid">
+            <section class="card tool-card">
+              <div class="card-body">
+                <div class="tool-head">
+                  <el-icon :size="16"><Connection /></el-icon>
+                  <strong>ADB</strong>
+                  <StatusTag :tone="health?.adb?.version ? 'green' : health ? 'amber' : 'gray'">
+                    {{ health?.adb?.version ? '正常' : health ? '待检查' : '未知' }}
+                  </StatusTag>
+                </div>
+                <div class="tool-row">
+                  <span>路径</span><code>{{ health?.adb?.path || '—' }}</code>
+                </div>
+                <div class="tool-row">
+                  <span>版本</span><code>{{ health?.adb?.version || '—' }}</code>
+                </div>
+                <div class="tool-row">
+                  <span>在线设备</span><code>{{ health?.adb?.devices ?? '—' }}</code>
+                </div>
+                <SettingField
+                  v-for="entry in entriesFor('adb')"
+                  :key="entry.key"
+                  :entry="entry"
+                  :model-value="values[entry.key]"
+                  :source="sourceOf(entry)"
+                  @update:model-value="values[entry.key] = $event"
+                  @clear="deleteOverride(entry)"
+                />
+                <div class="tool-actions">
+                  <el-button
+                    size="small"
+                    :loading="healthQuery.isFetching.value"
+                    @click="healthQuery.refetch()"
+                  >
+                    重新探测
+                  </el-button>
+                </div>
+              </div>
+            </section>
+
+            <section class="card tool-card">
+              <div class="card-body">
+                <div class="tool-head">
+                  <el-icon :size="16"><Cpu /></el-icon>
+                  <strong>uiautomator2</strong>
+                  <StatusTag :tone="health?.status === 'ok' ? 'green' : health ? 'amber' : 'gray'">
+                    {{ health?.status === 'ok' ? '可用' : health ? '降级' : '未知' }}
+                  </StatusTag>
+                </div>
+                <div class="tool-row"><span>驱动</span><code>U2Driver</code></div>
+                <div class="tool-row"><span>设备服务</span><code>首次操作时检查/安装</code></div>
+                <div class="tool-row"><span>安装入口</span><code>不在此页触发</code></div>
+                <div class="hint" style="margin-top: 7px">
+                  层级树、元素定位、文本输入都依赖该驱动；设备端服务缺失时由后端在首次操作时提示。
+                </div>
+              </div>
+            </section>
+
+            <section class="card tool-card">
+              <div class="card-body">
+                <div class="tool-head">
+                  <el-icon :size="16"><Cellphone /></el-icon>
+                  <strong>scrcpy-server</strong>
+                  <StatusTag tone="green">已锁定</StatusTag>
+                </div>
+                <div class="tool-row">
+                  <span>版本</span><code>{{ SCRCPY_SERVER_VERSION }}</code>
+                </div>
+                <div class="tool-row">
+                  <span>内置 jar</span><code>{{ SCRCPY_VENDOR_JAR }}</code>
+                </div>
+                <div class="tool-row"><span>校验</span><code>启动前 SHA256 校验/必要时重推</code></div>
+                <SettingField
+                  v-for="entry in entriesFor('scrcpyJar')"
+                  :key="entry.key"
+                  :entry="entry"
+                  :model-value="values[entry.key]"
+                  :source="sourceOf(entry)"
+                  @update:model-value="values[entry.key] = $event"
+                  @clear="deleteOverride(entry)"
+                />
+                <div class="hint" style="margin-top: 7px">镜像画质、帧率和码率在「执行 → 镜像」配置。</div>
+              </div>
+            </section>
           </div>
-          <div class="card-body">
-            <el-skeleton v-if="healthQuery.isLoading.value" :rows="3" animated />
-            <el-alert
-              v-else-if="healthQuery.isError.value || !health"
-              type="warning"
-              :closable="false"
-              show-icon
-              title="后端未连接"
-              :description="describeApiError(healthQuery.error.value)"
-            />
-            <el-descriptions v-else :column="1" border size="small">
-              <el-descriptions-item label="状态">
-                <StatusTag :tone="health.status === 'ok' ? 'green' : 'amber'">{{ health.status }}</StatusTag>
-              </el-descriptions-item>
-              <el-descriptions-item label="版本">{{ health.version }}</el-descriptions-item>
-              <el-descriptions-item label="数据库"><span class="code-text">{{ health.db }}</span></el-descriptions-item>
-              <el-descriptions-item label="adb">
-                <span class="code-text">{{ health.adb?.path || '—' }} {{ health.adb?.version ? `· ${health.adb.version}` : '' }} · 设备 {{ health.adb?.devices ?? 0 }}</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="数据目录"><span class="code-text">{{ health.data_dir }}</span></el-descriptions-item>
-              <el-descriptions-item label="后端构建">
-                <span class="code-text">{{ health.build?.commit ?? '未知' }}{{ health.build?.dirty ? ' (+未提交改动)' : '' }} · {{ formatDateTime(health.build?.built_at) }}</span>
-              </el-descriptions-item>
-            </el-descriptions>
+
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            title="排障顺序：ADB → uiautomator2 → scrcpy jar/版本"
+            description="工具链状态来自后端 /api/health，缓存 5 秒；改完路径后可点「重新探测」立即刷新。"
+          />
+        </div>
+
+        <!-- ============================================================ 执行 -->
+        <div v-else-if="activeTab === 'execution'" class="settings-pane">
+          <MirrorConfigCard
+            :values="values"
+            :sources="sources"
+            :schema="schemaByKey"
+            :server-version="SCRCPY_SERVER_VERSION"
+            @change="onMirrorChange"
+            @clear="clearMirrorKey"
+          />
+
+          <div class="exec-grid">
+            <section class="card exec-card">
+              <div class="card-head">
+                <h2>运行节奏</h2>
+                <StatusTag tone="blue">engine</StatusTag>
+              </div>
+              <div class="card-body">
+                <div class="field-row">
+                  <SettingField
+                    v-for="entry in entriesFor('engine')"
+                    :key="entry.key"
+                    :entry="entry"
+                    :model-value="values[entry.key]"
+                    :source="sourceOf(entry)"
+                    @update:model-value="values[entry.key] = $event"
+                    @clear="deleteOverride(entry)"
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section class="card exec-card">
+              <div class="card-head">
+                <h2>录制与定位</h2>
+                <StatusTag tone="blue">recording</StatusTag>
+              </div>
+              <div class="card-body">
+                <div class="field-row">
+                  <SettingField
+                    v-for="entry in entriesFor('recording')"
+                    :key="entry.key"
+                    :entry="entry"
+                    :model-value="values[entry.key]"
+                    :source="sourceOf(entry)"
+                    @update:model-value="values[entry.key] = $event"
+                    @clear="deleteOverride(entry)"
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section class="card exec-card">
+              <div class="card-head">
+                <h2>采集</h2>
+                <StatusTag tone="blue">capture</StatusTag>
+              </div>
+              <div class="card-body">
+                <div class="field-row">
+                  <SettingField
+                    v-for="entry in entriesFor('capture')"
+                    :key="entry.key"
+                    :entry="entry"
+                    :model-value="values[entry.key]"
+                    :source="sourceOf(entry)"
+                    @update:model-value="values[entry.key] = $event"
+                    @clear="deleteOverride(entry)"
+                  />
+                </div>
+                <div class="hint" style="margin-top: 7px">采集内容会进入运行产物与报告。</div>
+              </div>
+            </section>
+
+            <section class="card exec-card">
+              <div class="card-head">
+                <h2>访问与安全</h2>
+                <StatusTag tone="blue">security</StatusTag>
+              </div>
+              <div class="card-body">
+                <SettingField
+                  v-for="entry in entriesFor('security')"
+                  :key="entry.key"
+                  :entry="entry"
+                  :model-value="values[entry.key]"
+                  :source="sourceOf(entry)"
+                  @update:model-value="values[entry.key] = $event"
+                  @clear="deleteOverride(entry)"
+                />
+                <div class="hint" style="margin-top: 7px">对外暴露服务时建议设置；修改后需重启后端生效。</div>
+              </div>
+            </section>
+          </div>
+
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            title="运行节奏与录制参数保存后立即用于下一次运行"
+            description="镜像参数（最大边 / 帧率 / 码率 / 裁剪）需要停止并重新启动镜像后生效；正在进行的运行不受影响。"
+          />
+        </div>
+
+        <!-- ============================================================ 存储 -->
+        <div v-else-if="activeTab === 'storage'" class="settings-pane">
+          <el-alert
+            type="warning"
+            :closable="false"
+            show-icon
+            title="数据目录 / 前端目录修改后需重启后端生效"
+            description="SQLite 数据库引擎不会热切换；产物挂载会按新目录动态解析。"
+          />
+          <section class="card settings-card">
+            <div class="card-head">
+              <h2>存储设置</h2>
+              <span class="hint">数据库目录、产物目录与保留策略</span>
+            </div>
+            <div class="card-body">
+              <div class="settings-grid">
+                <SettingField
+                  v-for="entry in entriesFor('storage')"
+                  :key="entry.key"
+                  :entry="entry"
+                  :model-value="values[entry.key]"
+                  :source="sourceOf(entry)"
+                  @update:model-value="values[entry.key] = $event"
+                  @clear="deleteOverride(entry)"
+                />
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2>存储统计</h2>
+              <el-button
+                size="small"
+                :icon="Refresh"
+                :loading="statsQuery.isFetching.value"
+                @click="statsQuery.refetch()"
+              >
+                刷新统计
+              </el-button>
+            </div>
+            <div class="card-body">
+              <el-skeleton v-if="statsQuery.isLoading.value" :rows="4" animated />
+              <el-alert
+                v-else-if="statsQuery.isError.value"
+                type="warning"
+                :closable="false"
+                show-icon
+                title="统计加载失败"
+                :description="describeApiError(statsQuery.error.value)"
+              />
+              <template v-else-if="stats">
+                <div class="kv-grid">
+                  <div class="kv">
+                    <span>DB 体积</span><strong>{{ formatBytes(stats.db_size) }}</strong>
+                  </div>
+                  <div class="kv">
+                    <span>产物体积</span><strong>{{ formatBytes(stats.artifacts_size) }}</strong>
+                  </div>
+                  <div class="kv">
+                    <span>运行数</span><strong>{{ stats.runs }}</strong>
+                  </div>
+                  <div class="kv">
+                    <span>产物数</span><strong>{{ stats.artifacts }}</strong>
+                  </div>
+                  <div class="kv">
+                    <span>最早运行</span><strong>{{ formatDateTime(stats.oldest_run_at) }}</strong>
+                  </div>
+                  <div class="kv">
+                    <span>保留天数</span><strong>{{ stats.retention_days }}</strong>
+                  </div>
+                </div>
+                <div class="maintenance-actions">
+                  <span class="small">保留天数</span>
+                  <el-input-number
+                    v-model="retentionDays"
+                    size="small"
+                    :min="1"
+                    :max="3650"
+                    controls-position="right"
+                    style="width: 120px"
+                  />
+                  <el-checkbox v-model="dryRun" size="small">仅演练（dry_run，不删除）</el-checkbox>
+                  <el-button
+                    :type="dryRun ? 'default' : 'danger'"
+                    :icon="Delete"
+                    :loading="cleanupMutation.isPending.value"
+                    @click="runCleanup"
+                  >
+                    执行清理
+                  </el-button>
+                </div>
+                <div v-if="cleanupResult" style="margin-top: 12px">
+                  <el-alert
+                    v-if="cleanupSummary"
+                    type="info"
+                    :closable="false"
+                    show-icon
+                    :title="cleanupSummary"
+                  />
+                  <pre class="pre-block" style="margin-top: 8px">{{ prettyJson(cleanupResult) }}</pre>
+                </div>
+              </template>
+            </div>
+          </section>
+        </div>
+
+        <!-- ============================================================ 关于 -->
+        <div v-else class="settings-pane">
+          <section class="card settings-card">
+            <div class="card-head">
+              <h2>关于 AutoTest</h2>
+              <StatusTag :tone="health?.status === 'ok' ? 'green' : 'amber'">
+                {{ health?.status ?? '未知' }}
+              </StatusTag>
+            </div>
+            <div class="card-body">
+              <div class="kv-grid">
+                <div class="kv">
+                  <span>前端版本</span><strong>{{ APP_VERSION }}</strong>
+                </div>
+                <div class="kv">
+                  <span>前端提交</span><strong class="code-text">{{ APP_COMMIT }}</strong>
+                </div>
+                <div class="kv">
+                  <span>页面构建</span><strong>{{ formatDateTime(APP_BUILD_TIME) }}</strong>
+                </div>
+                <div class="kv">
+                  <span>后端版本</span><strong>{{ health?.version ?? '—' }}</strong>
+                </div>
+                <div class="kv">
+                  <span>数据目录</span><strong class="code-text">{{ health?.data_dir ?? '—' }}</strong>
+                </div>
+                <div class="kv">
+                  <span>配置优先级</span><strong>默认 &lt; 文件 &lt; 数据库 &lt; 环境变量</strong>
+                </div>
+              </div>
+              <div class="hint" style="margin-top: 10px">
+                单机 Android UI 自动化平台：设备控制、脚本编排、录制回放、运行观测与报告。
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2>健康信息</h2>
+              <el-button
+                size="small"
+                :icon="Refresh"
+                :loading="healthQuery.isFetching.value"
+                @click="healthQuery.refetch()"
+              >
+                刷新
+              </el-button>
+            </div>
+            <div class="card-body">
+              <el-skeleton v-if="healthQuery.isLoading.value" :rows="3" animated />
+              <el-alert
+                v-else-if="healthQuery.isError.value || !health"
+                type="warning"
+                :closable="false"
+                show-icon
+                title="后端未连接"
+                :description="describeApiError(healthQuery.error.value)"
+              />
+              <el-descriptions v-else :column="1" border size="small">
+                <el-descriptions-item label="状态">
+                  <StatusTag :tone="health.status === 'ok' ? 'green' : 'amber'">
+                    {{ health.status }}
+                  </StatusTag>
+                </el-descriptions-item>
+                <el-descriptions-item label="版本">{{ health.version }}</el-descriptions-item>
+                <el-descriptions-item label="数据库">
+                  <span class="code-text">{{ health.db }}</span>
+                </el-descriptions-item>
+                <el-descriptions-item label="adb">
+                  <span class="code-text">
+                    {{ health.adb?.path || '—' }}
+                    {{ health.adb?.version ? `· ${health.adb.version}` : '' }}
+                    · 设备 {{ health.adb?.devices ?? 0 }}
+                  </span>
+                </el-descriptions-item>
+                <el-descriptions-item label="数据目录">
+                  <span class="code-text">{{ health.data_dir }}</span>
+                </el-descriptions-item>
+                <el-descriptions-item label="后端构建">
+                  <span class="code-text">
+                    {{ health.build?.commit ?? '未知' }}{{ health.build?.dirty ? ' (+未提交改动)' : '' }} ·
+                    {{ formatDateTime(health.build?.built_at) }}
+                  </span>
+                </el-descriptions-item>
+              </el-descriptions>
+            </div>
+          </section>
+        </div>
+
+        <!-- ============================================================ 未保存操作条 -->
+        <div v-if="showSavebar" class="savebar" role="region" aria-label="未保存的设置更改">
+          <div class="savebar-summary">
+            <div class="savebar-title">
+              <span class="savebar-dot" aria-hidden="true" />
+              未保存 {{ changedKeys.length }} 项
+            </div>
+            <div class="savebar-sub">保存后立即生效；镜像参数需重启镜像</div>
+          </div>
+          <div class="savebar-actions">
+            <el-button size="small" :disabled="updateMutation.isPending.value" @click="discardChanges">
+              放弃更改
+            </el-button>
+            <el-button
+              type="primary"
+              size="small"
+              :icon="Check"
+              :loading="updateMutation.isPending.value"
+              @click="saveSettings"
+            >
+              保存更改
+            </el-button>
+            <el-dropdown
+              trigger="click"
+              placement="top-end"
+              :disabled="updateMutation.isPending.value"
+              @command="onMoreCommand"
+            >
+              <el-button
+                size="small"
+                class="savebar-more"
+                :icon="MoreFilled"
+                title="更多：恢复默认 / 重新加载"
+                aria-label="更多设置操作"
+              />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item
+                    command="reset"
+                    :icon="RefreshLeft"
+                    :disabled="resetMutation.isPending.value"
+                  >
+                    恢复默认
+                  </el-dropdown-item>
+                  <el-dropdown-item command="reload" :icon="Refresh">重新加载</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </div>
-      </el-tab-pane>
-    </el-tabs>
-
-    <div v-if="settings && activeTab !== 'about'" class="settings-savebar settings-savebar-bottom">
-      <el-button
-        type="primary"
-        :icon="Refresh"
-        :loading="updateMutation.isPending.value"
-        @click="saveSettings"
-      >
-        保存设置
-      </el-button>
-      <el-button :icon="RefreshLeft" :loading="resetMutation.isPending.value" @click="resetSettings">
-        恢复默认
-      </el-button>
-      <el-button @click="settingsQuery.refetch()">重新加载</el-button>
-      <span class="spacer" />
-      <span class="hint">只保存改动过的项 · 来源标记仅在覆盖时显示</span>
+      </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 页头常驻的「更多」入口：无未保存改动时也能恢复默认 / 重新加载。 */
+.page-more {
+  width: 26px;
+  padding: 0;
+  margin-left: 2px;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.settings-nav {
+  position: sticky;
+  top: calc(var(--top) + 16px);
+  padding: 6px;
+}
+
+.settings-tab {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-tab:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.settings-tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.settings-note {
+  margin-top: 8px;
+  padding: 8px 9px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.settings-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.settings-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.settings-card .card-body {
+  padding: 14px;
+}
+
+/* ---- 外观 */
+.theme-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.theme-choice {
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.theme-choice:hover {
+  border-color: var(--accent);
+}
+
+.theme-choice.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.theme-preview {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  height: 44px;
+  margin-bottom: 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.theme-preview .tp-rail {
+  background: #0f151d;
+}
+
+.theme-preview .tp-body {
+  padding: 5px;
+  background: #f2f4f7;
+}
+
+.theme-preview .tp-body::before {
+  content: '';
+  display: block;
+  height: 7px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 8px 0 #e3e8ef;
+}
+
+.theme-choice[data-theme-choice='dark'] .theme-preview .tp-body {
+  background: #0c1118;
+}
+
+.theme-choice[data-theme-choice='dark'] .theme-preview .tp-body::before {
+  background: #141b24;
+  box-shadow: 0 8px 0 #263241;
+}
+
+.theme-choice[data-theme-choice='system'] .theme-preview .tp-body {
+  background: linear-gradient(90deg, #f2f4f7 0 50%, #0c1118 50% 100%);
+}
+
+.theme-choice[data-theme-choice='system'] .theme-preview .tp-body::before {
+  background: linear-gradient(90deg, #fff 0 50%, #141b24 50% 100%);
+  box-shadow: 0 8px 0 #263241;
+}
+
+.theme-choice strong {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.theme-choice small {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ---- 工具链 */
+.tool-card .card-body {
+  padding: 14px;
+}
+
+.tool-card .setting-field {
+  margin-top: 6px;
+}
+
+.tool-head {
+  font-weight: 650;
+}
+
+.tool-head .tag {
+  margin-left: auto;
+}
+
+.tool-row {
+  border-bottom-color: var(--line-soft);
+}
+
+/* ---- 执行 */
+.exec-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.exec-card .card-body {
+  padding: 14px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 10px;
+}
+
+/* ---- 存储 / 关于 */
+.kv-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.kv-grid .kv {
+  border-bottom-color: var(--line-soft);
+}
+
+/* ---- 未保存操作条 */
+/* 内容较短时也让操作条落到内容列底部，避免改动后要往下找。 */
+.settings-main.has-unsaved {
+  min-height: calc(100vh - var(--top) - 84px);
+}
+
+/* 给 sticky 操作条预留滚动余量，滚到末尾时最后一张卡片/alert 不会被盖住。 */
+.settings-main.has-unsaved .settings-pane {
+  padding-bottom: 96px;
+}
+
+.savebar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.savebar-summary {
+  min-width: 0;
+}
+
+.savebar-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.savebar-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+.savebar-sub {
+  margin-top: 2px;
+  padding-left: 14px;
+  color: var(--muted-2);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.savebar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.savebar-actions :deep(.el-button) {
+  height: 28px;
+  padding: 0 11px;
+  margin-left: 0;
+  font-size: 11.5px;
+}
+
+.savebar-actions :deep(.savebar-more) {
+  width: 28px;
+  padding: 0;
+}
+
+@media (max-width: 900px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-nav {
+    position: static;
+    display: flex;
+    gap: 3px;
+    overflow-x: auto;
+    padding: 5px;
+  }
+
+  .settings-tab {
+    width: auto;
+    flex: none;
+    padding: 0 10px;
+  }
+
+  .settings-note {
+    display: none;
+  }
+
+  .exec-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .theme-choices,
+  .field-row,
+  .kv-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* 窄屏操作条可能折成两行，多留一些滚动余量。 */
+  .settings-main.has-unsaved .settings-pane {
+    padding-bottom: 128px;
+  }
+
+  .savebar {
+    gap: 8px;
+    padding: 10px;
+  }
+}
+</style>

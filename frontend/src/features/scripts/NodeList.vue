@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ArrowDown, ArrowUp, Delete, Plus, Search } from '@element-plus/icons-vue'
-import { computed, ref } from 'vue'
-
+import { Delete, Plus, Rank, Search } from '@element-plus/icons-vue'
 import { useDebounceFn } from '@vueuse/core'
+import { computed, onBeforeUnmount, ref } from 'vue'
 
 import type { NodeType, StepNode } from '@/types/api'
 import { NODE_TYPE_META, NODE_TYPES } from './nodeDefaults'
 import StatusTag from '@/components/StatusTag.vue'
+
+type DropPosition = 'before' | 'after'
 
 const props = defineProps<{
   steps: StepNode[]
@@ -16,7 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [id: string]
   add: [type: NodeType]
-  move: [id: string, direction: -1 | 1]
+  reorder: [fromId: string, targetId: string, position: DropPosition]
   delete: [id: string]
   toggleEnabled: [id: string, enabled: boolean]
 }>()
@@ -32,6 +33,9 @@ function onSearchInput(value: string): void {
   void updateFilter(value)
 }
 
+const isFiltering = computed(() => search.value.trim().length > 0)
+const dragDisabled = computed(() => isFiltering.value)
+
 const visibleSteps = computed(() => {
   if (!filteredSearch.value) return props.steps
   return props.steps.filter((step) => {
@@ -44,6 +48,79 @@ const visibleSteps = computed(() => {
 function addNode(type: string): void {
   emit('add', type as NodeType)
 }
+
+// ---------------------------------------------------------------- 拖拽排序
+const draggingId = ref<string | null>(null)
+const dropTargetId = ref<string | null>(null)
+const dropPosition = ref<DropPosition | null>(null)
+const suppressClick = ref(false)
+let suppressTimer: number | undefined
+
+function onDragStart(step: StepNode, event: DragEvent): void {
+  if (dragDisabled.value) {
+    event.preventDefault()
+    return
+  }
+  draggingId.value = step.id
+  dropTargetId.value = null
+  dropPosition.value = null
+  suppressClick.value = true
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', step.id)
+  }
+}
+
+function onDragOver(step: StepNode, event: DragEvent): void {
+  if (!draggingId.value) return
+  if (draggingId.value === step.id) {
+    dropTargetId.value = null
+    dropPosition.value = null
+    return
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const after = event.clientY > rect.top + rect.height / 2
+  dropTargetId.value = step.id
+  dropPosition.value = after ? 'after' : 'before'
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+}
+
+function onDragLeave(step: StepNode, event: DragEvent): void {
+  if (dropTargetId.value !== step.id) return
+  const related = event.relatedTarget as Node | null
+  if (related && (event.currentTarget as HTMLElement).contains(related)) return
+  dropTargetId.value = null
+  dropPosition.value = null
+}
+
+function finishDrag(): void {
+  draggingId.value = null
+  dropTargetId.value = null
+  dropPosition.value = null
+  if (suppressTimer !== undefined) window.clearTimeout(suppressTimer)
+  if (suppressClick.value) {
+    suppressTimer = window.setTimeout(() => {
+      suppressClick.value = false
+      suppressTimer = undefined
+    }, 160)
+  }
+}
+
+function onDrop(step: StepNode): void {
+  const fromId = draggingId.value
+  const position = dropPosition.value ?? 'before'
+  finishDrag()
+  if (fromId && fromId !== step.id) emit('reorder', fromId, step.id, position)
+}
+
+function onRowClick(step: StepNode): void {
+  if (draggingId.value || suppressClick.value) return
+  emit('select', step.id)
+}
+
+onBeforeUnmount(() => {
+  if (suppressTimer !== undefined) window.clearTimeout(suppressTimer)
+})
 </script>
 
 <template>
@@ -75,12 +152,35 @@ function addNode(type: string): void {
 
     <div class="editor-col-body">
       <div
-        v-for="(step, index) in visibleSteps"
+        v-for="step in visibleSteps"
         :key="step.id"
-        :class="['node-row', { selected: step.id === selectedId, disabled: !step.enabled }]"
+        :class="[
+          'node-row',
+          {
+            selected: step.id === selectedId,
+            disabled: !step.enabled,
+            dragging: draggingId === step.id,
+            'drop-before': dropTargetId === step.id && dropPosition === 'before',
+            'drop-after': dropTargetId === step.id && dropPosition === 'after',
+          },
+        ]"
         :title="`${step.id} · ${step.type}${step.enabled ? '' : '（已禁用）'}`"
-        @click="emit('select', step.id)"
+        @click="onRowClick(step)"
+        @dragover.prevent="onDragOver(step, $event)"
+        @dragleave="onDragLeave(step, $event)"
+        @drop.prevent="onDrop(step)"
       >
+        <span
+          class="drag-handle"
+          :class="{ disabled: dragDisabled }"
+          :draggable="!dragDisabled"
+          :title="dragDisabled ? '搜索过滤时不可拖拽' : '拖动排序'"
+          aria-label="拖动排序"
+          @dragstart="onDragStart(step, $event)"
+          @dragend="finishDrag"
+        >
+          <el-icon :size="13"><Rank /></el-icon>
+        </span>
         <span class="node-num">{{ steps.findIndex((item) => item.id === step.id) + 1 }}</span>
         <span class="node-ic">{{ NODE_TYPE_META[step.type].icon }}</span>
         <span class="node-copy">
@@ -99,23 +199,10 @@ function addNode(type: string): void {
           <el-button
             size="small"
             text
-            :icon="ArrowUp"
-            :disabled="index === 0"
-            @click="emit('move', step.id, -1)"
-          />
-          <el-button
-            size="small"
-            text
-            :icon="ArrowDown"
-            :disabled="index === visibleSteps.length - 1"
-            @click="emit('move', step.id, 1)"
-          />
-          <el-button
-            size="small"
-            text
             type="danger"
             :icon="Delete"
             :disabled="steps.length <= 1"
+            title="删除节点"
             @click="emit('delete', step.id)"
           />
         </span>
@@ -126,9 +213,66 @@ function addNode(type: string): void {
       </div>
     </div>
 
-    <div class="editor-col-head" style="border-top: 1px solid var(--line); border-bottom: 0">
-      <span class="hint">共 {{ steps.length }} 个节点 · 至少保留 1 个</span>
+    <div class="editor-col-head editor-col-foot">
+      <span class="hint">
+        {{ steps.length }} 个节点 ·
+        {{ isFiltering ? '搜索过滤时拖拽已禁用' : '拖动手柄排序 · Alt+↑/↓ 也可移动' }}
+      </span>
       <StatusTag tone="gray">when 默认关闭</StatusTag>
     </div>
   </div>
 </template>
+
+<style scoped>
+.node-row {
+  position: relative;
+}
+
+.drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 22px;
+  flex: none;
+  border-radius: 4px;
+  color: var(--muted-2);
+  cursor: grab;
+}
+
+.drag-handle:hover {
+  color: var(--ink);
+  background: var(--surface-3);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-handle.disabled {
+  color: var(--muted-2);
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.drag-handle.disabled:hover {
+  background: transparent;
+}
+
+.node-row.dragging {
+  opacity: 0.42;
+}
+
+.node-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.node-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.editor-col-foot {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+</style>

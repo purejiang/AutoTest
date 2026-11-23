@@ -11,6 +11,13 @@ export interface RecordingListResult {
   total: number
 }
 
+export interface RecordingListParams {
+  status?: RecordingStatus
+  mode?: 'web' | 'physical'
+  limit?: number
+  offset?: number
+}
+
 export interface RecordingEventsResult {
   items: RecordingEvent[]
   total: number
@@ -41,7 +48,7 @@ export interface ConvertRecordingResult {
 export const recordingKeys = {
   all: ['recordings'] as const,
   lists: () => [...recordingKeys.all, 'list'] as const,
-  list: (params: { status?: RecordingStatus; limit?: number }) => [...recordingKeys.lists(), params] as const,
+  list: (params: RecordingListParams) => [...recordingKeys.lists(), params] as const,
   detail: (id: string) => [...recordingKeys.all, 'detail', id] as const,
   events: (id: string, limit: number) => [...recordingKeys.all, 'events', id, limit] as const,
 }
@@ -56,7 +63,7 @@ function requireId(id: string | undefined): string {
 // ---------------------------------------------------------------- 查询
 
 export function useRecordings(
-  params: MaybeRefOrGetter<{ status?: RecordingStatus; limit?: number }> = {},
+  params: MaybeRefOrGetter<RecordingListParams> = {},
   options: { refetchInterval?: number | false; enabled?: MaybeRefOrGetter<boolean> } = {},
 ) {
   const resolved = computed(() => toValue(params))
@@ -65,7 +72,12 @@ export function useRecordings(
     queryFn: async ({ signal }) => {
       const raw = await get<ItemsLike<Recording>>('/recordings', {
         signal,
-        query: { status: resolved.value.status, limit: resolved.value.limit ?? 100 },
+        query: {
+          status: resolved.value.status,
+          mode: resolved.value.mode,
+          limit: resolved.value.limit ?? 100,
+          offset: resolved.value.offset ?? 0,
+        },
       })
       return { items: itemsOf(raw), total: totalOf(raw) }
     },
