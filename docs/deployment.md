@@ -1,4 +1,4 @@
-# Windows / Linux 部署
+# macOS / Windows / Linux 部署
 
 AutoTest 是**单机应用**：一个 FastAPI 进程同时提供 API、WebSocket 和 Vue 静态页面；
 数据落 SQLite，不依赖 Docker / PostgreSQL / Redis。Android 设备必须通过 USB（或
@@ -8,8 +8,8 @@ AutoTest 是**单机应用**：一个 FastAPI 进程同时提供 API、WebSocket
 
 | 形态 | 适合 | 运行依赖 |
 |---|---|---|
-| 源码运行 | 开发机、长期可维护的 Linux 小主机 | Python 3.12（uv）、Node 20.19+/22 仅构建用、adb |
-| PyInstaller 单文件 | 给不装 Python/Node 的 Windows/Linux 用户 | 仅 adb；前端已打进可执行文件 |
+| 源码运行 | 开发机、长期可维护的 Linux 小主机、macOS | Python 3.12（uv）、Node 20.19+/22 仅构建用、adb |
+| PyInstaller 单文件 | 给不装 Python/Node 的 Windows/Linux/macOS 用户 | 仅 adb；前端已打进可执行文件 |
 | 前端独立热更 | 打包后只想换界面 | 额外提供 `frontend/dist` 目录 |
 
 > 打包产物**不能跨平台**：Windows 包在 Windows 上打，Linux 包在 Linux 上打。
@@ -41,7 +41,7 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Open
 `start.ps1` 会自动建 `backend\.venv`、构建 Vue，并启动 `http://127.0.0.1:8787`。
 
 - 换端口：`-Port 9000`
-- 局域网访问：`-BindHost 0.0.0.0`（先看第 6 节安全说明）
+- 局域网访问：`-BindHost 0.0.0.0`（先看第 7 节安全说明）
 - 改前端后：`-Rebuild`
 
 ### 3.2 打包 exe
@@ -177,7 +177,52 @@ sudo journalctl -u autotest -f
 数据目录归 `autotest` 用户所有；服务账号必须能看到 USB 设备（`plugdev`）。
 没有桌面登录的 Linux 服务器，第一次 adb 授权仍要在手机上点允许。
 
-## 5. 反向代理与 WebSocket
+## 5. macOS
+
+macOS 和 Linux 共用同一套启动脚本、数据目录和单文件入口；当前开发/真机联调也是
+在 macOS 上完成的。
+
+### 5.1 源码运行
+
+前置：Xcode Command Line Tools（可选，主要给编译工具）、Node 20.19+/22、
+Android platform-tools。adb 常见路径是 `~/Library/Android/sdk/platform-tools/adb`，
+`start.sh` 会自动加入 PATH；也可以用设置页填绝对路径。
+
+```bash
+sh scripts/setup.sh
+sh scripts/start.sh --open
+```
+
+也可以双击项目根目录的 `启动AutoTest.command`。没有 USB 权限问题（不需要 udev），
+第一次连接手机时在手机上点“允许 USB 调试”。
+
+### 5.2 打包
+
+```bash
+cd frontend && npm ci && npm run build && cd ..
+sh scripts/build.sh --pack
+# 产物：backend/dist/autotest（Mach-O）
+./backend/dist/autotest --data-dir ~/.autotest/data --host 127.0.0.1 --port 8787
+```
+
+注意：
+
+- PyInstaller 产物是**当前 CPU 架构**的 Mach-O，不会自动生成 Intel + Apple Silicon
+  通用包。Apple Silicon 建议用 arm64 的 Python/uv 环境重新打包；跨架构分发时分别
+  构建，或自行做 universal2。
+- 本地自己用可以直接运行；从网上下载的未签名二进制可能被 Gatekeeper 拦：
+  `xattr -dr com.apple.quarantine backend/dist/autotest`，或右键“打开”。
+- 要正式分发再考虑 codesign + notarization；单文件包当前没有 `.app` 图标/签名。
+- 打包产物已内置前端，但运行时仍需要系统里的 `adb`。
+
+### 5.3 launchd（可选常驻）
+
+需要登录用户会话（USB 设备和 adb 授权都在该用户下）。写一个
+`~/Library/LaunchAgents/com.autotest.app.plist`，用 `launchctl bootstrap` 加载；
+`ProgramArguments` 可以指向 `backend/.venv/bin/python -m uvicorn ...` 或打包后的
+`autotest`。个人使用更推荐保持终端/`.command` 启动，避免 macOS 权限和会话问题。
+
+## 6. 反向代理与 WebSocket
 
 如果要在局域网用域名/HTTPS，用 Nginx/Caddy 反代 `127.0.0.1:8787`，并注意：
 
@@ -198,7 +243,7 @@ location / {
 }
 ```
 
-## 6. 安全（重要）
+## 7. 安全（重要）
 
 v0.2 的 `security.token` **只用于镜像 WebSocket**；REST API 没有统一鉴权。
 因此：
@@ -207,7 +252,7 @@ v0.2 的 `security.token` **只用于镜像 WebSocket**；REST API 没有统一�
 - 局域网：只放行可信网段，并在反向代理层加 Basic Auth / mTLS / VPN；
 - **不要把 8787 直接暴露到公网**。设备控制接口能操作 USB 连接的手机。
 
-## 7. 数据、备份与升级
+## 8. 数据、备份与升级
 
 - 数据目录包含 `autotest.db`（SQLite WAL）、`artifacts/`、`reports/`、日志。
 - 备份时先停服务，再复制整个数据目录；至少要包含 `autotest.db`、`-wal`、`-shm`。
@@ -215,7 +260,7 @@ v0.2 的 `security.token` **只用于镜像 WebSocket**；REST API 没有统一�
   升级前备份并移走旧 `autotest.db`，再启动。
 - 换版本：替换代码/可执行文件，保留 `AUTOTEST_DATA_DIR`；前端 dist 可单独热更。
 
-## 8. 部署后自检
+## 9. 部署后自检
 
 ```bash
 curl http://127.0.0.1:8787/api/health
