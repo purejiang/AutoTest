@@ -1,5 +1,6 @@
 // 设置 / 健康 / 维护 hooks（契约 §7.6 + §7.5 maintenance）
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 
 import type { HealthResponse, MaintenanceStats, SettingsResponse } from '@/types/api'
 
@@ -22,7 +23,7 @@ export const settingsKeys = {
 // ---------------------------------------------------------------- 设置
 
 export function useSettings() {
-  return useQuery<SettingsResponse>({
+  return useQuery({
     queryKey: settingsKeys.detail(),
     queryFn: ({ signal }) => get<SettingsResponse>('/settings', { signal }),
     staleTime: 5000,
@@ -31,8 +32,8 @@ export function useSettings() {
 
 export function useUpdateSettings() {
   const queryClient = useQueryClient()
-  return useMutation<SettingsResponse, Error, Record<string, unknown>>({
-    mutationFn: (values) => put<SettingsResponse>('/settings', { values }),
+  return useMutation({
+    mutationFn: (values: Record<string, unknown>) => put<SettingsResponse>('/settings', { values }),
     onSuccess: (data) => {
       queryClient.setQueryData(settingsKeys.detail(), data)
       void queryClient.invalidateQueries({ queryKey: settingsKeys.all })
@@ -43,7 +44,7 @@ export function useUpdateSettings() {
 
 export function useResetSettings() {
   const queryClient = useQueryClient()
-  return useMutation<SettingsResponse, Error, void>({
+  return useMutation({
     mutationFn: () => post<SettingsResponse>('/settings/reset'),
     onSuccess: (data) => {
       queryClient.setQueryData(settingsKeys.detail(), data)
@@ -54,8 +55,8 @@ export function useResetSettings() {
 
 export function useDeleteSettingOverride() {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, string>({
-    mutationFn: (key) => del<unknown>(`/settings/${encodeURIComponent(key)}`),
+  return useMutation({
+    mutationFn: (key: string) => del<unknown>(`/settings/${encodeURIComponent(key)}`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: settingsKeys.all })
     },
@@ -64,26 +65,25 @@ export function useDeleteSettingOverride() {
 
 // ---------------------------------------------------------------- 健康
 
-export function useHealth(options: { enabled?: boolean } = {}) {
-  return useQuery<HealthResponse>({
+export function useHealth(options: { enabled?: MaybeRefOrGetter<boolean> } = {}) {
+  return useQuery({
     queryKey: settingsKeys.health,
     queryFn: ({ signal }) => get<HealthResponse>('/health', { signal }),
-    enabled: options.enabled ?? true,
+    enabled: computed(() => toValue(options.enabled ?? true)),
     refetchInterval: 15000,
     retry: false,
     staleTime: 5000,
-    // 后端未启动是预期状态，Header 自行展示离线，不弹全局错误提示
     meta: { suppressError: true },
   })
 }
 
 // ---------------------------------------------------------------- 维护
 
-export function useMaintenanceStats(options: { enabled?: boolean } = {}) {
-  return useQuery<MaintenanceStats>({
+export function useMaintenanceStats(options: { enabled?: MaybeRefOrGetter<boolean> } = {}) {
+  return useQuery({
     queryKey: settingsKeys.maintenance,
     queryFn: ({ signal }) => get<MaintenanceStats>('/maintenance/stats', { signal }),
-    enabled: options.enabled ?? true,
+    enabled: computed(() => toValue(options.enabled ?? true)),
     retry: false,
     staleTime: 5000,
   })
@@ -91,8 +91,8 @@ export function useMaintenanceStats(options: { enabled?: boolean } = {}) {
 
 export function useCleanup() {
   const queryClient = useQueryClient()
-  return useMutation<CleanupResult, Error, CleanupPayload>({
-    mutationFn: (payload) => post<CleanupResult>('/maintenance/cleanup', payload),
+  return useMutation({
+    mutationFn: (payload: CleanupPayload) => post<CleanupResult>('/maintenance/cleanup', payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: settingsKeys.maintenance })
     },

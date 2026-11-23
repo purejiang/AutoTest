@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, Query
 from sqlalchemy import delete, func, select
 
 from .. import config
-from ..api_schemas import RunCreateRequest, RunDebugRequest
+from ..api_schemas import RunBulkDeleteRequest, RunCreateRequest, RunDebugRequest
 from ..db import session_scope
 from ..errors import ApiError
 from ..events import RunEventBus
@@ -176,6 +176,36 @@ def delete_run(run_id: int) -> dict[str, Any]:
     RunEventBus.drop_subscribers(run_id)
     controls.cleanup(run_id)
     return {"deleted": True, "run_id": int(run_id)}
+
+
+@router.post("/bulk-delete")
+def bulk_delete_runs(payload: RunBulkDeleteRequest) -> dict[str, Any]:
+    """批量删除终态运行：去重、空列表 400、进行中不自动 stop（CONFLICT）。"""
+    ids = list(dict.fromkeys(int(run_id) for run_id in payload.ids))
+    if not ids:
+        raise ApiError("INVALID_ARGUMENT", "ids must not be empty", {"ids": []})
+    deleted = 0
+    failed: list[dict[str, Any]] = []
+    for run_id in ids:
+        try:
+            run = _get_run_or_404(run_id)
+            if run["status"] not in TERMINAL_STATUSES:
+                raise ApiError(
+                    "CONFLICT",
+                    f"run {run_id} is {run['status']}, only terminal runs can be deleted",
+                    {"id": run_id, "status": run["status"]},
+                )
+            delete_run(run_id)
+        except ApiError as exc:
+            failed.append({"id": run_id, "code": exc.code, "message": exc.message})
+        except Exception as exc:  # noqa: BLE001 - 单条失败不能中断整批
+            logger.exception("bulk delete run failed: %s", run_id)
+            failed.append(
+                {"id": run_id, "code": "INTERNAL", "message": f"{type(exc).__name__}: {exc}"}
+            )
+        else:
+            deleted += 1
+    return {"deleted": deleted, "failed": failed}
 
 
 @router.get("/{run_id}/events")

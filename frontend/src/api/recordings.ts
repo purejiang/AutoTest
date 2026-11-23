@@ -1,7 +1,8 @@
 // 录制 hooks（契约 §7.4）
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 
-import type { Recording, RecordingEvent, RecordingStatus, Script } from '@/types/api'
+import type { BulkDeleteResult, Recording, RecordingEvent, RecordingStatus, Script } from '@/types/api'
 
 import { del, get, itemsOf, post, totalOf, type ItemsLike } from './client'
 
@@ -25,16 +26,15 @@ export interface ConvertRecordingPayload {
   name?: string
   include_kinds?: string[]
   exclude_seqs?: number[]
-  /** 定位方式：point=绝对坐标（默认，游戏/自绘界面最稳）| element=元素优先 */
   target_mode?: 'point' | 'element'
 }
 
-/** to_script 响应在契约里未细化：兼容 {script_id}/{id}/{script} 三种形态。 */
 export interface ConvertRecordingResult {
   script_id?: string
   script?: Script
   id?: string
-  warnings?: string[]
+  name?: string
+  warnings?: Array<string | { seq?: number; reason?: string }>
   [key: string]: unknown
 }
 
@@ -56,29 +56,31 @@ function requireId(id: string | undefined): string {
 // ---------------------------------------------------------------- 查询
 
 export function useRecordings(
-  params: { status?: RecordingStatus; limit?: number } = {},
-  options: { refetchInterval?: number | false; enabled?: boolean } = {},
+  params: MaybeRefOrGetter<{ status?: RecordingStatus; limit?: number }> = {},
+  options: { refetchInterval?: number | false; enabled?: MaybeRefOrGetter<boolean> } = {},
 ) {
-  return useQuery<RecordingListResult>({
-    queryKey: recordingKeys.list(params),
+  const resolved = computed(() => toValue(params))
+  return useQuery({
+    queryKey: computed(() => recordingKeys.list(resolved.value)),
     queryFn: async ({ signal }) => {
       const raw = await get<ItemsLike<Recording>>('/recordings', {
         signal,
-        query: { status: params.status, limit: params.limit ?? 100 },
+        query: { status: resolved.value.status, limit: resolved.value.limit ?? 100 },
       })
       return { items: itemsOf(raw), total: totalOf(raw) }
     },
-    enabled: options.enabled ?? true,
+    enabled: computed(() => toValue(options.enabled ?? true)),
     refetchInterval: options.refetchInterval ?? 5000,
     staleTime: 2000,
   })
 }
 
-export function useRecording(id: string | undefined) {
-  return useQuery<Recording>({
-    queryKey: recordingKeys.detail(id ?? ''),
-    queryFn: ({ signal }) => get<Recording>(base(id as string), { signal }),
-    enabled: Boolean(id),
+export function useRecording(id: MaybeRefOrGetter<string | undefined>) {
+  const resolved = computed(() => toValue(id))
+  return useQuery({
+    queryKey: computed(() => recordingKeys.detail(resolved.value ?? '')),
+    queryFn: ({ signal }) => get<Recording>(base(resolved.value as string), { signal }),
+    enabled: computed(() => Boolean(resolved.value)),
     refetchInterval: (query) => {
       const data = query.state.data
       return data && data.status !== 'stopped' ? 4000 : false
@@ -88,78 +90,89 @@ export function useRecording(id: string | undefined) {
 }
 
 export function useRecordingEvents(
-  id: string | undefined,
-  options: { limit?: number; sinceSeq?: number; enabled?: boolean; refetchInterval?: number | false } = {},
+  id: MaybeRefOrGetter<string | undefined>,
+  options: {
+    limit?: number
+    sinceSeq?: number
+    enabled?: MaybeRefOrGetter<boolean>
+    refetchInterval?: MaybeRefOrGetter<number | false>
+  } = {},
 ) {
+  const resolved = computed(() => toValue(id))
   const limit = options.limit ?? 1000
-  return useQuery<RecordingEventsResult>({
-    queryKey: recordingKeys.events(id ?? '', limit),
+  return useQuery({
+    queryKey: computed(() => recordingKeys.events(resolved.value ?? '', limit)),
     queryFn: async ({ signal }) => {
-      const raw = await get<ItemsLike<RecordingEvent>>(`${base(id as string)}/events`, {
+      const raw = await get<ItemsLike<RecordingEvent>>(`${base(resolved.value as string)}/events`, {
         signal,
         query: { since_seq: options.sinceSeq ?? 0, limit },
       })
       return { items: itemsOf(raw), total: totalOf(raw) }
     },
-    enabled: Boolean(id) && (options.enabled ?? true),
-    refetchInterval: options.refetchInterval ?? 4000,
+    enabled: computed(() => Boolean(resolved.value) && toValue(options.enabled ?? true)),
+    refetchInterval: computed(() => toValue(options.refetchInterval ?? 4000)),
     staleTime: 1000,
   })
 }
 
 // ---------------------------------------------------------------- 变更
 
-function invalidateRecording(queryClient: ReturnType<typeof useQueryClient>, id: string | undefined): void {
+function invalidateRecording(
+  queryClient: ReturnType<typeof useQueryClient>,
+  id: MaybeRefOrGetter<string | undefined>,
+): void {
   void queryClient.invalidateQueries({ queryKey: recordingKeys.all })
-  if (id) void queryClient.invalidateQueries({ queryKey: recordingKeys.detail(id) })
+  const value = toValue(id)
+  if (value) void queryClient.invalidateQueries({ queryKey: recordingKeys.detail(value) })
 }
 
 export function useCreateRecording() {
   const queryClient = useQueryClient()
-  return useMutation<Recording, Error, CreateRecordingPayload>({
-    mutationFn: (payload) => post<Recording>('/recordings', payload),
+  return useMutation({
+    mutationFn: (payload: CreateRecordingPayload) => post<Recording>('/recordings', payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: recordingKeys.all })
     },
   })
 }
 
-export function usePauseRecording(id: string | undefined) {
+export function usePauseRecording(id: MaybeRefOrGetter<string | undefined>) {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, void>({
-    mutationFn: () => post<unknown>(`${base(requireId(id))}/pause`),
+  return useMutation({
+    mutationFn: () => post<unknown>(`${base(requireId(toValue(id)))}/pause`),
     onSuccess: () => invalidateRecording(queryClient, id),
   })
 }
 
-export function useResumeRecording(id: string | undefined) {
+export function useResumeRecording(id: MaybeRefOrGetter<string | undefined>) {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, void>({
-    mutationFn: () => post<unknown>(`${base(requireId(id))}/resume`),
+  return useMutation({
+    mutationFn: () => post<unknown>(`${base(requireId(toValue(id)))}/resume`),
     onSuccess: () => invalidateRecording(queryClient, id),
   })
 }
 
-export function useStopRecording(id: string | undefined) {
+export function useStopRecording(id: MaybeRefOrGetter<string | undefined>) {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, void>({
-    mutationFn: () => post<unknown>(`${base(requireId(id))}/stop`),
+  return useMutation({
+    mutationFn: () => post<unknown>(`${base(requireId(toValue(id)))}/stop`),
     onSuccess: () => invalidateRecording(queryClient, id),
   })
 }
 
-export function useDeleteRecordingEvent(id: string | undefined) {
+export function useDeleteRecordingEvent(id: MaybeRefOrGetter<string | undefined>) {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, number>({
-    mutationFn: (seq) => del<unknown>(`${base(requireId(id))}/events/${seq}`),
+  return useMutation({
+    mutationFn: (seq: number) => del<unknown>(`${base(requireId(toValue(id)))}/events/${seq}`),
     onSuccess: () => invalidateRecording(queryClient, id),
   })
 }
 
-export function useConvertRecording(id: string | undefined) {
+export function useConvertRecording(id: MaybeRefOrGetter<string | undefined>) {
   const queryClient = useQueryClient()
-  return useMutation<ConvertRecordingResult, Error, ConvertRecordingPayload>({
-    mutationFn: (payload) => post<ConvertRecordingResult>(`${base(requireId(id))}/to_script`, payload),
+  return useMutation({
+    mutationFn: (payload: ConvertRecordingPayload) =>
+      post<ConvertRecordingResult>(`${base(requireId(toValue(id)))}/to_script`, payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: recordingKeys.all })
       void queryClient.invalidateQueries({ queryKey: ['scripts'] })
@@ -169,10 +182,33 @@ export function useConvertRecording(id: string | undefined) {
 
 export function useDeleteRecording() {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, string>({
-    mutationFn: (id) => del<unknown>(base(id)),
+  return useMutation({
+    mutationFn: (id: string) => del<unknown>(base(id)),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: recordingKeys.all })
     },
+  })
+}
+
+export function useBulkDeleteRecordings() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: string[]) => post<BulkDeleteResult<string>>('/recordings/bulk-delete', { ids }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: recordingKeys.all })
+    },
+  })
+}
+
+export function useBulkDeleteRecordingEvents(id: MaybeRefOrGetter<string | undefined>) {
+  const queryClient = useQueryClient()
+  const resolved = computed(() => toValue(id))
+  return useMutation({
+    mutationFn: (seqs: number[]) =>
+      post<BulkDeleteResult<number>>(
+        `/recordings/${encodeURIComponent(requireId(resolved.value))}/events/bulk-delete`,
+        { seqs },
+      ),
+    onSuccess: () => invalidateRecording(queryClient, id),
   })
 }

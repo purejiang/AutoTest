@@ -1,11 +1,12 @@
 // 设备与手动控制 API hooks（契约 §7.1）
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 
-import type { Device, HierarchyNode, ItemsResponse } from '@/types/api'
+import type { Device, HierarchyNode } from '@/types/api'
 
 import { apiBlob, apiText, get, itemsOf, post, type ItemsLike } from './client'
 
-// ---------------------------------------------------------------- 类型（契约未进 types/api.ts 的响应细节）
+// ---------------------------------------------------------------- 类型
 
 export interface AppInfo {
   package: string
@@ -27,7 +28,6 @@ export interface ConnectDevicePayload {
   address: string
 }
 
-/** 绝对坐标 (x,y) 与归一化坐标 (nx,ny) 二选一。 */
 export interface PointPayload {
   x?: number
   y?: number
@@ -92,7 +92,6 @@ export interface ConnectResult {
   output?: string
 }
 
-/** GET /api/devices/{serial}/hierarchy 的响应：{node, raw?}（raw=true 时附带原始 XML） */
 export interface HierarchyResponse {
   node: HierarchyNode | null
   raw: string | null
@@ -114,39 +113,45 @@ export const deviceKeys = {
 
 // ---------------------------------------------------------------- 查询
 
-export function useDevices(options: { refetchInterval?: number | false; enabled?: boolean } = {}) {
-  return useQuery<Device[]>({
+export function useDevices(
+  options: { refetchInterval?: number | false; enabled?: MaybeRefOrGetter<boolean> } = {},
+) {
+  return useQuery({
     queryKey: deviceKeys.list(),
-    queryFn: async ({ signal }) =>
-      itemsOf(await get<ItemsLike<Device>>('/devices', { signal })),
-    enabled: options.enabled ?? true,
+    queryFn: async ({ signal }) => itemsOf(await get<ItemsLike<Device>>('/devices', { signal })),
+    enabled: computed(() => toValue(options.enabled ?? true)),
     refetchInterval: options.refetchInterval ?? 5000,
     staleTime: 2000,
   })
 }
 
-export function useDeviceInfo(serial: string | null | undefined) {
-  return useQuery<Device>({
-    queryKey: deviceKeys.info(serial ?? ''),
-    queryFn: ({ signal }) => get<Device>(`${base(serial as string)}/info`, { signal }),
-    enabled: Boolean(serial),
+export function useDeviceInfo(serial: MaybeRefOrGetter<string | null | undefined>) {
+  const resolved = computed(() => toValue(serial))
+  return useQuery({
+    queryKey: computed(() => deviceKeys.info(resolved.value ?? '')),
+    queryFn: ({ signal }) => get<Device>(`${base(resolved.value as string)}/info`, { signal }),
+    enabled: computed(() => Boolean(resolved.value)),
     refetchInterval: 10000,
   })
 }
 
 /** 层级树：后端返回 {node, raw?}；兼容根节点或 {root|tree} 包装。 */
 export function useDeviceHierarchy(
-  serial: string | null | undefined,
-  options: { raw?: boolean; enabled?: boolean } = {},
+  serial: MaybeRefOrGetter<string | null | undefined>,
+  options: { raw?: MaybeRefOrGetter<boolean>; enabled?: MaybeRefOrGetter<boolean> } = {},
 ) {
-  const raw = options.raw ?? false
-  return useQuery<HierarchyResponse>({
-    queryKey: deviceKeys.hierarchy(serial ?? '', raw),
+  const resolved = computed(() => toValue(serial))
+  const raw = computed(() => Boolean(toValue(options.raw ?? false)))
+  return useQuery({
+    queryKey: computed(() => deviceKeys.hierarchy(resolved.value ?? '', raw.value)),
     queryFn: async ({ signal }) => {
-      const data = await get<unknown>(`${base(serial as string)}/hierarchy`, { signal, query: { raw } })
+      const data = await get<unknown>(`${base(resolved.value as string)}/hierarchy`, {
+        signal,
+        query: { raw: raw.value },
+      })
       return normalizeHierarchyResponse(data)
     },
-    enabled: Boolean(serial) && (options.enabled ?? true),
+    enabled: computed(() => Boolean(resolved.value) && toValue(options.enabled ?? true)),
     staleTime: 0,
     retry: false,
   })
@@ -188,18 +193,19 @@ function normalizeHierarchyNode(candidate: HierarchyNode): HierarchyNode {
 }
 
 export function useDeviceLogcat(
-  serial: string | null | undefined,
+  serial: MaybeRefOrGetter<string | null | undefined>,
   lines = 200,
-  options: { enabled?: boolean; refetchInterval?: number | false } = {},
+  options: { enabled?: MaybeRefOrGetter<boolean>; refetchInterval?: MaybeRefOrGetter<number | false> } = {},
 ) {
-  return useQuery<string[]>({
-    queryKey: deviceKeys.logcat(serial ?? '', lines),
+  const resolved = computed(() => toValue(serial))
+  return useQuery({
+    queryKey: computed(() => deviceKeys.logcat(resolved.value ?? '', lines)),
     queryFn: async ({ signal }) => {
-      const text = await apiText(`${base(serial as string)}/logcat`, { signal, query: { lines } })
+      const text = await apiText(`${base(resolved.value as string)}/logcat`, { signal, query: { lines } })
       return parseLogcat(text)
     },
-    enabled: Boolean(serial) && (options.enabled ?? true),
-    refetchInterval: options.refetchInterval ?? false,
+    enabled: computed(() => Boolean(resolved.value) && toValue(options.enabled ?? true)),
+    refetchInterval: computed(() => toValue(options.refetchInterval ?? false)),
     staleTime: 0,
     retry: false,
   })
@@ -225,21 +231,22 @@ function parseLogcat(text: string): string[] {
 }
 
 export function useDeviceApps(
-  serial: string | null | undefined,
-  params: { keyword?: string; type?: string; enabled?: boolean } = {},
+  serial: MaybeRefOrGetter<string | null | undefined>,
+  params: { keyword?: MaybeRefOrGetter<string>; type?: MaybeRefOrGetter<string>; enabled?: MaybeRefOrGetter<boolean> } = {},
 ) {
-  const keyword = params.keyword ?? ''
-  const type = params.type ?? ''
-  return useQuery<AppInfo[]>({
-    queryKey: deviceKeys.apps(serial ?? '', keyword, type),
+  const resolved = computed(() => toValue(serial))
+  const keyword = computed(() => toValue(params.keyword ?? ''))
+  const type = computed(() => toValue(params.type ?? ''))
+  return useQuery({
+    queryKey: computed(() => deviceKeys.apps(resolved.value ?? '', keyword.value, type.value)),
     queryFn: async ({ signal }) =>
       itemsOf(
-        await get<ItemsLike<AppInfo>>(`${base(serial as string)}/apps`, {
+        await get<ItemsLike<AppInfo>>(`${base(resolved.value as string)}/apps`, {
           signal,
-          query: { keyword, type },
+          query: { keyword: keyword.value, type: type.value },
         }),
       ),
-    enabled: Boolean(serial) && (params.enabled ?? true),
+    enabled: computed(() => Boolean(resolved.value) && toValue(params.enabled ?? true)),
     staleTime: 15000,
     retry: false,
   })
@@ -247,23 +254,26 @@ export function useDeviceApps(
 
 /** 截图是二进制 PNG，返回 Blob 由调用方转 objectURL。 */
 export function useDeviceScreenshot(
-  serial: string | null | undefined,
-  options: { enabled?: boolean; nonce?: number } = {},
+  serial: MaybeRefOrGetter<string | null | undefined>,
+  options: { enabled?: MaybeRefOrGetter<boolean>; nonce?: MaybeRefOrGetter<number> } = {},
 ) {
-  return useQuery<Blob>({
-    queryKey: deviceKeys.screenshot(serial ?? '', options.nonce ?? 0),
-    queryFn: ({ signal }) => apiBlob(`${base(serial as string)}/screenshot`, { signal }),
-    enabled: Boolean(serial) && (options.enabled ?? true),
+  const resolved = computed(() => toValue(serial))
+  const nonce = computed(() => toValue(options.nonce ?? 0))
+  return useQuery({
+    queryKey: computed(() => deviceKeys.screenshot(resolved.value ?? '', nonce.value)),
+    queryFn: ({ signal }) => apiBlob(`${base(resolved.value as string)}/screenshot`, { signal }),
+    enabled: computed(() => Boolean(resolved.value) && toValue(options.enabled ?? true)),
     staleTime: 0,
     retry: false,
   })
 }
 
-export function useMirrorStatus(serial: string | null | undefined, enabled = true) {
-  return useQuery<MirrorStatusInfo>({
-    queryKey: deviceKeys.mirror(serial ?? ''),
-    queryFn: ({ signal }) => get<MirrorStatusInfo>(`${base(serial as string)}/mirror/status`, { signal }),
-    enabled: Boolean(serial) && enabled,
+export function useMirrorStatus(serial: MaybeRefOrGetter<string | null | undefined>, enabled: MaybeRefOrGetter<boolean> = true) {
+  const resolved = computed(() => toValue(serial))
+  return useQuery({
+    queryKey: computed(() => deviceKeys.mirror(resolved.value ?? '')),
+    queryFn: ({ signal }) => get<MirrorStatusInfo>(`${base(resolved.value as string)}/mirror/status`, { signal }),
+    enabled: computed(() => Boolean(resolved.value) && toValue(enabled)),
     refetchInterval: 5000,
     retry: false,
   })
@@ -273,8 +283,8 @@ export function useMirrorStatus(serial: string | null | undefined, enabled = tru
 
 export function useConnectDevice() {
   const queryClient = useQueryClient()
-  return useMutation<ConnectResult, Error, ConnectDevicePayload>({
-    mutationFn: (payload) => post<ConnectResult>('/devices/connect', payload),
+  return useMutation({
+    mutationFn: (payload: ConnectDevicePayload) => post<ConnectResult>('/devices/connect', payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: deviceKeys.all })
     },
@@ -283,8 +293,8 @@ export function useConnectDevice() {
 
 export function useDisconnectDevice() {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, string>({
-    mutationFn: (serial) => post<unknown>(`${base(serial)}/disconnect`),
+  return useMutation({
+    mutationFn: (serial: string) => post<unknown>(`${base(serial)}/disconnect`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: deviceKeys.all })
     },
@@ -294,39 +304,29 @@ export function useDisconnectDevice() {
 // ---------------------------------------------------------------- 手动控制
 
 export function useDeviceTap(serial: string) {
-  return useMutation<unknown, Error, PointPayload>({
-    mutationFn: (payload) => post<unknown>(`${base(serial)}/tap`, payload),
-  })
+  return useMutation({ mutationFn: (payload: PointPayload) => post<unknown>(`${base(serial)}/tap`, payload) })
 }
 
 export function useDeviceLongPress(serial: string) {
-  return useMutation<unknown, Error, LongPressPayload>({
-    mutationFn: (payload) => post<unknown>(`${base(serial)}/long_press`, payload),
-  })
+  return useMutation({ mutationFn: (payload: LongPressPayload) => post<unknown>(`${base(serial)}/long_press`, payload) })
 }
 
 export function useDeviceSwipe(serial: string) {
-  return useMutation<unknown, Error, SwipePayload>({
-    mutationFn: (payload) => post<unknown>(`${base(serial)}/swipe`, payload),
-  })
+  return useMutation({ mutationFn: (payload: SwipePayload) => post<unknown>(`${base(serial)}/swipe`, payload) })
 }
 
 export function useDeviceKey(serial: string) {
-  return useMutation<unknown, Error, KeyPayload>({
-    mutationFn: (payload) => post<unknown>(`${base(serial)}/key`, payload),
-  })
+  return useMutation({ mutationFn: (payload: KeyPayload) => post<unknown>(`${base(serial)}/key`, payload) })
 }
 
 export function useDeviceText(serial: string) {
-  return useMutation<unknown, Error, TextPayload>({
-    mutationFn: (payload) => post<unknown>(`${base(serial)}/text`, payload),
-  })
+  return useMutation({ mutationFn: (payload: TextPayload) => post<unknown>(`${base(serial)}/text`, payload) })
 }
 
 export function useDeviceAppAction(serial: string) {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, AppActionPayload>({
-    mutationFn: (payload) => post<unknown>(`${base(serial)}/app`, payload),
+  return useMutation({
+    mutationFn: (payload: AppActionPayload) => post<unknown>(`${base(serial)}/app`, payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: deviceKeys.list() })
     },
@@ -334,22 +334,21 @@ export function useDeviceAppAction(serial: string) {
 }
 
 export function useDeviceShell(serial: string) {
-  return useMutation<unknown, Error, ShellPayload>({
-    mutationFn: (payload) => post<unknown>(`${base(serial)}/shell`, payload),
-  })
+  return useMutation({ mutationFn: (payload: ShellPayload) => post<unknown>(`${base(serial)}/shell`, payload) })
 }
 
 // ---------------------------------------------------------------- 录屏 / 镜像
 
 export function useScreenRecordStart(serial: string) {
-  return useMutation<ScreenRecordResult, Error, ScreenRecordStartPayload>({
-    mutationFn: (payload) => post<ScreenRecordResult>(`${base(serial)}/screenrecord/start`, payload),
+  return useMutation({
+    mutationFn: (payload: ScreenRecordStartPayload) =>
+      post<ScreenRecordResult>(`${base(serial)}/screenrecord/start`, payload),
   })
 }
 
 export function useScreenRecordStop(serial: string) {
   const queryClient = useQueryClient()
-  return useMutation<ScreenRecordResult, Error, void>({
+  return useMutation({
     mutationFn: () => post<ScreenRecordResult>(`${base(serial)}/screenrecord/stop`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: deviceKeys.list() })
@@ -359,7 +358,7 @@ export function useScreenRecordStop(serial: string) {
 
 export function useMirrorStart(serial: string) {
   const queryClient = useQueryClient()
-  return useMutation<MirrorStatusInfo, Error, void>({
+  return useMutation({
     mutationFn: () => post<MirrorStatusInfo>(`${base(serial)}/mirror/start`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: deviceKeys.mirror(serial) })
@@ -370,7 +369,7 @@ export function useMirrorStart(serial: string) {
 
 export function useMirrorStop(serial: string) {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, void>({
+  return useMutation({
     mutationFn: () => post<unknown>(`${base(serial)}/mirror/stop`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: deviceKeys.mirror(serial) })
@@ -378,6 +377,3 @@ export function useMirrorStop(serial: string) {
     },
   })
 }
-
-// 供页面把 ItemsResponse 风格直接交给表格时复用
-export type DeviceItemsResponse = ItemsResponse<Device>

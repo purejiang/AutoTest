@@ -81,14 +81,34 @@ def test_disabled_step_is_skipped(runner_env, monkeypatch):
 
 
 # ---------------------------------------------------------------- when
+def _when(condition: dict, *, mode: str = "require", timeout_ms: int = 0) -> dict:
+    return {
+        "mode": mode,
+        "timeout_ms": timeout_ms,
+        "poll_interval_ms": 50,
+        "condition": condition,
+    }
+
+
+def _step_events(run_id: int, step_id: str) -> list[dict]:
+    return [
+        event
+        for event in get_events(run_id)
+        if (event["payload"] or {}).get("step_id") == step_id
+    ]
+
+
+def _event_types(run_id: int, step_id: str) -> list[str]:
+    return [event["type"] for event in _step_events(run_id, step_id)]
+
+
 def test_when_require_not_met_goes_on_fail_continue(runner_env, monkeypatch):
-    stub = install_selectors(monkeypatch)
-    stub.wait_result = False
+    install_selectors(monkeypatch)
     script = make_script(
         [
             click_step(
                 "s1",
-                when={"target": {"by": "text", "value": "不存在"}, "mode": "require", "timeout_ms": 100},
+                when=_when({"type": "target", "target": {"by": "text", "value": "不存在"}}),
                 on_fail={"action": "continue"},
             ),
             click_step("s2"),
@@ -100,21 +120,37 @@ def test_when_require_not_met_goes_on_fail_continue(runner_env, monkeypatch):
     assert run["status"] == "failed"
     assert run["summary"]["failed_steps"] == 1
     assert run["summary"]["passed_steps"] == 1
+    assert run["error"]["details"]["when"]["met"] is False
     steps = get_steps(run_id)
     assert [step["status"] for step in steps] == ["failed", "passed"]
     assert steps[0]["error"]["code"] == "WHEN_NOT_MET"
+    when_info = steps[0]["error"]["details"]["when"]
+    assert when_info["met"] is False
+    assert when_info["waited_ms"] >= 0
+    assert "target(text='不存在'" in when_info["condition_summary"]
+    assert steps[0]["output"]["when"] == when_info
     assert len(runner_env.driver.calls_of("click")) == 1
-    assert stub.wait_calls and stub.wait_calls[0][2] == 100
+    # 顺序：成功/失败事件对：when_started -> when_result -> step_finished
+    assert _event_types(run_id, "s1") == ["when_started", "when_result", "step_finished"]
+    finished = next(
+        event
+        for event in get_events(run_id)
+        if event["type"] == "step_finished" and event["payload"]["step_id"] == "s1"
+    )
+    assert finished["payload"]["when"] == when_info
+    assert finished["payload"]["duration_ms"] == 0
 
 
 def test_when_optional_not_met_is_skipped(runner_env, monkeypatch):
-    stub = install_selectors(monkeypatch)
-    stub.wait_result = False
+    install_selectors(monkeypatch)
     script = make_script(
         [
             click_step(
                 "s1",
-                when={"target": {"by": "text", "value": "不存在"}, "mode": "optional", "timeout_ms": 100},
+                when=_when(
+                    {"type": "target", "target": {"by": "text", "value": "不存在"}},
+                    mode="optional",
+                ),
             ),
             click_step("s2"),
         ]
@@ -124,19 +160,28 @@ def test_when_optional_not_met_is_skipped(runner_env, monkeypatch):
 
     assert run["status"] == "succeeded"
     assert run["summary"]["skipped_steps"] == 1
-    assert [step["status"] for step in get_steps(run_id)] == ["skipped", "passed"]
-    skipped = [event for event in get_events(run_id) if event["type"] == "step_skipped"]
-    assert skipped[0]["payload"]["reason"] == "when_not_met"
+    steps = get_steps(run_id)
+    assert [step["status"] for step in steps] == ["skipped", "passed"]
+    when_info = steps[0]["output"]["when"]
+    assert when_info["met"] is False
+    assert steps[0]["output"]["reason"] == "when_not_met"
+    assert _event_types(run_id, "s1") == ["when_started", "when_result", "step_skipped"]
+    skipped = next(
+        event
+        for event in get_events(run_id)
+        if event["type"] == "step_skipped" and event["payload"]["step_id"] == "s1"
+    )
+    assert skipped["payload"]["reason"] == "when_not_met"
+    assert skipped["payload"]["when"] == when_info
 
 
 def test_when_require_met_executes_step(runner_env, monkeypatch):
-    stub = install_selectors(monkeypatch)
-    stub.wait_result = True
+    install_selectors(monkeypatch)
     script = make_script(
         [
             click_step(
                 "s1",
-                when={"target": {"by": "text", "value": "登录"}, "mode": "require", "timeout_ms": 200},
+                when=_when({"type": "target", "target": {"by": "text", "value": "登录"}}),
             )
         ]
     )
@@ -144,8 +189,37 @@ def test_when_require_met_executes_step(runner_env, monkeypatch):
     run_id, run = run_script(script)
 
     assert run["status"] == "succeeded"
-    assert get_steps(run_id)[0]["status"] == "passed"
-    assert stub.wait_calls
+    step = get_steps(run_id)[0]
+    assert step["status"] == "passed"
+    assert step["output"]["when"]["met"] is True
+    assert step["output"]["when"]["waited_ms"] >= 0
+    assert "target(text='登录'" in step["output"]["when"]["condition_summary"]
+    assert step["output"]["x"] == 540  # 动作输出保留
+    # 顺序：when_started -> when_result -> step_started -> step_finished
+    assert _event_types(run_id, "s1") == [
+        "when_started",
+        "when_result",
+        "step_started",
+        "step_finished",
+    ]
+    assert len(runner_env.driver.calls_of("click")) == 1
+
+
+def test_unconditional_step_output_and_events_have_no_when(runner_env, monkeypatch):
+    install_selectors(monkeypatch)
+    script = make_script([click_step("s1")])
+
+    run_id, run = run_script(script)
+
+    assert run["status"] == "succeeded"
+    step = get_steps(run_id)[0]
+    assert "when" not in (step["output"] or {})
+    finished = next(
+        event
+        for event in get_events(run_id)
+        if event["type"] == "step_finished" and event["payload"]["step_id"] == "s1"
+    )
+    assert "when" not in finished["payload"]
 
 
 # ---------------------------------------------------------------- retry

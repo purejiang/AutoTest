@@ -1,5 +1,6 @@
 // 报告 hooks（契约 §7.5）
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 
 import type { Report } from '@/types/api'
 
@@ -15,14 +16,15 @@ export const reportKeys = {
   list: (runId?: number) => [...reportKeys.all, 'list', runId ?? 'all'] as const,
 }
 
-export function useReports(runId?: number) {
-  return useQuery<Report[]>({
-    queryKey: reportKeys.list(runId),
+export function useReports(runId: MaybeRefOrGetter<number | undefined>) {
+  const resolved = computed(() => toValue(runId))
+  return useQuery({
+    queryKey: computed(() => reportKeys.list(resolved.value)),
     queryFn: async ({ signal }) =>
       itemsOf(
         await get<ItemsLike<Report>>('/reports', {
           signal,
-          query: { run_id: runId },
+          query: { run_id: resolved.value },
         }),
       ),
     refetchInterval: 5000,
@@ -32,8 +34,8 @@ export function useReports(runId?: number) {
 
 export function useGenerateReport() {
   const queryClient = useQueryClient()
-  return useMutation<Report, Error, GenerateReportPayload>({
-    mutationFn: ({ run_id, include_video }) =>
+  return useMutation({
+    mutationFn: ({ run_id, include_video }: GenerateReportPayload) =>
       post<Report>(`/runs/${run_id}/report`, include_video === undefined ? {} : { include_video }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: reportKeys.all })
@@ -43,8 +45,8 @@ export function useGenerateReport() {
 
 export function useDeleteReport() {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, string>({
-    mutationFn: (id) => del<unknown>(`/reports/${encodeURIComponent(id)}`),
+  return useMutation({
+    mutationFn: (id: string) => del<unknown>(`/reports/${encodeURIComponent(id)}`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: reportKeys.all })
     },

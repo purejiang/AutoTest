@@ -1,25 +1,27 @@
-// 12 类节点的元信息、默认 params、新建节点构造、脚本数据兜底
-import type { NodeType, Script, ScriptData, ScriptSettings, StepNode } from '@/types/api'
+// 12 类节点的元信息、默认 params、新建节点构造、脚本数据兜底（v0.2：when 默认关闭）。
+import { createDefaultWhen } from '@/lib/condition'
+import type { NodeType, Script, ScriptData, ScriptSettings, StepNode, When } from '@/types/api'
 
 export interface NodeTypeMeta {
   label: string
-  color: string
+  tone: 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'cyan' | 'gray'
   icon: string
+  subtitle: string
 }
 
 export const NODE_TYPE_META: Record<NodeType, NodeTypeMeta> = {
-  click: { label: '点击', color: 'blue', icon: '👆' },
-  long_click: { label: '长按', color: 'geekblue', icon: '✋' },
-  swipe: { label: '滑动', color: 'cyan', icon: '↔️' },
-  drag: { label: '拖拽', color: 'purple', icon: '✊' },
-  input: { label: '输入', color: 'orange', icon: '⌨️' },
-  key: { label: '按键', color: 'gold', icon: '🔘' },
-  wait: { label: '等待', color: 'lime', icon: '⏳' },
-  app: { label: '应用', color: 'magenta', icon: '📱' },
-  shell: { label: 'Shell', color: 'volcano', icon: '>_' },
-  assert: { label: '断言', color: 'green', icon: '✓' },
-  sub_script: { label: '子脚本', color: 'processing', icon: '🧩' },
-  screenshot: { label: '截图', color: 'pink', icon: '📷' },
+  click: { label: '点击', tone: 'blue', icon: '👆', subtitle: 'click' },
+  long_click: { label: '长按', tone: 'violet', icon: '✋', subtitle: 'long_click' },
+  swipe: { label: '滑动', tone: 'cyan', icon: '↔', subtitle: 'swipe' },
+  drag: { label: '拖拽', tone: 'violet', icon: '✊', subtitle: 'drag' },
+  input: { label: '输入', tone: 'amber', icon: '⌨', subtitle: 'input' },
+  key: { label: '按键', tone: 'amber', icon: '⌘', subtitle: 'key' },
+  wait: { label: '等待', tone: 'green', icon: '⏳', subtitle: 'wait' },
+  app: { label: '应用', tone: 'violet', icon: '▣', subtitle: 'app' },
+  shell: { label: 'Shell', tone: 'gray', icon: '>_', subtitle: 'shell' },
+  assert: { label: '断言', tone: 'green', icon: '✓', subtitle: 'assert' },
+  sub_script: { label: '子脚本', tone: 'blue', icon: '⧉', subtitle: 'sub_script' },
+  screenshot: { label: '截图', tone: 'amber', icon: '◉', subtitle: 'screenshot' },
 }
 
 export const NODE_TYPES: NodeType[] = [
@@ -36,11 +38,6 @@ export const NODE_TYPES: NodeType[] = [
   'sub_script',
   'screenshot',
 ]
-
-export const NODE_TYPE_OPTIONS = NODE_TYPES.map((type) => ({
-  value: type,
-  label: `${NODE_TYPE_META[type].icon} ${NODE_TYPE_META[type].label}`,
-}))
 
 function textTarget(): Record<string, unknown> {
   return { by: 'text', value: '', index: 0 }
@@ -88,6 +85,7 @@ export function createStep(type: NodeType, existingIds: string[]): StepNode {
     type,
     description: '',
     enabled: true,
+    // v0.2：手动新节点默认不带执行条件；录制节点同样默认关闭。
     when: null,
     timeout_ms: null,
     delay_before_ms: 0,
@@ -99,6 +97,11 @@ export function createStep(type: NodeType, existingIds: string[]): StepNode {
     tags: [],
     params: defaultParams(type),
   }
+}
+
+/** 供 UI 显式启用条件时使用。 */
+export function createWhen(): When {
+  return createDefaultWhen()
 }
 
 const DEFAULT_SETTINGS: ScriptSettings = {
@@ -124,11 +127,13 @@ export function normalizeDraft(raw: Partial<ScriptData>): ScriptData {
     variables: raw.variables ?? {},
     settings: { ...DEFAULT_SETTINGS, ...(raw.settings ?? {}) },
     defaults: { retry: null, ...(raw.defaults ?? {}) },
-    steps: Array.isArray(raw.steps) ? raw.steps : [],
+    steps: Array.isArray(raw.steps)
+      ? raw.steps.map((step) => ({ ...step, when: step.when ?? null }))
+      : [],
   }
 }
 
-/** 深拷贝草稿，避免直接修改 react-query 缓存对象。 */
+/** 深拷贝草稿，避免直接修改 vue-query 缓存对象。 */
 export function cloneScriptData(data: ScriptData): ScriptData {
   return JSON.parse(JSON.stringify(data)) as ScriptData
 }

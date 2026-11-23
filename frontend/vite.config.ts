@@ -2,13 +2,11 @@ import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import vue from '@vitejs/plugin-vue'
 
 // 开发期：前端 5173 -> 后端 8787（/api 与 /ws 都代理，WS 需 ws:true）
 const BACKEND = process.env.AUTOTEST_BACKEND ?? 'http://127.0.0.1:8787'
 
-// 构建元信息：把「这个页面是哪个版本/哪个提交/什么时候打的」写进产物，
-// 这样前端热更（只换 dist）后也能一眼确认线上页面与后端是否同源。
 function readPackageVersion(): string {
   try {
     const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as {
@@ -22,10 +20,14 @@ function readPackageVersion(): string {
 
 function readGitCommit(): string {
   try {
-    const commit = execSync('git rev-parse --short HEAD', { cwd: fileURLToPath(new URL('.', import.meta.url)) })
+    const commit = execSync('git rev-parse --short HEAD', {
+      cwd: fileURLToPath(new URL('.', import.meta.url)),
+    })
       .toString()
       .trim()
-    const dirty = execSync('git status --porcelain', { cwd: fileURLToPath(new URL('.', import.meta.url)) })
+    const dirty = execSync('git status --porcelain', {
+      cwd: fileURLToPath(new URL('.', import.meta.url)),
+    })
       .toString()
       .trim()
     return dirty ? `${commit}-dirty` : commit
@@ -39,7 +41,7 @@ const APP_COMMIT = process.env.AUTOTEST_GIT_COMMIT ?? readGitCommit()
 const APP_BUILD_TIME = process.env.AUTOTEST_BUILD_TIME ?? new Date().toISOString()
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [vue()],
   define: {
     __APP_VERSION__: JSON.stringify(APP_VERSION),
     __APP_COMMIT__: JSON.stringify(APP_COMMIT),
@@ -60,6 +62,6 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
-    chunkSizeWarningLimit: 1500,
+    chunkSizeWarningLimit: 1800,
   },
 })

@@ -1,20 +1,51 @@
-// AutoTest 前端类型（与后端 docs/contracts.md §3/§5/§7 对齐；Lead 维护，只做向后兼容追加）
+// AutoTest v0.2 前端类型（与 docs/contracts.md 及后端 v0.2 模型对齐）
+//
+// v0.2 变更（不保留旧数据兼容分支）：
+//   - Script.source = manual | mirror | physical | imported；origin_recording_id 记录来源录制。
+//   - 节点执行条件改为 { mode, timeout_ms, poll_interval_ms, condition }；
+//     condition 支持 group(and/or) / not / target / app / time。
+//   - 运行事件新增 when_started / when_result。
 
 export type RunStatus =
-  | 'queued' | 'running' | 'paused' | 'stopping'
-  | 'succeeded' | 'failed' | 'aborted' | 'stopped' | 'interrupted'
+  | 'queued'
+  | 'running'
+  | 'paused'
+  | 'stopping'
+  | 'succeeded'
+  | 'failed'
+  | 'aborted'
+  | 'stopped'
+  | 'interrupted'
 
 export type StepResultStatus = 'passed' | 'failed' | 'skipped' | 'error'
 
 export type RecordingStatus = 'recording' | 'paused' | 'stopped'
 
+/** 录制模式：web = 镜像录制（值的名字沿用后端契约），physical = 真机录制。 */
+export type RecordingMode = 'web' | 'physical'
+
 export type NodeType =
-  | 'click' | 'long_click' | 'swipe' | 'drag' | 'input' | 'key'
-  | 'wait' | 'app' | 'shell' | 'assert' | 'sub_script' | 'screenshot'
+  | 'click'
+  | 'long_click'
+  | 'swipe'
+  | 'drag'
+  | 'input'
+  | 'key'
+  | 'wait'
+  | 'app'
+  | 'shell'
+  | 'assert'
+  | 'sub_script'
+  | 'screenshot'
 
 export type TargetBy =
-  | 'text' | 'text_contains' | 'resource_id' | 'content_desc'
-  | 'class_name' | 'xpath' | 'point'
+  | 'text'
+  | 'text_contains'
+  | 'resource_id'
+  | 'content_desc'
+  | 'class_name'
+  | 'xpath'
+  | 'point'
 
 export interface Target {
   by: TargetBy
@@ -24,11 +55,55 @@ export interface Target {
   y?: number
 }
 
-export interface When {
+// ---------------------------------------------------------------- v0.2 执行条件
+
+export type ConditionState = 'visible' | 'gone'
+export type AppConditionState = 'foreground' | 'background'
+export type ConditionGroupOp = 'and' | 'or'
+
+/** 目标条件：检查某个元素可见/消失。 */
+export interface ConditionTarget {
+  type: 'target'
   target: Target
+  state: ConditionState
+}
+
+/** 应用条件：检查前台应用。 */
+export interface ConditionApp {
+  type: 'app'
+  package: string
+  activity?: string | null
+  state: AppConditionState
+}
+
+/** 时间条件：days 用 1..7（周一=1，周日=7）；start/end 为本地 HH:mm。 */
+export interface ConditionTime {
+  type: 'time'
+  start: string
+  end: string
+  days: number[]
+}
+
+/** 逻辑分组：可嵌套任意条件。 */
+export interface ConditionGroup {
+  type: 'group'
+  op: ConditionGroupOp
+  items: ConditionNode[]
+}
+
+/** 取反。 */
+export interface ConditionNot {
+  type: 'not'
+  item: ConditionNode
+}
+
+export type ConditionNode = ConditionGroup | ConditionNot | ConditionTarget | ConditionApp | ConditionTime
+
+export interface When {
   mode: 'require' | 'optional'
   timeout_ms: number
-  state: 'visible' | 'gone'
+  poll_interval_ms: number
+  condition: ConditionNode
 }
 
 export interface Retry {
@@ -44,12 +119,32 @@ export interface OnFail {
 export type RerunSafety = 'safe' | 'destructive' | 'stateful'
 
 // ---- 12 类节点 params
-export interface ClickParams { target: Target }
-export interface LongClickParams { target: Target; duration_ms?: number }
-export interface SwipeParams { from: Target; to: Target; duration_ms?: number }
-export interface DragParams { from: Target; to: Target; duration_ms?: number }
-export interface InputParams { text: string; target?: Target | null; clear_first?: boolean }
-export interface KeyParams { key?: string; keycode?: number }
+export interface ClickParams {
+  target: Target
+}
+export interface LongClickParams {
+  target: Target
+  duration_ms?: number
+}
+export interface SwipeParams {
+  from: Target
+  to: Target
+  duration_ms?: number
+}
+export interface DragParams {
+  from: Target
+  to: Target
+  duration_ms?: number
+}
+export interface InputParams {
+  text: string
+  target?: Target | null
+  clear_first?: boolean
+}
+export interface KeyParams {
+  key?: string
+  keycode?: number
+}
 export interface WaitParams {
   mode: 'sleep' | 'until'
   ms?: number
@@ -58,11 +153,28 @@ export interface WaitParams {
   timeout_ms?: number
   interval_ms?: number
 }
-export interface AppParams { action: 'launch' | 'stop' | 'clear' | 'restart'; package?: string | null; activity?: string | null }
-export interface ShellParams { command: string; timeout_ms?: number; check_exit_code?: boolean }
-export interface AssertParams { kind: 'exists' | 'not_exists' | 'text_contains' | 'foreground'; target?: Target | null; value?: string }
-export interface SubScriptParams { script_id: string; variables?: Record<string, string> }
-export interface ScreenshotParams { name?: string | null }
+export interface AppParams {
+  action: 'launch' | 'stop' | 'clear' | 'restart'
+  package?: string | null
+  activity?: string | null
+}
+export interface ShellParams {
+  command: string
+  timeout_ms?: number
+  check_exit_code?: boolean
+}
+export interface AssertParams {
+  kind: 'exists' | 'not_exists' | 'text_contains' | 'foreground'
+  target?: Target | null
+  value?: string
+}
+export interface SubScriptParams {
+  script_id: string
+  variables?: Record<string, string>
+}
+export interface ScreenshotParams {
+  name?: string | null
+}
 
 export interface StepNode {
   id: string
@@ -70,6 +182,7 @@ export interface StepNode {
   type: NodeType
   description: string
   enabled: boolean
+  /** null = 未启用执行条件（默认关闭） */
   when: When | null
   timeout_ms: number | null
   delay_before_ms: number
@@ -100,11 +213,15 @@ export interface ScriptData {
   steps: StepNode[]
 }
 
+export type ScriptSource = 'manual' | 'mirror' | 'physical' | 'imported'
+
 export interface Script {
   id: string
   name: string
   notes: string
-  source: 'manual' | 'recorded' | 'imported'
+  source: ScriptSource
+  /** 由录制生成时的来源录制 id；手动/导入为空。 */
+  origin_recording_id?: string | null
   schema_version: number
   data: ScriptData
   step_count?: number
@@ -112,7 +229,11 @@ export interface Script {
   updated_at: string
 }
 
-export interface ValidationErrorItem { path: string; code: string; message: string }
+export interface ValidationErrorItem {
+  path: string
+  code: string
+  message: string
+}
 
 export interface ScriptValidation {
   valid: boolean
@@ -121,7 +242,11 @@ export interface ScriptValidation {
 }
 
 // ---- 设备
-export interface DeviceMirrorInfo { active: boolean; width?: number; height?: number }
+export interface DeviceMirrorInfo {
+  active: boolean
+  width?: number
+  height?: number
+}
 
 export interface Device {
   serial: string
@@ -136,6 +261,7 @@ export interface Device {
   mirror: DeviceMirrorInfo
   busy: boolean
   busy_reason?: string
+  fake?: boolean
 }
 
 export interface HierarchyNode {
@@ -174,6 +300,20 @@ export interface Run {
   debug?: { step_mode?: boolean; breakpoints?: string[] } | null
 }
 
+/** 条件求值结果（后端字段未完全冻结时兼容多种落点，仅用于展示）。 */
+export interface StepConditionOutcome {
+  evaluated?: boolean
+  met?: boolean
+  skipped?: boolean
+  failed?: boolean
+  waited_ms?: number
+  timeout_ms?: number
+  state?: string
+  detail?: string
+  /** 后端 v0.2 的条件中文摘要（when_result / step output 携带）。 */
+  condition_summary?: string
+}
+
 export interface StepResult {
   id: number
   run_id: number
@@ -188,6 +328,8 @@ export interface StepResult {
   duration_ms: number
   error: { code?: string; message?: string } | null
   output: Record<string, unknown> | null
+  /** v0.2：条件求值结果（可能位于 output.when 内）。 */
+  when?: StepConditionOutcome | null
 }
 
 export interface RunDetail extends Run {
@@ -242,13 +384,15 @@ export interface WsControlMsg {
 export interface Recording {
   id: string
   name: string
-  mode: 'web' | 'physical'
+  mode: RecordingMode
   serial: string
   status: RecordingStatus
   started_at: string | null
   ended_at: string | null
   event_count: number
+  /** 已转脚本时关联的脚本 id / 名称（v0.2 录制页新增关联脚本列）。 */
   script_id: string | null
+  script_name: string | null
   meta: Record<string, unknown> | null
   created_at: string
 }
@@ -262,9 +406,8 @@ export interface RecordingEvent {
     duration_ms?: number
     text?: string
     key?: string
-    /** 后端落库字段为 node；保留 target 以兼容旧版本 */
+    /** 后端落库字段为 node */
     node?: Target | null
-    target?: Target | null
     from?: { x: number; y: number }
     to?: { x: number; y: number }
     confidence_reason?: string
@@ -325,6 +468,18 @@ export interface MaintenanceStats {
 // ---- API 错误信封
 export interface ApiErrorEnvelope {
   error: { code: string; message: string; details?: Record<string, unknown> }
+}
+
+// ---- 批量删除（v0.2 单条失败不阻塞其他条）
+export interface BulkDeleteFailure<TId extends string | number = string> {
+  id: TId
+  code: string
+  message: string
+}
+
+export interface BulkDeleteResult<TId extends string | number = string> {
+  deleted: number
+  failed: BulkDeleteFailure<TId>[]
 }
 
 export interface ItemsResponse<T> {

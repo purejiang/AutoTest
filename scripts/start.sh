@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # AutoTest 一键启动（生产模式：后端同时托管前端，只开一个进程 / 一个端口）
 #
-#   sh scripts/start.sh            # 启动并打印地址
+#   sh scripts/start.sh            # 启动并打印地址（Vue 主前端）
 #   sh scripts/start.sh --open     # 启动并自动打开浏览器
 #   sh scripts/start.sh --port 9000
 #   sh scripts/start.sh --rebuild  # 强制重新构建前端
+#   sh scripts/start.sh --react    # 回滚到冻结的 React 前端（构建产物仍放 frontend/dist）
 #
 # 首次运行会自动：安装后端依赖(uv sync) → 安装前端依赖(npm install) → 构建前端 → 下载 scrcpy-server。
 set -euo pipefail
@@ -16,17 +17,27 @@ PORT="${AUTOTEST_PORT:-8787}"
 HOST="${AUTOTEST_HOST:-127.0.0.1}"
 OPEN_BROWSER=0
 REBUILD=0
+FRONTEND_IMPL="${AUTOTEST_FRONTEND:-vue}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --open) OPEN_BROWSER=1 ;;
     --rebuild) REBUILD=1 ;;
+    --react) FRONTEND_IMPL=react ;;
+    --vue) FRONTEND_IMPL=vue ;;
+    --frontend) shift; FRONTEND_IMPL="$1" ;;
     --port) shift; PORT="$1" ;;
     --host) shift; HOST="$1" ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     *) echo "未知参数: $1（用 --help 查看）"; exit 1 ;;
   esac
   shift
 done
+
+case "$FRONTEND_IMPL" in
+  vue)   FRONTEND_DIR="frontend" ;;
+  react) FRONTEND_DIR="frontend-react" ;;
+  *) echo "AUTOTEST_FRONTEND 只能是 vue 或 react（收到：$FRONTEND_IMPL）" >&2; exit 2 ;;
+esac
 
 # ---- 环境准备（uv / adb 常见路径补齐）
 export PATH="$HOME/.local/bin:$HOME/Library/Android/sdk/platform-tools:$PATH"
@@ -53,18 +64,37 @@ if [ ! -x "backend/.venv/bin/python" ]; then
   (cd backend && uv python install 3.12 && uv sync)
 fi
 
-# ---- 3. 前端构建（后端直接托管 dist，无需单独起前端服务）
-if [ ! -f "frontend/dist/index.html" ] || [ "$REBUILD" = "1" ]; then
+# ---- 3. 前端构建（后端直接托管 frontend/dist，无需单独起前端服务）
+BUILT_IMPL="$(cat frontend/dist/.impl 2>/dev/null || true)"
+NEED_BUILD=0
+if [ ! -f "frontend/dist/index.html" ]; then NEED_BUILD=1; fi
+# 没有实现标记时无法判断 dist 是 Vue 还是 React，按需要重建一次（之后会写入标记）。
+if [ -z "$BUILT_IMPL" ]; then NEED_BUILD=1; fi
+if [ -n "$BUILT_IMPL" ] && [ "$BUILT_IMPL" != "$FRONTEND_IMPL" ]; then NEED_BUILD=1; fi
+if [ "$REBUILD" = "1" ]; then NEED_BUILD=1; fi
+
+if [ "$NEED_BUILD" = "1" ]; then
   if command -v npm >/dev/null 2>&1; then
-    if [ ! -d "frontend/node_modules" ]; then
-      say "安装前端依赖（首次约 1-2 分钟）…"
-      (cd frontend && npm install --no-audit --no-fund)
+    if [ ! -d "${FRONTEND_DIR}/node_modules" ]; then
+      say "安装前端依赖（${FRONTEND_DIR}，首次约 1-2 分钟）…"
+      (cd "$FRONTEND_DIR" && npm install --no-audit --no-fund)
     fi
-    say "构建前端…"
-    (cd frontend && npm run build)
+    say "构建前端（${FRONTEND_IMPL} / ${FRONTEND_DIR}）…"
+    (cd "$FRONTEND_DIR" && npm run build)
+    if [ "$FRONTEND_IMPL" = "react" ]; then
+      say "将 React 产物同步到 backend 静态目录 frontend/dist …"
+      rm -rf frontend/dist
+      mkdir -p frontend/dist
+      cp -R frontend-react/dist/. frontend/dist/
+    fi
+    printf '%s\n' "$FRONTEND_IMPL" > frontend/dist/.impl
   else
     warn "未找到 npm/Node.js：跳过前端构建。仅 API 可用（/api、/docs），界面需另装 Node 20+ 后重跑本脚本。"
   fi
+fi
+
+if [ -d "frontend/dist" ]; then
+  say "前端实现：${FRONTEND_IMPL}（静态目录 frontend/dist）"
 fi
 
 # ---- 4. scrcpy-server（镜像功能）

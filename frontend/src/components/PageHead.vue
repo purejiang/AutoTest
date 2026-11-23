@@ -1,0 +1,26 @@
+<script setup lang="ts">
+defineProps<{
+  title: string
+  subtitle?: string
+  count?: number | string
+}>()
+
+defineEmits<{ back: [] }>()
+</script>
+
+<template>
+  <div class="page-head">
+    <div class="page-title">
+      <button v-if="$slots.back" class="icon-btn" type="button" @click="$emit('back')">
+        <slot name="back" />
+      </button>
+      <h1>{{ title }}</h1>
+      <span v-if="count !== undefined" class="count-pill">{{ count }}</span>
+      <span v-if="subtitle" class="page-sub">{{ subtitle }}</span>
+      <slot name="title-extra" />
+    </div>
+    <div v-if="$slots.actions" class="page-actions">
+      <slot name="actions" />
+    </div>
+  </div>
+</template>

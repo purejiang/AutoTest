@@ -86,6 +86,8 @@ def test_create_list_get_pause_resume_stop(api) -> None:
     assert recording["mode"] == "web"
     assert recording["status"] == "recording"
     assert recording["event_count"] == 0
+    assert recording["script_id"] is None
+    assert recording["script_name"] is None
     assert api.acquired and api.acquired[0][0] == "fake-1"
 
     listing = api.client.get("/api/recordings").json()
@@ -192,20 +194,106 @@ def test_events_to_script_and_delete(api) -> None:
     assert [item["seq"] for item in api.client.get(f"/api/recordings/{recording_id}/events").json()["items"]] == [2]
     assert api.client.delete(f"/api/recordings/{recording_id}/events/1").status_code == 404
 
+    assert api.client.get(f"/api/recordings/{recording_id}").json()["script_name"] is None
+
     result = api.client.post(
         f"/api/recordings/{recording_id}/to_script",
         json={"name": "录制脚本B", "exclude_seqs": []},
     )
     assert result.status_code == 200, result.text
     payload = result.json()
-    assert payload["source"] == "recorded"
+    assert payload["source"] == "mirror"
+    assert payload["origin_recording_id"] == recording_id
     assert payload["name"] == "录制脚本B"
     assert [step["type"] for step in payload["data"]["steps"]] == ["swipe"]
+    assert all(step["when"] is None for step in payload["data"]["steps"])
     assert payload["warnings"] is not None
+
+    detail = api.client.get(f"/api/recordings/{recording_id}").json()
+    assert detail["script_id"] == payload["script_id"]
+    assert detail["script_name"] == "录制脚本B"
+    listed = api.client.get("/api/recordings").json()["items"]
+    assert listed[0]["script_name"] == "录制脚本B"
 
     removed = api.client.delete(f"/api/recordings/{recording_id}").json()
     assert removed == {"deleted": True, "id": recording_id}
     assert api.client.get(f"/api/recordings/{recording_id}").status_code == 404
+    # 删除录制保留脚本 source/origin（软关联）
+    from app.db import session_scope
+    from app.models import Script
+
+    with session_scope() as db:
+        script = db.get(Script, payload["script_id"])
+        assert script is not None
+        assert script.source == "mirror"
+        assert script.origin_recording_id == recording_id
+
+
+# ---------------------------------------------------------------- 批量删除
+def test_bulk_delete_recordings_partial_success(api) -> None:
+    from sqlalchemy import func, select
+
+    from app.db import session_scope
+    from app.models import RecordingEvent
+
+    first = _create(api.client, serial="fake-bulk-1", name="批量录制一")
+    hooks.on_action("fake-bulk-1", "tap", {"x": 540, "y": 710}, None)
+    assert api.client.post(f"/api/recordings/{first['id']}/stop").status_code == 200
+    second = _create(api.client, serial="fake-bulk-2", name="批量录制二")
+
+    response = api.client.post(
+        "/api/recordings/bulk-delete",
+        json={"ids": [first["id"], second["id"], "missing-recording", first["id"]]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["deleted"] == 1
+    failures = {item["id"]: item["code"] for item in body["failed"]}
+    assert failures == {second["id"]: "CONFLICT", "missing-recording": "NOT_FOUND"}
+    assert api.client.get(f"/api/recordings/{first['id']}").status_code == 404
+    assert api.client.get(f"/api/recordings/{second['id']}").json()["status"] == "recording"
+    with session_scope() as db:
+        events = db.scalar(
+            select(func.count())
+            .select_from(RecordingEvent)
+            .where(RecordingEvent.recording_id == first["id"])
+        )
+        assert events == 0
+
+
+def test_bulk_delete_recording_events_partial_success_and_recount(api) -> None:
+    recording = _create(api.client, serial="fake-bulk-events")
+    recording_id = recording["id"]
+    for x in (540, 541, 542):
+        hooks.on_action("fake-bulk-events", "tap", {"x": x, "y": 710}, None)
+
+    response = api.client.post(
+        f"/api/recordings/{recording_id}/events/bulk-delete",
+        json={"seqs": [1, 3, 99, 1]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["deleted"] == 2
+    assert [(item["id"], item["code"]) for item in body["failed"]] == [(99, "NOT_FOUND")]
+    events = api.client.get(f"/api/recordings/{recording_id}/events").json()["items"]
+    assert [event["seq"] for event in events] == [2]
+    assert api.client.get(f"/api/recordings/{recording_id}").json()["event_count"] == 1
+
+
+def test_bulk_delete_empty_lists_are_400(api) -> None:
+    recording = _create(api.client, serial="fake-bulk-empty")
+
+    recordings = api.client.post("/api/recordings/bulk-delete", json={"ids": []})
+    events = api.client.post(
+        f"/api/recordings/{recording['id']}/events/bulk-delete", json={"seqs": []}
+    )
+
+    assert recordings.status_code == 400
+    assert recordings.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert events.status_code == 400
+    assert events.json()["error"]["code"] == "INVALID_ARGUMENT"
 
 
 # ---------------------------------------------------------------- WS

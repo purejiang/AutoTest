@@ -23,7 +23,10 @@ class Script(Base):
     notes: Mapped[str] = mapped_column(Text, default="", server_default="")
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
     data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    source: Mapped[str] = mapped_column(String(20), default="manual")  # manual | recorded | imported
+    # v0.2 四值：manual | mirror | physical | imported（旧 source=recorded 不再支持）
+    source: Mapped[str] = mapped_column(String(20), default="manual")
+    # 软关联来源录制（无 FK；录制删除后保留该字段，便于溯源）
+    origin_recording_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     created_at: Mapped[str] = mapped_column(String(40), default=now_iso)
     updated_at: Mapped[str] = mapped_column(String(40), default=now_iso)
 

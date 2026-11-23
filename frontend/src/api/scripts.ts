@@ -1,7 +1,8 @@
 // 脚本 CRUD / 校验 / 导入导出 hooks（契约 §7.2）
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 
-import type { Script, ScriptData, ScriptValidation } from '@/types/api'
+import type { BulkDeleteResult, Script, ScriptData, ScriptValidation } from '@/types/api'
 
 import { del, downloadFile, get, itemsOf, post, put, totalOf, type ItemsLike } from './client'
 
@@ -45,26 +46,35 @@ export const scriptKeys = {
 
 // ---------------------------------------------------------------- 查询
 
-export function useScripts(params: ScriptListParams = {}, options: { enabled?: boolean } = {}) {
-  return useQuery<ScriptListResult>({
-    queryKey: scriptKeys.list(params),
+export function useScripts(
+  params: MaybeRefOrGetter<ScriptListParams> = {},
+  options: { enabled?: MaybeRefOrGetter<boolean> } = {},
+) {
+  const resolved = computed(() => toValue(params))
+  return useQuery({
+    queryKey: computed(() => scriptKeys.list(resolved.value)),
     queryFn: async ({ signal }) => {
       const raw = await get<ItemsLike<Script>>('/scripts', {
         signal,
-        query: { query: params.query, limit: params.limit, offset: params.offset },
+        query: {
+          query: resolved.value.query,
+          limit: resolved.value.limit,
+          offset: resolved.value.offset,
+        },
       })
       return { items: itemsOf(raw), total: totalOf(raw) }
     },
-    enabled: options.enabled ?? true,
+    enabled: computed(() => toValue(options.enabled ?? true)),
     staleTime: 5000,
   })
 }
 
-export function useScript(id: string | undefined, options: { enabled?: boolean } = {}) {
-  return useQuery<Script>({
-    queryKey: scriptKeys.detail(id ?? ''),
-    queryFn: ({ signal }) => get<Script>(`/scripts/${encodeURIComponent(id as string)}`, { signal }),
-    enabled: Boolean(id) && (options.enabled ?? true),
+export function useScript(id: MaybeRefOrGetter<string | undefined>, options: { enabled?: boolean } = {}) {
+  const resolved = computed(() => toValue(id))
+  return useQuery({
+    queryKey: computed(() => scriptKeys.detail(resolved.value ?? '')),
+    queryFn: ({ signal }) => get<Script>(`/scripts/${encodeURIComponent(resolved.value as string)}`, { signal }),
+    enabled: computed(() => Boolean(resolved.value) && (options.enabled ?? true)),
     staleTime: 10000,
   })
 }
@@ -73,20 +83,22 @@ export function useScript(id: string | undefined, options: { enabled?: boolean }
 
 export function useCreateScript() {
   const queryClient = useQueryClient()
-  return useMutation<Script, Error, CreateScriptPayload>({
-    mutationFn: (payload) => post<Script>('/scripts', payload),
+  return useMutation({
+    mutationFn: (payload: CreateScriptPayload) => post<Script>('/scripts', payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: scriptKeys.all })
     },
   })
 }
 
-export function useUpdateScript(id: string | undefined) {
+export function useUpdateScript(id: MaybeRefOrGetter<string | undefined>) {
   const queryClient = useQueryClient()
-  return useMutation<Script, Error, UpdateScriptPayload>({
-    mutationFn: (payload) => put<Script>(`/scripts/${encodeURIComponent(id as string)}`, payload),
+  const resolved = computed(() => toValue(id))
+  return useMutation({
+    mutationFn: (payload: UpdateScriptPayload) =>
+      put<Script>(`/scripts/${encodeURIComponent(resolved.value as string)}`, payload),
     onSuccess: (script) => {
-      if (id) queryClient.setQueryData(scriptKeys.detail(id), script)
+      if (resolved.value) queryClient.setQueryData(scriptKeys.detail(resolved.value), script)
       void queryClient.invalidateQueries({ queryKey: scriptKeys.all })
     },
   })
@@ -94,8 +106,18 @@ export function useUpdateScript(id: string | undefined) {
 
 export function useDeleteScript() {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, string>({
-    mutationFn: (id) => del<unknown>(`/scripts/${encodeURIComponent(id)}`),
+  return useMutation({
+    mutationFn: (id: string) => del<unknown>(`/scripts/${encodeURIComponent(id)}`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: scriptKeys.all })
+    },
+  })
+}
+
+export function useBulkDeleteScripts() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: string[]) => post<BulkDeleteResult<string>>('/scripts/bulk-delete', { ids }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: scriptKeys.all })
     },
@@ -104,8 +126,8 @@ export function useDeleteScript() {
 
 export function useDuplicateScript() {
   const queryClient = useQueryClient()
-  return useMutation<Script, Error, { id: string; name?: string }>({
-    mutationFn: ({ id, name }) =>
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name?: string }) =>
       post<Script>(`/scripts/${encodeURIComponent(id)}/duplicate`, name ? { name } : {}),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: scriptKeys.all })
@@ -114,15 +136,15 @@ export function useDuplicateScript() {
 }
 
 export function useValidateScriptData() {
-  return useMutation<ScriptValidation, Error, { data: unknown }>({
-    mutationFn: (payload) => post<ScriptValidation>('/scripts/validate', payload),
+  return useMutation({
+    mutationFn: (payload: { data: unknown }) => post<ScriptValidation>('/scripts/validate', payload),
   })
 }
 
 export function useImportScript() {
   const queryClient = useQueryClient()
-  return useMutation<Script, Error, ImportScriptPayload>({
-    mutationFn: (payload) => post<Script>('/scripts/import', payload),
+  return useMutation({
+    mutationFn: (payload: ImportScriptPayload) => post<Script>('/scripts/import', payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: scriptKeys.all })
     },

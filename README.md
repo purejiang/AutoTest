@@ -1,7 +1,7 @@
 # AutoTest · Android 自动化测试工具
 
 本地单机的 Android UI 自动化测试平台：**连接手机 → 脚本编排 / 真实操作录制 → 顺序执行 → 测试报告**。
-后端 Python（adb + uiautomator2 + scrcpy），前端 React，同一套代码跑 macOS / Windows / Linux。
+后端 Python（adb + uiautomator2 + scrcpy），前端 Vue 3（v0.2 起），同一套代码跑 macOS / Windows / Linux。
 
 ## 功能
 
@@ -9,9 +9,9 @@
 |---|---|
 | 设备控制 | 点击 / 长按 / 滑动 / 拖拽 / 输入 / 系统键（返回·桌面·最近任务·音量·电源）/ 启停清应用 / shell / 截图 / 录屏 / logcat |
 | 实时镜像 | scrcpy 服务端 + WebCodecs 低延迟解码，鼠标直接在镜像上操作设备（归一化坐标，后端反算设备像素） |
-| 步骤脚本 | JSON 数据文件，顺序执行；每个节点独立配置触发条件、定位方式、超时、延迟、重试、失败策略、节点名/注释、重跑安全性 |
+| 步骤脚本 | JSON 数据文件，顺序执行；每个节点独立配置执行条件、定位方式、超时、停顿、重试、失败策略、节点名/注释、重跑安全性 |
 | 12 类节点 | click / long_click / swipe / drag / input / key / wait / app / shell / assert / sub_script / screenshot |
-| 录制 | **镜像网页操作录制（主）** + 物理手机操作录制（辅助，getevent）；支持暂停；录制结果可一键转脚本；脚本可作为节点嵌入其他脚本 |
+| 录制 | **镜像网页操作录制（主）** + 真机操作录制（辅助，getevent）；支持暂停；录制草稿可一键转脚本/重新生成；脚本可作为节点嵌入其他脚本 |
 | 持久化 | 脚本、运行记录、步骤结果、事件流、产物、报告全部存 SQLite（WAL），带 CRUD |
 | 报告 | 一键生成 zip（HTML 汇总 + JUnit XML + 失败截图），支持逐节点耗时与失败原因 |
 | 调试 | 断点、单步、从指定节点重跑；暂停后解锁手动控制（干预留痕） |
@@ -22,7 +22,7 @@
 ### 前置
 
 - Python **3.12**（用 [uv](https://docs.astral.sh/uv/) 管理，无需系统 Python 升级）
-- Node.js **20+**
+- Node.js **20.19+ / 22+**（Vite 8 要求；npm）
 - Android platform-tools（adb）—— macOS 常见路径 `~/Library/Android/sdk/platform-tools/adb`，Windows `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`
 - 手机开 USB 调试并授权（`adb devices` 能看到 `device`）
 
@@ -40,10 +40,34 @@ sh scripts/start.sh            # 加 --open 自动开浏览器；--port 9000 换
 powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Open
 ```
 
-浏览器打开 **http://127.0.0.1:8787** ，终端窗口关掉即停止。
+浏览器打开 **http://127.0.0.1:8787** ，终端窗口关掉即停止。v0.2 默认构建 Vue 3 主前端；需要回滚时加 `--react`。
 
 首次运行脚本会自动完成：装 uv（若缺）→ Python 3.12 + 后端依赖 → 前端依赖 + 构建 → 下载 scrcpy-server → 启动。
 也可以先手动跑一次 `sh scripts/setup.sh`（Windows `scripts\setup.ps1`）做完整安装 + 环境自检。
+
+### 前端技术栈与回滚（v0.2）
+
+| 目录 | 说明 |
+|---|---|
+| `frontend/` | **Vue 3 主前端**：Vue 3.5 + Vite + TypeScript + Vue Router 4 + Pinia + Element Plus + Axios + VueUse + @tanstack/vue-query + CodeMirror 6 |
+| `frontend-react/` | v0.1.3 React + Ant Design **冻结备份**，只用于回滚/对照，不再继续开发 |
+| `frontend/dist/` | 后端唯一静态目录；Vue 构建默认输出到这里 |
+
+回滚到 React 前端（后端无需修改，构建脚本会把 React 产物同步到 `frontend/dist`）：
+
+```bash
+sh scripts/dev.sh --react       # 开发模式：frontend-react/ + 后端 8787
+sh scripts/build.sh --react     # 生产构建：React 产物同步到 frontend/dist
+sh scripts/start.sh --react     # 生产启动（需要时自动构建并同步）
+# 也可用环境变量：AUTOTEST_FRONTEND=react sh scripts/start.sh
+```
+
+v0.2 脚本数据不兼容旧 `when` / 旧 `source`：前端按 `source = manual | mirror | physical | imported`
+和新的条件结构渲染，不写旧数据兜底分支。
+
+v0.2 也不迁移旧数据库。升级前请先备份，再移走或删除
+`~/.autotest/data/autotest.db`（或整个 `~/.autotest/data`）后重新启动；启动时的 schema guard
+会明确提示旧库不兼容，不会自动删除数据。
 
 ### 版本管理（本地 git，无远程）
 
@@ -87,9 +111,9 @@ sh scripts/release.sh              # 不填版本号 = 自动 patch +1（0.1.0 �
 sh scripts/release.sh 0.2.0 --rebuild   # 顺带重建前端产物
 ```
 
-版本号四处自动同步：`backend/pyproject.toml`、`backend/app/__init__.py`、`frontend/package.json`、
-`frontend/package-lock.json`。发版前要求工作区干净；tag 是**本地**的（仓库无远程，
-不会推送到任何地方）。打完后：
+版本号同步范围：`backend/pyproject.toml`、`backend/app/__init__.py`、`frontend/package.json`、
+`frontend/package-lock.json`。**release 只同步 `frontend/`**；`frontend-react/` 是冻结回滚备份，
+不参与发版。发版前要求工作区干净；tag 是**本地**的（仓库无远程，不会推送到任何地方）。打完后：
 
 ```bash
 git tag -l                       # 看所有版本标签
@@ -110,8 +134,9 @@ git checkout <hash> -- <file>    # 把某文件恢复到某个版本
 ## 开发模式（改代码热更新）
 
 ```bash
-sh scripts/dev.sh            # 后端 8787(--reload) + 前端 5173(Vite HMR)，Ctrl+C 一起退出
-# Windows: powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
+sh scripts/dev.sh            # Vue 主前端 + 后端 8787(--reload)，Ctrl+C 一起退出
+sh scripts/dev.sh --react    # 回滚/对照：frontend-react/ + 后端
+# Windows: powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 [-React]
 ```
 
 开发时访问 http://127.0.0.1:5173 （Vite 代理 `/api`、`/ws` 到 8787）。
@@ -120,6 +145,10 @@ sh scripts/dev.sh            # 后端 8787(--reload) + 前端 5173(Vite HMR)，C
 
 ```bash
 sh scripts/start.sh --rebuild      # 改过前端代码后重新构建并启动
+sh scripts/build.sh                # 只构建 Vue 前端到 frontend/dist
+cd frontend && npm run lint        # Vue/TS ESLint
+cd frontend && npm run typecheck   # 类型检查
+cd frontend && npm run build       # 类型检查 + 生产构建
 cd backend && uv run pytest -q     # 后端测试（无需真机）
 cd backend && uv run python ../scripts/check_env.py   # 环境自检（adb/设备/端口/jar）
 sh scripts/build.sh --pack         # 打包成单文件可执行程序（PyInstaller → backend/dist/autotest）
@@ -127,8 +156,8 @@ sh scripts/build.sh --pack         # 打包成单文件可执行程序（PyInsta
 
 ### 使用流程
 
-1. **设备页**：确认设备在线 → 启动镜像 → 可直接在镜像上点按操作；需要录制时点"开始录制"。
-2. **脚本页**：新建脚本，手动加节点（表单 + JSON 源码双向编辑，含校验），或把录制结果一键转成脚本。
+1. **设备页**：确认设备在线 → 启动镜像 → 可直接在镜像上点按操作；需要录制时在镜像的「录制工具条」点「开始镜像录制」。
+2. **脚本页**：新建脚本（手动 / 从镜像录制 / 从真机录制），手动加节点（表单 + JSON 源码双向编辑，含 v0.2 递归执行条件与校验），或把录制草稿一键转脚本。
 3. **运行页**：选择设备执行，实时看步骤/事件/截图；失败可暂停、干预、从节点重跑。
 4. **报告**：运行结束一键生成 zip，含 JUnit XML 与失败截图。
 
@@ -142,8 +171,8 @@ sh scripts/build.sh --pack         # 打包成单文件可执行程序（PyInsta
 | 暂停 = 干预模式（暂停期手动控制 + `manual_intervention` 留痕）· 预检 · 热恢复 | ✅ 实测 |
 | scrcpy 实时镜像（718×1600 / avc1.64002A / 首帧 IDR+SPS+PPS） | ✅ 后端 WS 收帧实测 |
 | 镜像页操作直连 scrcpy control 通道（**点击端到端 4~40ms**） | ✅ 真机实测，坐标 3/3 落点正确 |
-| web 录制 → 转脚本 → 回放 | ✅ 实测 succeeded |
-| 物理录制（触摸设备探测 + 事件解析 + 标定字段） | ✅ 探测实测（标定精度待回归） |
+| 镜像录制 → 转脚本 → 回放 | ✅ 实测 succeeded |
+| 真机录制（触摸设备探测 + 事件解析 + 标定字段） | ✅ 探测实测（标定精度待回归） |
 | 设备录屏 mp4（可播放）· 报告 zip（HTML+JUnit+截图）· 产物直链 | ✅ 实测 |
 | PyInstaller 单文件打包（36MB） | ✅ 实测可启动 |
 
@@ -165,10 +194,12 @@ backend/
     report/       builder + templates
     capture/      logcat network
   tests/          pytest（全部用 FakeDriver，不依赖真机）
-frontend/src/     React + TS + AntD 5 + TanStack Query + WebCodecs
+frontend/         Vue 3.5 + Vite + TS + Element Plus + Pinia + Vue Query + CodeMirror 6
+frontend-react/   v0.1.3 React + AntD 冻结备份（回滚用，不再开发）
 docs/contracts.md 唯一契约（错误码/DB/脚本格式/驱动接口/WS/端点/配置）
 samples/          示例脚本
-scripts/          setup / dev / build / 环境自检 / scrcpy 下载
+scripts/          setup / dev / build / start / release / 环境自检 / scrcpy 下载
+                  前端实现默认 Vue；--react 切换 frontend-react（回滚）
 ```
 
 ## 关键设计（详见 `docs/contracts.md`）
@@ -177,6 +208,8 @@ scripts/          setup / dev / build / 环境自检 / scrcpy 下载
 - **等待全部自轮询**（350ms，可被暂停/停止打断），禁用 uiautomator2 阻塞等待 API，保证暂停响应 ≤5s。
 - **暂停 = 干预模式**：暂停后解锁手动控制，手动操作全部留痕（`manual_intervention`），恢复前做文字化预检。
 - **重跑安全性**：节点标记 `rerun_safety ∈ {safe,destructive,stateful}`，破坏性节点禁止"重跑当前节点"。
+- **v0.2 执行条件**：节点 `when = {mode, timeout_ms, poll_interval_ms, condition}`，`condition` 支持 group(and/or) / not / target / app / time；`when=null` 默认关闭，条件不满足按 require=失败、optional=跳过处理。
+- **v0.2 脚本来源**：`manual | mirror | physical | imported`，录制生成的脚本带 `origin_recording_id`；前端不保留旧 `recorded` 兜底。
 - **镜像**：scrcpy-server 版本与 SHA256 锁定；`--no-audio`；unique localabstract；背压丢帧到下一 IDR 并通知前端 flush；旋转/参数变化重配解码器。
 - **契约冻结**：`docs/contracts.md` 是唯一事实来源，改动需先改文档再改代码。
 
@@ -214,8 +247,11 @@ git tag -l                       # 版本标签（当前 v0.1.1）
 ```bash
 cd backend && uv run pytest -q                 # 后端测试（无需真机）
 cd backend && uv run uvicorn app.main:app --reload --port 8787
-cd frontend && npm run dev                      # 前端 dev（代理到 8787）
+cd frontend && npm run dev                      # Vue 前端 dev（代理到 8787）
+cd frontend && npm run lint                     # ESLint / Vue 规则
 cd frontend && npm run typecheck                # 类型检查
+cd frontend && npm run build                    # 类型检查 + 构建到 frontend/dist
+# 回滚：cd frontend-react && npm run dev / npm run build
 ```
 
 无真机也能开发/联调：设备注册表会把 serial 以 `fake` 开头的设备路由到内存 `FakeDriver`（假层级树 + 动作记录），
@@ -223,11 +259,12 @@ cd frontend && npm run typecheck                # 类型检查
 
 ## 常见问题
 
+- **npm 报 EPERM（`~/.npm` 缓存被 root 占用）**：`sudo chown -R $(id -u):$(id -g) ~/.npm`，或临时用 `npm_config_cache=/tmp/autotest-npm-cache npm install`。
 - **adb 找不到**：设置页填 adb 绝对路径，或把 platform-tools 加进 PATH。
 - **设备 offline/unauthorized**：重新插拔、手机上确认授权、`adb kill-server && adb start-server`。
 - **镜像黑屏/报错**：确认 scrcpy-server jar 已下载（`sh scripts/setup.sh`），在设置页调小 `max_size`(如 800) 与码率。
-- **浏览器不支持 WebCodecs**（Firefox 旧版/Safari 旧版）：镜像页会提示；此时用**物理录制**模式（手机真实操作，通过 getevent 采集）。
-- **录制没有出现节点**：检查录制的设备是否就是操作的那台；物理录制需要先通过触摸设备确认与 2 点标定。
+- **浏览器不支持 WebCodecs**（Firefox 旧版/Safari 旧版）：镜像页会提示；此时用**真机录制**模式（手机真实操作，通过 getevent 采集）。
+- **录制没有出现节点**：检查录制的设备是否就是操作的那台；真机录制需要先通过触摸设备确认与 2 点标定。
 - **运行时提示 409 DEVICE_BUSY**：设备被运行/录制占用；手动控制（含 shell）在运行中会被拒绝，暂停运行后即可操作（并会留痕）。
 - **断言失败但页面看着是对的**：优先用「前台包名」或 `text` 精确匹配；`text_contains` 容易命中包含关系的其它文案；
   系统设置页可能跨进程（包名变化），详见 `docs/real-device-notes.md` 的脚本编写最佳实践。

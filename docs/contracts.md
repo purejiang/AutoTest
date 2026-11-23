@@ -108,6 +108,19 @@ artifacts/recordings/recording_events/reports/settings，索引见 models.py。
 - recording.status：`recording|paused|stopped`
 - artifact.kind：`screenshot|video|logcat|hierarchy|report|screenrecord|network`
 
+### 2.1 v0.2 数据库与来源字段（不兼容 v0.1.x）
+
+- **旧数据库不支持**：v0.2 使用新库，不做 ALTER TABLE / 回填 / 旧数据迁移。`init_db()` 建表后执行
+  schema guard：若 `scripts` 表缺少 `origin_recording_id` 列，抛 `IncompatibleDatabaseError`（RuntimeError
+  子类），提示用户**先备份**，再移走/删除 `~/.autotest/data`（或自定义数据目录）下的旧库；绝不自动修改/删除数据。
+- `scripts.source` 四值：`manual | mirror | physical | imported`（旧 `recorded` 不再支持）。
+  - `manual`：手写/新建；`imported`：导入；`mirror`：web 镜像录制转换；`physical`：物理触摸录制转换。
+- `scripts.origin_recording_id`：`String(64)`、nullable、**软关联**（无 FK）。录制删除后仍保留，便于溯源；
+  v0.2 不新增 `source_detail`。
+- `Recording.mode=web` → 转换脚本 `source=mirror`；`mode=physical` → `source=physical`。
+- 删除脚本时清空指向它的 `recordings.script_id`（录制本身与事件保留）；删除录制时保留脚本的
+  `source` / `origin_recording_id`。
+
 ## 3. 脚本 JSON（schema_version=1，唯一数据文件格式）
 
 结构校验用 `app.schemas`（Lead 已写，12 类节点 params 见其模型定义）；语义校验（id 唯一、
@@ -117,8 +130,23 @@ goto 目标、sub_script 存在性 warning）用 `schemas.validate_script()`。
 - 节点公共字段：id/name/type/description/enabled/when/timeout_ms/delay_before_ms/delay_after_ms/
   retry/on_fail/screenshot_on_fail/rerun_safety/tags/params。
 - Target：`{"by": "...", "value": "...", "index": 0}` 或 `{"by": "point", "x": 540, "y": 1200}`。
-- when：`{"target", "mode": "require|optional", "timeout_ms", "state": "visible|gone"}`；
-  require=超时未出现→节点失败走 on_fail；optional=未出现→skipped 不算失败；轮询 350ms，禁用阻塞等待。
+- `source` / `origin_recording_id` 是 DB 资源元数据（见 §2.1），不属于脚本 JSON。
+- when：`null` 或一个新的条件树对象；**不接受** v0.1 的 `when.target/state` 结构。
+  ```json
+  {"mode": "require|optional", "timeout_ms": 0, "poll_interval_ms": 350,
+   "condition": {"type": "target", "target": {"by": "text", "value": "登录"}, "state": "visible"}}
+  ```
+  `timeout_ms` ≥ 0（0=只求值一次）；`poll_interval_ms` 50..5000（默认 350）。
+  `require` 不满足 → 节点失败 `WHEN_NOT_MET` 并走 on_fail；`optional` 不满足 → `skipped`（reason=`when_not_met`）。
+  condition 是带 `type` 判别字段的递归树（v0.2 实现以下 5 类，变量/设备条件留给后续版本扩展）：
+  - `target`：`{type, target, state: visible|gone}`；`point` 不能作为可见性条件（校验报 error）。
+  - `app`：`{type, package, activity?, state: foreground|background}`；activity 支持全名或 `.MainActivity` 简写。
+  - `time`：`{type, start: "HH:MM", end: "HH:MM", days: [1..7]}`；宿主本地时区，1=周一、7=周日；
+    `start > end` 表示跨午夜，`days` 指窗口开始那一天（如周六 01:00 仍属于「周五 22:00-06:00, days=[5]」）；
+    `start == end` 表示全天。
+  - `group`：`{type, op: and|or, items: [...]}`，至少 1 项、至多 50 项。
+  - `not`：`{type: "not", item: <condition>}`，单项取反。
+  - `group`/`not` 嵌套 ≤4 层（叶子不计层）。
 - 断言失败走 on_fail 但**不重试动作**；sub_script 嵌套 ≤5；click 类 target 解析失败→可重试。
 
 ## 4. 驱动接口（`app/android/driver.py`，Lead 已写）
@@ -135,9 +163,11 @@ goto 目标、sub_script 存在性 warning）用 `schemas.validate_script()`。
 |---|---|
 | run_started | {script_id, script_name, device_serial, total_steps} |
 | run_state | {status, step_index?} |
+| when_started | {step_id, mode, timeout_ms, poll_interval_ms, condition_summary} |
+| when_result | {step_id, mode, met, waited_ms, condition_summary} |
 | step_started | {step_id, name, type, index, attempt} |
-| step_finished | {step_id, status, duration_ms, attempts, error?, output?} |
-| step_skipped | {step_id, reason: when_not_met\|disabled\|after_fail} |
+| step_finished | {step_id, status, duration_ms, attempts, error?, output?, when?} |
+| step_skipped | {step_id, reason: when_not_met\|disabled\|after_fail, when?} |
 | step_retry | {step_id, attempt, error} |
 | assert_result | {step_id, kind, passed, detail} |
 | log | {level, message} |
@@ -149,6 +179,15 @@ goto 目标、sub_script 存在性 warning）用 `schemas.validate_script()`。
 | error | {code, message, step_id?} |
 seq：同一 run 单调递增，由 `SELECT MAX(seq)+1` 在短事务内分配，`(run_id, seq)` 唯一约束兜底（冲突重试≤3）。
 WS 订阅者从内存 pubsub 收实时事件；断线用 `?since_seq=n` 从 DB 补。
+
+**when 可观测性（v0.2）**
+- 事件顺序：成功 → `when_started → when_result → step_started → step_finished`；
+  optional 不满足 → `when_started → when_result → step_skipped`；
+  require 不满足 → `when_started → when_result → step_finished(failed, error.code=WHEN_NOT_MET)`。
+- `when` 对象：`{met, waited_ms, condition_summary}`。条件节点的 `step_results.output.when` 必带该对象，
+  `step_finished` / `step_skipped` payload 也带可选 `when`；无条件节点输出与 payload 不出现 `when`。
+- `WHEN_NOT_MET` 的 `error.details.when` 同样带该对象。
+- `duration_ms` 仍只统计动作（when 等待不算）；等待时长只记在 `when.waited_ms`（活跃时长口径，paused 不计）。
 
 ## 6. WebSocket（FastAPI 原生 WebSocket，路径挂在根，不走 /api）
 
@@ -187,6 +226,11 @@ GET /api/scripts?query=&limit=&offset=；POST /api/scripts；GET/PUT/DELETE /api
 POST /api/scripts/{id}/duplicate；POST /api/scripts/validate {data}；
 GET /api/scripts/{id}/export（json 附件）；POST /api/scripts/import（multipart 或 {data}）；
 POST /api/scripts/{id}/run {serial,...}（快捷=POST /api/runs）。
+- 脚本资源带 `source`（四值，见 §2.1）与 `origin_recording_id`（nullable）。
+- `DELETE /api/scripts/{id}` 同时清空 `recordings.script_id`（软关联），不删除录制/事件。
+- `POST /api/scripts/bulk-delete {ids: [str]}（≤200）` → `{deleted, failed:[{id,code,message}]}`；
+  ids 去重，空列表 400 INVALID_ARGUMENT；单条失败不影响其他条。不存在 → failed NOT_FOUND；
+  删除成功的脚本同样清空 `recordings.script_id`。
 
 ### 7.3 运行（be-runner）
 POST /api/runs {script_id,serial?,variables?,debug?}（占用/录制中→409）；
@@ -197,13 +241,28 @@ POST /api/runs/{id}/pause；**POST** /api/runs/{id}/resume-check（返回 §7.3 
 POST /api/runs/{id}/resume {ack,resume_kind:"hot"}；POST /api/runs/{id}/stop；
 POST /api/runs/{id}/debug {action:"step"|"continue"|"run_from", step_id?}。
 暂停期间的手动控制放行，并必须 emit `manual_intervention` 运行事件（见 §5）。
+- `POST /api/runs/bulk-delete {ids: [int]}（≤200）` → `{deleted, failed:[{id,code,message}]}`；
+  ids 去重，空列表 400 INVALID_ARGUMENT；只允许 terminal 状态（succeeded/failed/aborted/stopped/
+  interrupted），进行中/暂停中等非终态 → failed CONFLICT，**不自动 stop**；终态删除复用单删清理逻辑
+  （step/events/artifacts/产物目录）。不存在 → failed NOT_FOUND；单条失败不影响其他条。
 
 ### 7.4 录制（be-report）
 POST /api/recordings {name?,serial,mode}；GET /api/recordings?status=&limit=；
 GET /api/recordings/{id}；POST /api/recordings/{id}/pause|resume|stop；
 GET /api/recordings/{id}/events?since_seq=&limit=；DELETE /api/recordings/{id}/events/{seq}；
 POST /api/recordings/{id}/to_script {name?,include_kinds?,exclude_seqs?}
-→ `{id, script_id, name, data, warnings:[{seq,reason}]}`；DELETE /api/recordings/{id}。
+→ `{id, script_id, name, data, source, origin_recording_id, warnings:[{seq,reason}]}`；DELETE /api/recordings/{id}。
+- 录制资源（创建/查询/列表/暂停恢复停止）响应新增 `script_name`：由 `script_id` 软关联查询；
+  列表按当前页 `script_ids` 批量查询一次，禁止 N+1。未关联/脚本已删除时为 `null`。
+- `to_script` 按 `Recording.mode` 写 `source`：`web → mirror`、`physical → physical`；写
+  `origin_recording_id=recording_id`。转换出的所有节点（含自动聚焦节点）`when` 恒为 `null`。
+- `DELETE /api/recordings/{id}` 只删录制与事件，不删除/改动关联脚本的 `source` / `origin_recording_id`。
+- `POST /api/recordings/bulk-delete {ids: [str]}（≤200）` → `{deleted, failed:[{id,code,message}]}`；
+  ids 去重，空列表 400 INVALID_ARGUMENT；只允许 stopped，recording/paused → failed CONFLICT，
+  **不自动 stop**；不存在 → failed NOT_FOUND；删除成功时删除事件与录制，单条失败不影响其他条。
+- `POST /api/recordings/{id}/events/bulk-delete {seqs: [int]}（≤500）` → 同统一响应（failed 的 id 为 seq）；
+  seqs 去重，空列表 400 INVALID_ARGUMENT；事件不存在 → failed NOT_FOUND；删除后重算
+  `recording.event_count`；单条失败不影响其他条。
 
 ### 7.5 报告与维护（be-report）
 POST /api/runs/{id}/report {include_video?}；GET /api/reports?run_id=；

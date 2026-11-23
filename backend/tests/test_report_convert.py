@@ -225,6 +225,7 @@ def test_events_to_script_defaults_to_point_mode() -> None:
     assert steps[1]["params"]["target"] == {"by": "point", "x": 300, "y": 400}
     assert steps[1]["params"]["duration_ms"] == 900
     assert steps[2]["params"]["target"] == {"by": "point", "x": 10, "y": 20}
+    assert all(step["when"] is None for step in steps)
     assert any("绝对坐标" in warning for warning in warnings)
     assert validate_script(script)["valid"] is True
 
@@ -240,6 +241,22 @@ def test_point_mode_input_inserts_focus_click() -> None:
     assert [step["type"] for step in steps] == ["click", "input"]
     assert steps[1]["params"]["target"] is None
     assert steps[1]["params"]["text"] == "wlan"
+    # 自动聚焦 click 与普通节点一样不带 when
+    assert all(step["when"] is None for step in steps)
+
+
+def test_point_mode_input_without_tap_inserts_auto_focus_click() -> None:
+    """没有前置点击时自动补聚焦节点；自动聚焦节点的 when 也必须为 None。"""
+    events = [_event(1, "input", {"text": "hello", "x": 540, "y": 710})]
+
+    script, _warnings = convert.events_to_script(events, "自动聚焦脚本")
+
+    steps = script["steps"]
+    assert [step["type"] for step in steps] == ["click", "input"]
+    assert steps[0]["tags"] == ["auto-focus"]
+    assert steps[0]["when"] is None
+    assert steps[1]["when"] is None
+    assert validate_script(script)["valid"] is True
 
 
 def test_swipe_keeps_recorded_path_and_long_waits_are_not_truncated() -> None:

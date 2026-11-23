@@ -1082,13 +1082,14 @@ def to_script(
     exclude_seqs: list[int] | None = None,
     target_mode: str | None = None,
 ) -> dict[str, Any]:
-    """读录制事件 -> convert -> schemas.validate_script -> 建 Script(source='recorded')。"""
+    """读录制事件 -> convert -> schemas.validate_script -> 建脚本（source=mirror/physical）。"""
     recording_id = str(recording_id)
     with session_scope() as db:
         recorder = db.get(Recording, recording_id)
         if recorder is None:
             raise ApiError("NOT_FOUND", "recording not found", {"id": recording_id})
         recording_name = recorder.name or ""
+        recording_mode = str(recorder.mode or "web")
         rows = list(
             db.scalars(
                 select(RecordingEvent)
@@ -1141,6 +1142,9 @@ def to_script(
     script_id = f"rec_{uuid.uuid4().hex[:12]}"
     timestamp = now_iso()
     script["notes"] = script.get("notes") or f"由录制 {recording_id} 转换"
+    # Recording.mode=web -> source=mirror；physical -> source=physical。
+    # origin_recording_id 是软关联（无 FK），删除录制后仍保留来源信息。
+    source = "physical" if recording_mode == "physical" else "mirror"
     with session_scope() as db:
         db.add(
             Script(
@@ -1149,7 +1153,8 @@ def to_script(
                 notes=script["notes"],
                 schema_version=1,
                 data=script,
-                source="recorded",
+                source=source,
+                origin_recording_id=recording_id,
                 created_at=timestamp,
                 updated_at=timestamp,
             )
@@ -1165,7 +1170,8 @@ def to_script(
         "notes": script["notes"],
         "schema_version": 1,
         "data": script,
-        "source": "recorded",
+        "source": source,
+        "origin_recording_id": recording_id,
         "created_at": timestamp,
         "updated_at": timestamp,
         "warnings": warnings,

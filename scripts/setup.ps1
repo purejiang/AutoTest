@@ -1,6 +1,11 @@
 # 首次安装（Windows PowerShell）
+# 默认安装 Vue 主前端 frontend/；加 -React 安装冻结的 frontend-react/。
+param([switch]$React)
 $ErrorActionPreference = "Continue"
 Set-Location (Join-Path $PSScriptRoot "..")
+
+$FrontendImpl = if ($React) { "react" } else { "vue" }
+$FrontendDir = if ($FrontendImpl -eq "react") { "frontend-react" } else { "frontend" }
 
 Write-Host "==> 1/5 检查 uv"
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
@@ -15,8 +20,8 @@ uv python install 3.12
 uv sync --extra dev
 Pop-Location
 
-Write-Host "==> 3/5 安装前端依赖"
-Push-Location frontend
+Write-Host "==> 3/5 安装前端依赖（$FrontendImpl / $FrontendDir）"
+Push-Location $FrontendDir
 npm install --no-audit --no-fund
 Pop-Location
 
@@ -33,4 +38,4 @@ uv run python ..\scripts\check_env.py
 Pop-Location
 
 Write-Host ""
-Write-Host "完成。启动：powershell -File scripts\dev.ps1"
+Write-Host "完成。启动：powershell -File scripts\dev.ps1（生产：scripts\start.ps1）"

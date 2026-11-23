@@ -20,10 +20,12 @@ from sqlalchemy.orm import Session
 
 from ..api_schemas import (
     DuplicateRequest,
+    ScriptBulkDeleteRequest,
     ScriptCreateRequest,
     ScriptUpdateRequest,
     ScriptValidateRequest,
 )
+from ..db import session_scope
 from ..deps import get_db
 from ..errors import ApiError
 from ..logs import logger
@@ -77,6 +79,30 @@ def update_script(
 def delete_script(script_id: str, session: Session = Depends(get_db)) -> dict[str, Any]:
     script_service.delete_script(session, script_id)
     return {"ok": True, "id": script_id}
+
+
+@router.post("/bulk-delete")
+def bulk_delete_scripts(payload: ScriptBulkDeleteRequest) -> dict[str, Any]:
+    """批量删除脚本：去重、空列表 400、单条失败不影响其他条。"""
+    ids = list(dict.fromkeys(str(script_id) for script_id in payload.ids))
+    if not ids:
+        raise ApiError("INVALID_ARGUMENT", "ids must not be empty", {"ids": []})
+    deleted = 0
+    failed: list[dict[str, Any]] = []
+    for script_id in ids:
+        try:
+            with session_scope() as session:
+                script_service.delete_script(session, script_id)
+        except ApiError as exc:
+            failed.append({"id": script_id, "code": exc.code, "message": exc.message})
+        except Exception as exc:  # noqa: BLE001 - 单条失败不能中断整批
+            logger.exception("bulk delete script failed: %s", script_id)
+            failed.append(
+                {"id": script_id, "code": "INTERNAL", "message": f"{type(exc).__name__}: {exc}"}
+            )
+        else:
+            deleted += 1
+    return {"deleted": deleted, "failed": failed}
 
 
 @router.post("/{script_id}/duplicate")

@@ -6,8 +6,9 @@
 #   sh scripts/release.sh 0.2.0 --no-tag   # 只改版本号+提交，不打 tag
 #   sh scripts/release.sh 0.2.0 --rebuild  # 发版后顺手重建前端产物（dist 不进 git，此步可选）
 #
-# 版本号四处保持同步：
+# 版本号同步范围（Vue 主前端）：
 #   backend/pyproject.toml  /  backend/app/__init__.py  /  frontend/package.json  /  frontend/package-lock.json
+# frontend-react/ 是 v0.1.3 的冻结回滚备份，release 不修改、不同步它的版本号。
 # 发版前要求工作区干净（避免把未提交改动卷进 tag）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -101,10 +102,10 @@ if command -v uv >/dev/null 2>&1; then
   (cd backend && uv lock >/dev/null 2>&1) || echo "    [warn] uv lock 失败（离线/网络问题？），锁文件可能滞后" >&2
 fi
 
-# ---- 2) 前端版本号（package.json + package-lock.json，用 npm 保证锁文件一致）
+# ---- 2) 前端版本号（只同步 frontend/：package.json + package-lock.json）
 if command -v npm >/dev/null 2>&1; then
   (cd frontend && npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null)
-  echo "    前端版本 -> $VERSION"
+  echo "    frontend 版本 -> $VERSION（frontend-react/ 不参与发版）"
 else
   echo "[release] 未找到 npm，跳过前端版本号同步（请手动改 frontend/package.json）" >&2
 fi
@@ -130,8 +131,8 @@ fi
 
 # ---- 5) 可选：重建前端产物
 if [ "$DO_REBUILD" = "1" ]; then
-  echo "==> 重建前端产物"
-  (cd frontend && npm run build)
+  echo "==> 重建前端产物（Vue，frontend/dist）"
+  sh scripts/build.sh
 else
   echo "    提示：dist 不进 git；若前端有改动，记得 sh scripts/start.sh --rebuild 或 npm run build"
 fi

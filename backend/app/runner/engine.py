@@ -24,7 +24,7 @@ from ..errors import ApiError
 from ..events import RunEventBus
 from ..logs import logger
 from ..models import Run, StepResult, now_iso
-from . import controls, executors
+from . import conditions, controls, executors
 from .context import (
     BudgetExceeded,
     NonRetryableError,
@@ -341,29 +341,65 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                     index = jump_index
                     continue
 
-            # when 条件
+            # when 条件（v0.2 条件树）：when_started -> when_result -> 后续 step 事件
             when = getattr(step, "when", None)
+            when_info: dict[str, Any] | None = None
             if when is not None:
-                met = executors.wait_condition(
-                    ctx,
-                    when.target,
-                    when.state,
-                    int(when.timeout_ms),
+                summary_text = conditions.condition_summary(when.condition)
+                _safe_emit(
+                    ctx.run_id,
+                    "when_started",
+                    {
+                        "step_id": step.id,
+                        "mode": when.mode,
+                        "timeout_ms": int(when.timeout_ms),
+                        "poll_interval_ms": int(when.poll_interval_ms),
+                        "condition_summary": summary_text,
+                    },
                 )
-                if not met:
+                wait_result = conditions.wait_condition_tree(ctx, when)
+                when_info = {
+                    "met": bool(wait_result.met),
+                    "waited_ms": int(wait_result.waited_ms),
+                    "condition_summary": wait_result.condition_summary,
+                }
+                _safe_emit(
+                    ctx.run_id,
+                    "when_result",
+                    {
+                        "step_id": step.id,
+                        "mode": when.mode,
+                        "met": when_info["met"],
+                        "waited_ms": when_info["waited_ms"],
+                        "condition_summary": when_info["condition_summary"],
+                    },
+                )
+                if not wait_result.met:
                     if when.mode == "optional":
-                        _record_skipped(ctx, step, index, "when_not_met")
+                        _record_skipped(
+                            ctx, step, index, "when_not_met", when_info=when_info
+                        )
                         outcomes[step.id] = "skipped"
                         index += 1
                         continue
                     when_error = {
                         "code": "WHEN_NOT_MET",
-                        "message": f"when require not met (state={when.state}) "
+                        "message": f"when require not met ({summary_text}) "
                         f"within {when.timeout_ms} ms",
+                        "details": {"when": when_info},
                     }
                     last_error = when_error
                     _record_attempt(
-                        ctx, step, index, "failed", 0, now_iso(), 0, when_error, None
+                        ctx,
+                        step,
+                        index,
+                        "failed",
+                        0,
+                        now_iso(),
+                        0,
+                        when_error,
+                        None,
+                        when_info=when_info,
                     )
                     outcomes[step.id] = "failed"
                     failed_index = index
@@ -371,7 +407,12 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                     if index is not None:
                         continue
                     _skip_remaining(ctx, steps, failed_index + 1, outcomes)
-                    raise RunFailed(when_error["code"], when_error["message"], step_id=step.id)
+                    raise RunFailed(
+                        when_error["code"],
+                        when_error["message"],
+                        step_id=step.id,
+                        details=when_error.get("details"),
+                    )
 
             ctx.sleep_interruptible(int(getattr(step, "delay_before_ms", 0) or 0))
 
@@ -388,7 +429,18 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                     ctx.check_total_timeout()
                 except RunFailed as exc:
                     last_error = dict(exc.error)
-                    _record_attempt(ctx, step, index, "failed", attempts, now_iso(), 0, exc.error, None)
+                    _record_attempt(
+                        ctx,
+                        step,
+                        index,
+                        "failed",
+                        attempts,
+                        now_iso(),
+                        0,
+                        exc.error,
+                        None,
+                        when_info=when_info,
+                    )
                     outcomes[step.id] = "failed"
                     raise
                 ctx.wait_if_paused()
@@ -415,7 +467,16 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                     step_duration = max(0, ctx.active_elapsed_ms() - started_active)
                     stop_error = {"code": "STOPPED", "message": "run stopped"}
                     _record_attempt(
-                        ctx, step, index, "failed", attempts, started_iso, step_duration, stop_error, None
+                        ctx,
+                        step,
+                        index,
+                        "failed",
+                        attempts,
+                        started_iso,
+                        step_duration,
+                        stop_error,
+                        None,
+                        when_info=when_info,
                     )
                     raise
                 except BaseException as exc:  # noqa: BLE001 - 统一转 step error
@@ -437,7 +498,16 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                     fail_error = step_error
                     last_error = step_error
                     _record_attempt(
-                        ctx, step, index, "failed", attempts, started_iso, step_duration, step_error, fail_output
+                        ctx,
+                        step,
+                        index,
+                        "failed",
+                        attempts,
+                        started_iso,
+                        step_duration,
+                        step_error,
+                        fail_output,
+                        when_info=when_info,
                     )
                     outcomes[step.id] = "failed"
                     break
@@ -446,7 +516,16 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                     retry_used[step.id] = 0
                     ctx.sleep_interruptible(int(getattr(step, "delay_after_ms", 0) or 0))
                     _record_attempt(
-                        ctx, step, index, "passed", attempts, started_iso, step_duration, None, output
+                        ctx,
+                        step,
+                        index,
+                        "passed",
+                        attempts,
+                        started_iso,
+                        step_duration,
+                        None,
+                        output,
+                        when_info=when_info,
                     )
                     outcomes[step.id] = "passed"
                     break
@@ -720,7 +799,13 @@ def _record_attempt(
     duration_ms: int,
     error: dict[str, Any] | None,
     output: dict[str, Any] | None,
+    *,
+    when_info: dict[str, Any] | None = None,
 ) -> int:
+    if when_info is not None:
+        merged = dict(output or {})
+        merged["when"] = when_info
+        output = merged
     step_result_id = 0
     try:
         with session_scope() as session:
@@ -760,12 +845,24 @@ def _record_attempt(
         payload["error"] = error
     if output is not None:
         payload["output"] = output
+    if when_info is not None:
+        payload["when"] = when_info
     _safe_emit(ctx.run_id, "step_finished", payload)
     return step_result_id
 
 
-def _record_skipped(ctx: RunContext, step: Any, index: int, reason: str) -> None:
+def _record_skipped(
+    ctx: RunContext,
+    step: Any,
+    index: int,
+    reason: str,
+    *,
+    when_info: dict[str, Any] | None = None,
+) -> None:
     error = {"code": reason.upper(), "message": reason}
+    output: dict[str, Any] = {"reason": reason}
+    if when_info is not None:
+        output["when"] = when_info
     try:
         with session_scope() as session:
             session.add(
@@ -781,12 +878,15 @@ def _record_skipped(ctx: RunContext, step: Any, index: int, reason: str) -> None
                     ended_at=now_iso(),
                     duration_ms=0,
                     error=error,
-                    output={"reason": reason},
+                    output=output,
                 )
             )
     except Exception:
         logger.exception("failed to record skipped step run=%s step=%s", ctx.run_id, step.id)
-    _safe_emit(ctx.run_id, "step_skipped", {"step_id": step.id, "reason": reason})
+    payload: dict[str, Any] = {"step_id": step.id, "reason": reason}
+    if when_info is not None:
+        payload["when"] = when_info
+    _safe_emit(ctx.run_id, "step_skipped", payload)
 
 
 def _skip_remaining(

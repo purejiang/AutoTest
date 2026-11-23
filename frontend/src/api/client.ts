@@ -1,10 +1,12 @@
-// 统一 API 客户端：baseURL /api、错误信封 -> ApiError、查询串/列表/下载/二进制工具。
-// 错误提示由 main.tsx 的 QueryCache/MutationCache 统一走 notifyApiError（antd message）。
+// 统一 API 客户端：Axios 实例（baseURL /api）、错误信封 -> ApiError、查询串/列表/下载工具。
+// 错误提示由 main.ts 注入的 notifier 统一走 Element Plus ElMessage。
+import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios'
+
 import type { ApiErrorEnvelope, ItemsResponse } from '@/types/api'
 
 export const API_BASE = '/api'
 
-// ---------------------------------------------------------------- 鉴权 token（由 App 从 settings.effective["security.token"] 注入）
+// ---------------------------------------------------------------- 鉴权 token（settings.effective["security.token"] 注入）
 
 let authToken = ''
 
@@ -89,7 +91,7 @@ export function describeApiError(error: unknown): string {
   return text
 }
 
-// ---------------------------------------------------------------- 全局错误提示（由 main.tsx 注入 antd message）
+// ---------------------------------------------------------------- 全局错误提示
 
 let errorNotifier: ((error: ApiError) => void) | null = null
 let lastNotified: { key: string; at: number } | null = null
@@ -98,15 +100,26 @@ export function setApiErrorNotifier(notifier: ((error: ApiError) => void) | null
   errorNotifier = notifier
 }
 
-/** 供 QueryCache/MutationCache 调用；3s 内相同错误去重，避免多查询同时失败刷屏。 */
+/** 3s 内相同错误去重，避免多个查询同时失败刷屏。 */
 export function notifyApiError(error: unknown): void {
   const apiError = toApiError(error)
-  if (apiError.name === 'AbortError' || (error as { name?: string } | null)?.name === 'AbortError') return
+  if (isAbortError(error)) return
   const key = `${apiError.code}:${apiError.message}`
   const now = Date.now()
   if (lastNotified && lastNotified.key === key && now - lastNotified.at < 3000) return
   lastNotified = { key, at: now }
   errorNotifier?.(apiError)
+}
+
+export function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const record = error as { name?: string; code?: string }
+  return (
+    record.name === 'AbortError' ||
+    record.name === 'CanceledError' ||
+    record.code === 'ERR_CANCELED' ||
+    axios.isCancel(error)
+  )
 }
 
 /** 从 VALIDATION_ERROR details.errors 中提取逐项错误。 */
@@ -129,7 +142,6 @@ export function validationErrorsOf(error: unknown): { path: string; code: string
 export type QueryValue = string | number | boolean | null | undefined
 export type QueryParams = Record<string, QueryValue | QueryValue[]>
 
-/** 跳过 undefined/null/''（保留 0 与 false）。 */
 export function buildQuery(query?: QueryParams): string {
   if (!query) return ''
   const params = new URLSearchParams()
@@ -151,7 +163,11 @@ export function buildQuery(query?: QueryParams): string {
 export function resolveApiUrl(path: string, query?: QueryParams): string {
   const normalized = path.trim()
   let url: string
-  if (/^https?:\/\//i.test(normalized) || normalized.startsWith('/ws/') || normalized.startsWith('/artifacts/')) {
+  if (
+    /^https?:\/\//i.test(normalized) ||
+    normalized.startsWith('/ws/') ||
+    normalized.startsWith('/artifacts/')
+  ) {
     url = normalized
   } else if (normalized === '/api' || normalized.startsWith('/api/')) {
     url = normalized
@@ -161,7 +177,48 @@ export function resolveApiUrl(path: string, query?: QueryParams): string {
   return `${url}${buildQuery(query)}`
 }
 
-// ---------------------------------------------------------------- 请求
+// ---------------------------------------------------------------- Axios 实例
+
+const http = axios.create({
+  baseURL: API_BASE,
+  timeout: 60_000,
+  headers: { Accept: 'application/json' },
+})
+
+http.interceptors.request.use((config) => {
+  if (authToken) config.headers.Authorization = `Bearer ${authToken}`
+  return config
+})
+
+http.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    if (isAbortError(error)) return Promise.reject(error)
+    if (axios.isAxiosError(error)) {
+      const response = error.response
+      if (!response) {
+        return Promise.reject(new ApiError('NETWORK', '无法连接后端服务', 0))
+      }
+      const envelope = response.data as ApiErrorEnvelope | undefined
+      if (envelope?.error?.code) {
+        return Promise.reject(
+          new ApiError(
+            envelope.error.code,
+            envelope.error.message || '',
+            response.status,
+            envelope.error.details ?? {},
+          ),
+        )
+      }
+      const code =
+        STATUS_TO_CODE[response.status] ?? (response.status >= 500 ? 'INTERNAL' : 'INVALID_ARGUMENT')
+      return Promise.reject(
+        new ApiError(code, response.statusText || `HTTP ${response.status}`, response.status, {}),
+      )
+    }
+    return Promise.reject(error)
+  },
+)
 
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
@@ -169,83 +226,43 @@ export interface RequestOptions {
   query?: QueryParams
   signal?: AbortSignal
   headers?: Record<string, string>
+  responseType?: 'json' | 'text' | 'blob'
 }
 
 export type ExtraOptions = Omit<RequestOptions, 'method' | 'body'>
 
-async function parseErrorResponse(response: Response): Promise<ApiError> {
-  let envelope: ApiErrorEnvelope | null = null
-  try {
-    envelope = (await response.json()) as ApiErrorEnvelope
-  } catch {
-    envelope = null
+function requestConfig(path: string, options: RequestOptions): AxiosRequestConfig {
+  const config: AxiosRequestConfig = {
+    url: path,
+    method: options.method ?? 'GET',
+    params: options.query,
+    signal: options.signal,
+    headers: options.headers,
+    responseType: options.responseType ?? 'json',
   }
-  if (envelope?.error?.code) {
-    return new ApiError(
-      envelope.error.code,
-      envelope.error.message || '',
-      response.status,
-      envelope.error.details ?? {},
-    )
+  if (options.body !== undefined && options.body !== null) {
+    config.data = options.body
   }
-  const code = STATUS_TO_CODE[response.status] ?? (response.status >= 500 ? 'INTERNAL' : 'INVALID_ARGUMENT')
-  return new ApiError(code, response.statusText || `HTTP ${response.status}`, response.status, {})
+  return config
 }
 
-async function requestResponse(path: string, options: RequestOptions = {}): Promise<Response> {
-  const { method = 'GET', body, query, signal, headers } = options
-  const url = resolveApiUrl(path, query)
-  const init: RequestInit = {
-    method,
-    signal,
-    headers: {
-      Accept: 'application/json',
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      ...headers,
-    },
-  }
-  if (body !== undefined && body !== null) {
-    if (body instanceof FormData) {
-      init.body = body
-    } else {
-      init.headers = { ...init.headers, 'Content-Type': 'application/json' }
-      init.body = JSON.stringify(body)
-    }
-  }
-  let response: Response
-  try {
-    response = await fetch(url, init)
-  } catch (error) {
-    if ((error as { name?: string } | null)?.name === 'AbortError') throw error
-    throw new ApiError('NETWORK', '无法连接后端服务', 0, { url })
-  }
-  if (!response.ok) throw await parseErrorResponse(response)
-  return response
+async function requestResponse(path: string, options: RequestOptions): Promise<AxiosResponse> {
+  return http.request(requestConfig(path, options))
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await requestResponse(path, options)
-  if (response.status === 204 || response.status === 205) return undefined as T
-  const contentType = response.headers.get('Content-Type') ?? ''
-  if (contentType.includes('application/json')) {
-    try {
-      return (await response.json()) as T
-    } catch {
-      return undefined as T
-    }
-  }
-  const text = await response.text()
-  return text as unknown as T
+  return response.data as T
 }
 
 export async function apiText(path: string, options: RequestOptions = {}): Promise<string> {
-  const response = await requestResponse(path, options)
-  return response.text()
+  const response = await requestResponse(path, { ...options, responseType: 'text', method: 'GET' })
+  return typeof response.data === 'string' ? response.data : String(response.data ?? '')
 }
 
 export async function apiBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
-  const response = await requestResponse(path, options)
-  return response.blob()
+  const response = await requestResponse(path, { ...options, responseType: 'blob', method: 'GET' })
+  return response.data as Blob
 }
 
 // ---------------------------------------------------------------- 便捷方法
@@ -270,7 +287,6 @@ export function del<T>(path: string, body?: unknown, options: ExtraOptions = {})
 
 export type ItemsLike<T> = T[] | ItemsResponse<T>
 
-/** 契约列表返回 {items,total}；兼容后端直接返回数组的情况。 */
 export function itemsOf<T>(raw: ItemsLike<T> | null | undefined): T[] {
   if (!raw) return []
   if (Array.isArray(raw)) return raw

@@ -76,11 +76,102 @@ class Target(StrictModel):
         return self
 
 
-class When(StrictModel):
+# ---------------------------------------------------------------- 条件（when）
+# v0.2 条件树只有一个结构：when = {mode, timeout_ms, poll_interval_ms, condition}。
+# condition 是带 type 判别字段的递归联合；v0.2 实现 target/app/time/group/not，
+# variable/device 留给后续版本（新增 type 即可，不破坏现有脚本）。
+
+CONDITION_MAX_DEPTH = 4
+_CONDITION_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+class TargetCondition(StrictModel):
+    type: Literal["target"]
     target: Target
-    mode: Literal["require", "optional"] = "require"
-    timeout_ms: int = Field(default=3000, ge=100, le=600_000)
     state: Literal["visible", "gone"] = "visible"
+
+    @model_validator(mode="after")
+    def _check_target(self) -> TargetCondition:
+        if self.target.by == "point":
+            raise ValueError("point target cannot be used as a visibility condition")
+        return self
+
+
+class AppCondition(StrictModel):
+    type: Literal["app"]
+    package: str = Field(min_length=1)
+    activity: str | None = None
+    state: Literal["foreground", "background"] = "foreground"
+
+
+class TimeCondition(StrictModel):
+    type: Literal["time"]
+    start: str  # HH:MM（宿主本地时区）
+    end: str  # HH:MM；start > end 表示跨午夜
+    days: list[Annotated[int, Field(ge=1, le=7)]] = Field(min_length=1, max_length=7)
+
+    @model_validator(mode="after")
+    def _check(self) -> TimeCondition:
+        for field_name in ("start", "end"):
+            if not _CONDITION_TIME_RE.match(getattr(self, field_name)):
+                raise ValueError(f"{field_name} must be HH:MM")
+        if len(set(self.days)) != len(self.days):
+            raise ValueError("days must not contain duplicates")
+        return self
+
+
+class GroupCondition(StrictModel):
+    type: Literal["group"]
+    op: Literal["and", "or"]
+    items: list[Condition] = Field(min_length=1, max_length=50)
+
+
+class NotCondition(StrictModel):
+    type: Literal["not"]
+    item: Condition
+
+
+Condition = Annotated[
+    TargetCondition | AppCondition | TimeCondition | GroupCondition | NotCondition,
+    Field(discriminator="type"),
+]
+GroupCondition.model_rebuild()
+NotCondition.model_rebuild()
+
+
+def _condition_field(condition: Any, name: str, default: Any = None) -> Any:
+    if isinstance(condition, dict):
+        return condition.get(name, default)
+    return getattr(condition, name, default)
+
+
+def condition_depth(condition: Any) -> int:
+    """group/not 的嵌套层数（叶子=0）。"""
+    kind = str(_condition_field(condition, "type", "") or "")
+    if kind == "group":
+        children = _condition_field(condition, "items", []) or []
+        if not children:
+            return 1
+        return 1 + max(condition_depth(child) for child in children)
+    if kind == "not":
+        return 1 + condition_depth(_condition_field(condition, "item"))
+    return 0
+
+
+class When(StrictModel):
+    mode: Literal["require", "optional"] = "require"
+    timeout_ms: int = Field(default=3000, ge=0, le=600_000)
+    poll_interval_ms: int = Field(default=350, ge=50, le=5_000)
+    condition: Condition
+
+    @model_validator(mode="after")
+    def _check_depth(self) -> When:
+        depth = condition_depth(self.condition)
+        if depth > CONDITION_MAX_DEPTH:
+            raise ValueError(
+                f"condition nesting depth {depth} exceeds max {CONDITION_MAX_DEPTH}"
+            )
+        return self
 
 
 class Retry(StrictModel):

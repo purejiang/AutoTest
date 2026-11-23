@@ -76,10 +76,8 @@ export function maybeRunSelfTestInDev(): void {
   if (params.get('mirror_selftest') !== '1') return
   const report = runMirrorSelfTest()
   if (report.passed) {
-    // eslint-disable-next-line no-console
     console.info('[mirror self-test] 全部通过（h264 + WS 帧解析）')
   } else {
-    // eslint-disable-next-line no-console
     console.error('[mirror self-test] 失败：', report.failures)
   }
   // 方便在控制台里复跑

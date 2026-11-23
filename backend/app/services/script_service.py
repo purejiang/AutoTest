@@ -12,13 +12,13 @@ import copy
 import uuid
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from .. import schemas
 from ..errors import ApiError, not_found
 from ..logs import logger
-from ..models import Script, now_iso
+from ..models import Recording, Script, now_iso
 
 MAX_LIMIT = 500
 
@@ -61,6 +61,7 @@ def _row_to_dict(row: Script) -> dict[str, Any]:
         "name": row.name,
         "notes": row.notes or "",
         "source": row.source,
+        "origin_recording_id": row.origin_recording_id,
         "schema_version": int(row.schema_version or 1),
         "data": data,
         "step_count": step_count(data),
@@ -194,6 +195,12 @@ def update_script(
 
 def delete_script(session: Session, script_id: str) -> None:
     row = get_row(session, script_id)
+    # 录制只是软关联：删除脚本清空指向它的 recording.script_id，保留录制与事件本身
+    session.execute(
+        update(Recording)
+        .where(Recording.script_id == str(script_id))
+        .values(script_id=None)
+    )
     session.delete(row)
     session.flush()
 
@@ -212,6 +219,7 @@ def duplicate_script(session: Session, script_id: str, name: str | None = None) 
         schema_version=int(row.schema_version or 1),
         data=payload,
         source=row.source,
+        origin_recording_id=row.origin_recording_id,
         created_at=stamp,
         updated_at=stamp,
     )

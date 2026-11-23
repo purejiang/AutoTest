@@ -213,6 +213,46 @@ def test_delete_run_removes_rows_files_and_events(api_client, runner_env):
         assert artifacts == 0
 
 
+def test_bulk_delete_runs_only_terminal_and_dedups(api_client, runner_env):
+    script_id, script = _create_script()
+    terminal_id = insert_run(script, status="failed", script_id=script_id)
+    active_id = insert_run(script, status="running", script_id=script_id)
+    artifact_path = runner_env.data_dir / "artifacts" / f"run_{terminal_id}" / "bulk.png"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    with db.session_scope() as session:
+        session.add(
+            models.Artifact(
+                run_id=terminal_id,
+                kind="screenshot",
+                name="bulk",
+                path=str(artifact_path),
+                size=artifact_path.stat().st_size,
+            )
+        )
+
+    response = api_client.post(
+        "/api/runs/bulk-delete",
+        json={"ids": [terminal_id, active_id, 99999, terminal_id]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["deleted"] == 1
+    failures = {item["id"]: item["code"] for item in body["failed"]}
+    assert failures == {active_id: "CONFLICT", 99999: "NOT_FOUND"}
+    assert get_run(terminal_id) is None
+    assert get_run(active_id)["status"] == "running"  # 不自动 stop
+    assert not artifact_path.exists()
+    assert not artifact_path.parent.exists()
+
+
+def test_bulk_delete_runs_empty_list_is_400(api_client):
+    response = api_client.post("/api/runs/bulk-delete", json={"ids": []})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+
+
 # ---------------------------------------------------------------- events
 def test_events_endpoint_replays_since_seq(api_client):
     script = make_script([click_step("s1")])

@@ -2,11 +2,14 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Open -Port 9000 -Rebuild
+#   powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -React   # 回滚 React 前端
 param(
     [int]$Port = 8787,
     [string]$BindHost = "127.0.0.1",
     [switch]$Open,
-    [switch]$Rebuild
+    [switch]$Rebuild,
+    [switch]$React,
+    [switch]$Vue
 )
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
@@ -15,6 +18,15 @@ $Root = (Get-Location).Path
 function Say([string]$m)  { Write-Host "[start] $m" -ForegroundColor Cyan }
 function Warn([string]$m) { Write-Host "[start] $m" -ForegroundColor Yellow }
 function Die([string]$m)  { Write-Host "[start] $m" -ForegroundColor Red; exit 1 }
+
+$FrontendImpl = if ($env:AUTOTEST_FRONTEND) { $env:AUTOTEST_FRONTEND } else { "vue" }
+if ($React) { $FrontendImpl = "react" }
+if ($Vue) { $FrontendImpl = "vue" }
+switch ($FrontendImpl) {
+    "vue" { $FrontendDir = "frontend" }
+    "react" { $FrontendDir = "frontend-react" }
+    default { Die "AUTOTEST_FRONTEND 只能是 vue 或 react（收到：$FrontendImpl）" }
+}
 
 # 1. uv
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
@@ -35,15 +47,25 @@ if (-not (Test-Path "backend\.venv\Scripts\python.exe")) {
     Push-Location backend; uv python install 3.12; uv sync; Pop-Location
 }
 
-# 3. 前端构建
-if ((-not (Test-Path "frontend\dist\index.html")) -or $Rebuild) {
+# 3. 前端构建（后端静态目录固定为 frontend/dist）
+$builtImpl = ""
+if (Test-Path "frontend\dist\.impl") { $builtImpl = (Get-Content "frontend\dist\.impl" -Raw).Trim() }
+$needBuild = (-not (Test-Path "frontend\dist\index.html")) -or $Rebuild -or ($builtImpl -eq "") -or ($builtImpl -ne "" -and $builtImpl -ne $FrontendImpl)
+if ($needBuild) {
     if (Get-Command npm -ErrorAction SilentlyContinue) {
-        if (-not (Test-Path "frontend\node_modules")) {
-            Say "安装前端依赖（首次约 1-2 分钟）…"
-            Push-Location frontend; npm install --no-audit --no-fund; Pop-Location
+        if (-not (Test-Path "$FrontendDir\node_modules")) {
+            Say "安装前端依赖（$FrontendDir，首次约 1-2 分钟）…"
+            Push-Location $FrontendDir; npm install --no-audit --no-fund; Pop-Location
         }
-        Say "构建前端…"
-        Push-Location frontend; npm run build; Pop-Location
+        Say "构建前端（$FrontendImpl / $FrontendDir）…"
+        Push-Location $FrontendDir; npm run build; Pop-Location
+        if ($FrontendImpl -eq "react") {
+            Say "同步 React 产物到 frontend\dist …"
+            if (Test-Path "frontend\dist") { Remove-Item "frontend\dist" -Recurse -Force }
+            New-Item -ItemType Directory -Path "frontend\dist" | Out-Null
+            Copy-Item "frontend-react\dist\*" "frontend\dist" -Recurse -Force
+        }
+        Set-Content -Path "frontend\dist\.impl" -Value $FrontendImpl -NoNewline
     } else {
         Warn "未找到 npm/Node.js：跳过前端构建，仅 API 可用（/api、/docs）"
     }

@@ -14,11 +14,17 @@ from typing import Any
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import delete, func, select
 
-from ..api_schemas import RecordingCreateRequest, ToScriptRequest, items_response
+from ..api_schemas import (
+    RecordingBulkDeleteRequest,
+    RecordingCreateRequest,
+    RecordingEventBulkDeleteRequest,
+    ToScriptRequest,
+    items_response,
+)
 from ..db import session_scope
 from ..errors import ApiError, not_found
 from ..logs import logger
-from ..models import Recording, RecordingEvent, now_iso
+from ..models import Recording, RecordingEvent, Script, now_iso
 from ..recorder import session as recorder_session
 from ..recorder.session import RecordingEventBus
 
@@ -26,7 +32,10 @@ router = APIRouter(tags=["recordings"])
 
 
 # ================================================================ 序列化 / 查行
-def _recording_dict(recording: Recording) -> dict[str, Any]:
+def _recording_dict(
+    recording: Recording,
+    script_name: str | None = None,
+) -> dict[str, Any]:
     return {
         "id": recording.id,
         "name": recording.name,
@@ -37,9 +46,28 @@ def _recording_dict(recording: Recording) -> dict[str, Any]:
         "ended_at": recording.ended_at,
         "event_count": recording.event_count,
         "script_id": recording.script_id,
+        # 软关联脚本名：脚本已删除时为 None（script_id 也会被清空）
+        "script_name": script_name,
         "meta": recording.meta or {},
         "created_at": recording.created_at,
     }
+
+
+def _script_name_for(db: Any, script_id: str | None) -> str | None:
+    if not script_id:
+        return None
+    value = db.scalar(select(Script.name).where(Script.id == str(script_id)))
+    return str(value) if value is not None else None
+
+
+def _script_names(db: Any, script_ids: set[str]) -> dict[str, str]:
+    """列表批量查脚本名，避免 N+1。"""
+    if not script_ids:
+        return {}
+    rows = db.execute(
+        select(Script.id, Script.name).where(Script.id.in_(sorted(script_ids)))
+    ).all()
+    return {str(row[0]): str(row[1]) for row in rows}
 
 
 def _event_dict(event: RecordingEvent) -> dict[str, Any]:
@@ -61,7 +89,12 @@ def _get_recording_row(recording_id: str) -> Recording:
 
 
 def _recording_payload(recording_id: str) -> dict[str, Any]:
-    return _recording_dict(_get_recording_row(recording_id))
+    with session_scope() as db:
+        recording = db.get(Recording, str(recording_id))
+        if recording is None:
+            raise not_found("recording", recording_id)
+        script_name = _script_name_for(db, recording.script_id)
+        return _recording_dict(recording, script_name)
 
 
 def _latest_seq(recording_id: str) -> int:
@@ -245,7 +278,11 @@ def list_recordings(
             list_statement = list_statement.where(condition)
         total = int(db.scalar(count_statement) or 0)
         rows = list(db.scalars(list_statement.limit(limit).offset(offset)))
-    return items_response([_recording_dict(row) for row in rows], total=total)
+        script_names = _script_names(
+            db, {str(row.script_id) for row in rows if row.script_id}
+        )
+        items = [_recording_dict(row, script_names.get(str(row.script_id))) for row in rows]
+    return items_response(items, total=total)
 
 
 @router.get("/api/recordings/{recording_id}")
@@ -322,6 +359,55 @@ def delete_recording_event(recording_id: str, seq: int) -> dict[str, Any]:
     return {"deleted": True, "seq": int(seq), "event_count": total}
 
 
+@router.post("/api/recordings/{recording_id}/events/bulk-delete")
+def bulk_delete_recording_events(
+    recording_id: str,
+    payload: RecordingEventBulkDeleteRequest,
+) -> dict[str, Any]:
+    """批量删除录制事件：去重、空列表 400、删除后重算 event_count。"""
+    seqs = list(dict.fromkeys(int(seq) for seq in payload.seqs))
+    if not seqs:
+        raise ApiError("INVALID_ARGUMENT", "seqs must not be empty", {"seqs": []})
+    _get_recording_row(recording_id)
+    deleted = 0
+    failed: list[dict[str, Any]] = []
+    for seq in seqs:
+        try:
+            with session_scope() as db:
+                event = db.scalars(
+                    select(RecordingEvent).where(
+                        RecordingEvent.recording_id == str(recording_id),
+                        RecordingEvent.seq == int(seq),
+                    )
+                ).first()
+                if event is None:
+                    raise not_found("recording event", f"{recording_id}#{seq}")
+                db.delete(event)
+        except ApiError as exc:
+            failed.append({"id": seq, "code": exc.code, "message": exc.message})
+        except Exception as exc:  # noqa: BLE001 - 单条失败不能中断整批
+            logger.exception("bulk delete recording event failed: %s#%s", recording_id, seq)
+            failed.append(
+                {"id": seq, "code": "INTERNAL", "message": f"{type(exc).__name__}: {exc}"}
+            )
+        else:
+            deleted += 1
+
+    with session_scope() as db:
+        total = int(
+            db.scalar(
+                select(func.count())
+                .select_from(RecordingEvent)
+                .where(RecordingEvent.recording_id == str(recording_id))
+            )
+            or 0
+        )
+        recording = db.get(Recording, str(recording_id))
+        if recording is not None:
+            recording.event_count = total
+    return {"deleted": deleted, "failed": failed}
+
+
 @router.delete("/api/recordings/{recording_id}")
 def delete_recording(recording_id: str) -> dict[str, Any]:
     _get_recording_row(recording_id)
@@ -333,6 +419,44 @@ def delete_recording(recording_id: str) -> dict[str, Any]:
             db.delete(recording)
     logger.info("recording deleted: %s", recording_id)
     return {"deleted": True, "id": str(recording_id)}
+
+
+@router.post("/api/recordings/bulk-delete")
+def bulk_delete_recordings(payload: RecordingBulkDeleteRequest) -> dict[str, Any]:
+    """批量删除录制：只允许 stopped，去重、空列表 400、不自动 stop。"""
+    ids = list(dict.fromkeys(str(recording_id) for recording_id in payload.ids))
+    if not ids:
+        raise ApiError("INVALID_ARGUMENT", "ids must not be empty", {"ids": []})
+    deleted = 0
+    failed: list[dict[str, Any]] = []
+    for recording_id in ids:
+        try:
+            with session_scope() as db:
+                recording = db.get(Recording, str(recording_id))
+                if recording is None:
+                    raise not_found("recording", recording_id)
+                if recording.status != "stopped":
+                    raise ApiError(
+                        "CONFLICT",
+                        f"recording {recording_id} is {recording.status}, only stopped recordings can be deleted",
+                        {"id": recording_id, "status": recording.status},
+                    )
+                db.execute(
+                    delete(RecordingEvent).where(
+                        RecordingEvent.recording_id == str(recording_id)
+                    )
+                )
+                db.delete(recording)
+        except ApiError as exc:
+            failed.append({"id": recording_id, "code": exc.code, "message": exc.message})
+        except Exception as exc:  # noqa: BLE001 - 单条失败不能中断整批
+            logger.exception("bulk delete recording failed: %s", recording_id)
+            failed.append(
+                {"id": recording_id, "code": "INTERNAL", "message": f"{type(exc).__name__}: {exc}"}
+            )
+        else:
+            deleted += 1
+    return {"deleted": deleted, "failed": failed}
 
 
 @router.post("/api/recordings/{recording_id}/to_script")

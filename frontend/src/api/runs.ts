@@ -1,7 +1,8 @@
 // 运行 / 步骤 / 事件 / 控制 hooks（契约 §7.3）
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 
-import type { Run, RunDetail, RunEvent } from '@/types/api'
+import type { BulkDeleteResult, Run, RunDetail, RunEvent } from '@/types/api'
 
 import { del, get, itemsOf, post, totalOf, type ItemsLike } from './client'
 
@@ -62,17 +63,21 @@ export const runKeys = {
 
 // ---------------------------------------------------------------- 查询
 
-export function useRuns(params: RunListParams = {}, options: { refetchInterval?: number | false } = {}) {
-  return useQuery<RunListResult>({
-    queryKey: runKeys.list(params),
+export function useRuns(
+  params: MaybeRefOrGetter<RunListParams> = {},
+  options: { refetchInterval?: number | false } = {},
+) {
+  const resolved = computed(() => toValue(params))
+  return useQuery({
+    queryKey: computed(() => runKeys.list(resolved.value)),
     queryFn: async ({ signal }) => {
       const raw = await get<ItemsLike<Run>>('/runs', {
         signal,
         query: {
-          status: params.status,
-          script_id: params.script_id,
-          limit: params.limit,
-          offset: params.offset,
+          status: resolved.value.status,
+          script_id: resolved.value.script_id,
+          limit: resolved.value.limit,
+          offset: resolved.value.offset,
         },
       })
       return { items: itemsOf(raw), total: totalOf(raw) }
@@ -82,11 +87,12 @@ export function useRuns(params: RunListParams = {}, options: { refetchInterval?:
   })
 }
 
-export function useRun(id: number | undefined) {
-  const enabled = typeof id === 'number' && Number.isFinite(id)
-  return useQuery<RunDetail>({
-    queryKey: runKeys.detail(id ?? 0),
-    queryFn: ({ signal }) => get<RunDetail>(`/runs/${id}`, { signal }),
+export function useRun(id: MaybeRefOrGetter<number | undefined>) {
+  const resolved = computed(() => toValue(id))
+  const enabled = computed(() => typeof resolved.value === 'number' && Number.isFinite(resolved.value))
+  return useQuery({
+    queryKey: computed(() => runKeys.detail(resolved.value ?? 0)),
+    queryFn: ({ signal }) => get<RunDetail>(`/runs/${resolved.value}`, { signal }),
     enabled,
     refetchInterval: (query) => {
       const data = query.state.data
@@ -96,29 +102,34 @@ export function useRun(id: number | undefined) {
   })
 }
 
-export function useRunEvents(id: number | undefined, params: RunEventsParams = {}) {
+export function useRunEvents(id: MaybeRefOrGetter<number | undefined>, params: RunEventsParams = {}) {
+  const resolved = computed(() => toValue(id))
   const sinceSeq = params.sinceSeq ?? 0
   const limit = params.limit ?? 500
-  return useQuery<RunEventsResult>({
-    queryKey: runKeys.events(id ?? 0, { sinceSeq, limit }),
+  return useQuery({
+    queryKey: computed(() => runKeys.events(resolved.value ?? 0, { sinceSeq, limit })),
     queryFn: async ({ signal }) => {
-      const raw = await get<ItemsLike<RunEvent>>(`/runs/${id}/events`, {
+      const raw = await get<ItemsLike<RunEvent>>(`/runs/${resolved.value}/events`, {
         signal,
         query: { since_seq: sinceSeq, limit },
       })
       return { items: itemsOf(raw), total: totalOf(raw) }
     },
-    enabled: typeof id === 'number' && Number.isFinite(id) && (params.enabled ?? true),
+    enabled: computed(
+      () =>
+        typeof resolved.value === 'number' && Number.isFinite(resolved.value) && (params.enabled ?? true),
+    ),
     staleTime: 0,
   })
 }
 
 // ---------------------------------------------------------------- 失效
 
-function invalidateRun(queryClient: ReturnType<typeof useQueryClient>, runId: number | undefined): void {
+function invalidateRun(queryClient: ReturnType<typeof useQueryClient>, runId: MaybeRefOrGetter<number | undefined>): void {
   void queryClient.invalidateQueries({ queryKey: runKeys.all })
-  if (typeof runId === 'number') {
-    void queryClient.invalidateQueries({ queryKey: runKeys.detail(runId) })
+  const id = toValue(runId)
+  if (typeof id === 'number') {
+    void queryClient.invalidateQueries({ queryKey: runKeys.detail(id) })
   }
 }
 
@@ -131,33 +142,33 @@ function requireRunId(id: number | undefined): number {
 
 export function useStartRun() {
   const queryClient = useQueryClient()
-  return useMutation<Run, Error, StartRunPayload>({
-    mutationFn: (payload) => post<Run>('/runs', payload),
+  return useMutation({
+    mutationFn: (payload: StartRunPayload) => post<Run>('/runs', payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: runKeys.all })
     },
   })
 }
 
-export function usePauseRun(runId: number | undefined) {
+export function usePauseRun(runId: MaybeRefOrGetter<number | undefined>) {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, void>({
-    mutationFn: () => post<unknown>(`/runs/${requireRunId(runId)}/pause`),
+  return useMutation({
+    mutationFn: () => post<unknown>(`/runs/${requireRunId(toValue(runId))}/pause`),
     onSuccess: () => invalidateRun(queryClient, runId),
   })
 }
 
-export function useResumeCheck(runId: number | undefined) {
-  return useMutation<ResumeCheckResult, Error, void>({
-    mutationFn: () => post<ResumeCheckResult>(`/runs/${requireRunId(runId)}/resume-check`),
+export function useResumeCheck(runId: MaybeRefOrGetter<number | undefined>) {
+  return useMutation({
+    mutationFn: () => post<ResumeCheckResult>(`/runs/${requireRunId(toValue(runId))}/resume-check`),
   })
 }
 
-export function useResumeRun(runId: number | undefined) {
+export function useResumeRun(runId: MaybeRefOrGetter<number | undefined>) {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, ResumePayload>({
-    mutationFn: (payload) =>
-      post<unknown>(`/runs/${requireRunId(runId)}/resume`, {
+  return useMutation({
+    mutationFn: (payload: ResumePayload) =>
+      post<unknown>(`/runs/${requireRunId(toValue(runId))}/resume`, {
         ack: payload.ack ?? true,
         resume_kind: 'hot',
       }),
@@ -165,26 +176,36 @@ export function useResumeRun(runId: number | undefined) {
   })
 }
 
-export function useStopRun(runId: number | undefined) {
+export function useStopRun(runId: MaybeRefOrGetter<number | undefined>) {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, void>({
-    mutationFn: () => post<unknown>(`/runs/${requireRunId(runId)}/stop`),
+  return useMutation({
+    mutationFn: () => post<unknown>(`/runs/${requireRunId(toValue(runId))}/stop`),
     onSuccess: () => invalidateRun(queryClient, runId),
   })
 }
 
-export function useDebugRun(runId: number | undefined) {
+export function useDebugRun(runId: MaybeRefOrGetter<number | undefined>) {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, DebugPayload>({
-    mutationFn: (payload) => post<unknown>(`/runs/${requireRunId(runId)}/debug`, payload),
+  return useMutation({
+    mutationFn: (payload: DebugPayload) => post<unknown>(`/runs/${requireRunId(toValue(runId))}/debug`, payload),
     onSuccess: () => invalidateRun(queryClient, runId),
   })
 }
 
 export function useDeleteRun() {
   const queryClient = useQueryClient()
-  return useMutation<unknown, Error, number>({
-    mutationFn: (id) => del<unknown>(`/runs/${id}`),
+  return useMutation({
+    mutationFn: (id: number) => del<unknown>(`/runs/${id}`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: runKeys.all })
+    },
+  })
+}
+
+export function useBulkDeleteRuns() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: number[]) => post<BulkDeleteResult<number>>('/runs/bulk-delete', { ids }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: runKeys.all })
     },

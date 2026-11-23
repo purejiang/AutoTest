@@ -620,12 +620,10 @@ export function __selfTest(): string[] {
 export function runSelfTestOrThrow(): string[] {
   const failures = __selfTest()
   if (failures.length > 0) {
-    // eslint-disable-next-line no-console
     console.error('[h264 __selfTest] 失败:')
     for (const f of failures) console.error(' -', f)
     throw new Error(`h264 自测失败 ${failures.length} 项`)
   }
-  // eslint-disable-next-line no-console
   console.info('[h264 __selfTest] 全部通过')
   return failures
 }

@@ -1,0 +1,222 @@
+<script setup lang="ts">
+import { CaretRight, SwitchButton, VideoCamera, VideoPause } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { onBeforeUnmount, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+
+import type { Recording } from '@/types/api'
+import { get, post } from '../lib/api'
+import { errorMessage } from '../lib/api'
+import StatusTag from '@/components/StatusTag.vue'
+
+const props = withDefaults(
+  defineProps<{
+    serial: string
+    disabled?: boolean
+  }>(),
+  { disabled: false },
+)
+
+const emit = defineEmits<{ 'device-change': [] }>()
+const router = useRouter()
+
+const name = ref('')
+const recording = ref<Recording | null>(null)
+const busy = ref<'start' | 'pause' | 'resume' | 'stop' | null>(null)
+const error = ref<string | null>(null)
+const stoppedId = ref<string | null>(null)
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+const STATUS_TAG: Record<string, { tone: 'red' | 'amber' | 'gray'; text: string }> = {
+  recording: { tone: 'red', text: '录制中' },
+  paused: { tone: 'amber', text: '已暂停' },
+  stopped: { tone: 'gray', text: '已停止' },
+}
+
+function stopPolling(): void {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function startPolling(): void {
+  stopPolling()
+  const id = recording.value?.id
+  const status = recording.value?.status
+  if (!id || status === 'stopped') return
+  pollTimer = setInterval(async () => {
+    try {
+      const fresh = await get<Recording>(`/recordings/${encodeURIComponent(id)}`)
+      if (recording.value && recording.value.id === id) {
+        recording.value = { ...recording.value, ...fresh }
+      }
+    } catch {
+      // 轮询失败静默，下一轮再试
+    }
+  }, 2000)
+}
+
+watch(
+  () => props.serial,
+  () => {
+    stopPolling()
+    recording.value = null
+    stoppedId.value = null
+    error.value = null
+    busy.value = null
+  },
+)
+
+watch(
+  [() => recording.value?.id, () => recording.value?.status],
+  () => startPolling(),
+)
+
+onBeforeUnmount(stopPolling)
+
+async function startRecording(): Promise<void> {
+  busy.value = 'start'
+  error.value = null
+  try {
+    const body: Record<string, unknown> = { serial: props.serial, mode: 'web' }
+    if (name.value.trim()) body.name = name.value.trim()
+    const created = await post<Recording>('/recordings', body)
+    stoppedId.value = null
+    recording.value = created
+    name.value = ''
+  } catch (err) {
+    error.value = `开始录制失败：${errorMessage(err)}`
+  } finally {
+    busy.value = null
+  }
+}
+
+async function control(action: 'pause' | 'resume' | 'stop'): Promise<void> {
+  if (!recording.value) return
+  const id = recording.value.id
+  busy.value = action
+  error.value = null
+  try {
+    const updated = await post<Recording>(`/recordings/${encodeURIComponent(id)}/${action}`)
+    const nextStatus = action === 'stop' ? 'stopped' : action === 'pause' ? 'paused' : 'recording'
+    if (recording.value && recording.value.id === id) {
+      recording.value = {
+        ...recording.value,
+        ...(updated && typeof updated === 'object' ? updated : {}),
+        status: nextStatus,
+      }
+    }
+    if (action === 'stop') {
+      stoppedId.value = id
+      stopPolling()
+      emit('device-change')
+      ElMessage.success('录制已停止')
+    }
+  } catch (err) {
+    const label = action === 'pause' ? '暂停录制' : action === 'resume' ? '继续录制' : '停止录制'
+    error.value = `${label}失败：${errorMessage(err)}`
+  } finally {
+    busy.value = null
+  }
+}
+
+function reset(): void {
+  stopPolling()
+  recording.value = null
+  stoppedId.value = null
+  error.value = null
+}
+
+function openRecording(withConvert = false): void {
+  if (!stoppedId.value) return
+  const query = withConvert ? '?action=to_script' : ''
+  void router.push(`/recorder/${encodeURIComponent(stoppedId.value)}${query}`)
+}
+</script>
+
+<template>
+  <div class="card mirror-recording">
+    <div class="card-head">
+      <h2>
+        <el-icon style="margin-right: 4px; vertical-align: -2px"><VideoCamera /></el-icon>
+        录制工具条
+        <StatusTag tone="blue" style="margin-left: 4px">镜像录制</StatusTag>
+        <StatusTag
+          v-if="recording"
+          :tone="STATUS_TAG[recording.status]?.tone ?? 'gray'"
+          style="margin-left: 3px"
+        >
+          {{ STATUS_TAG[recording.status]?.text ?? recording.status }}
+        </StatusTag>
+      </h2>
+      <span class="small muted">事件 {{ recording?.event_count ?? 0 }}</span>
+    </div>
+    <div class="card-body">
+      <el-alert
+        v-if="error"
+        type="error"
+        :closable="true"
+        show-icon
+        :title="error"
+        style="margin-bottom: 8px"
+        @close="error = null"
+      />
+      <div v-if="!recording || recording.status === 'stopped'" class="row wrap">
+        <el-input
+          v-model="name"
+          size="small"
+          placeholder="录制名称（可选）"
+          style="width: 210px"
+          :disabled="disabled || busy === 'start'"
+          @keyup.enter="startRecording"
+        />
+        <el-button
+          type="primary"
+          size="small"
+          :icon="VideoCamera"
+          :loading="busy === 'start'"
+          :disabled="disabled"
+          @click="startRecording"
+        >
+          开始镜像录制
+        </el-button>
+        <span class="hint">录制期间在镜像上手动操作会被记录为脚本步骤。</span>
+      </div>
+      <div v-else class="row wrap">
+        <el-button
+          v-if="recording.status === 'recording'"
+          size="small"
+          :icon="VideoPause"
+          :loading="busy === 'pause'"
+          @click="control('pause')"
+        >
+          暂停
+        </el-button>
+        <el-button v-else size="small" :icon="CaretRight" :loading="busy === 'resume'" @click="control('resume')">
+          继续
+        </el-button>
+        <el-button size="small" type="danger" :icon="SwitchButton" :loading="busy === 'stop'" @click="control('stop')">
+          停止
+        </el-button>
+        <StatusTag tone="blue" mono>id: {{ recording.id }}</StatusTag>
+        <span class="hint">事件数 {{ recording.event_count ?? 0 }} · 每 2s 刷新</span>
+      </div>
+
+      <el-alert
+        v-if="stoppedId && (!recording || recording.status === 'stopped')"
+        type="success"
+        :closable="false"
+        show-icon
+        title="录制已停止"
+        style="margin-top: 8px"
+      >
+        <div class="row wrap">
+          <el-button size="small" type="primary" @click="openRecording()">查看录制</el-button>
+          <el-button size="small" @click="openRecording(true)">转脚本</el-button>
+          <el-button size="small" @click="reset">再次录制</el-button>
+        </div>
+      </el-alert>
+    </div>
+  </div>
+</template>

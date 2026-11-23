@@ -152,6 +152,10 @@ class DuplicateRequest(BaseModel):
     name: str | None = None
 
 
+class ScriptBulkDeleteRequest(ApiModel):
+    ids: list[str] = Field(max_length=200)
+
+
 # ---------------------------------------------------------------- 运行
 class DebugOptions(ApiModel):
     step_mode: bool = False
@@ -175,11 +179,23 @@ class RunDebugRequest(ApiModel):
     step_id: str | None = None
 
 
+class RunBulkDeleteRequest(ApiModel):
+    ids: list[int] = Field(max_length=200)
+
+
 # ---------------------------------------------------------------- 录制
 class RecordingCreateRequest(ApiModel):
     name: str | None = None
     serial: str
     mode: Literal["web", "physical"] = "web"
+
+
+class RecordingBulkDeleteRequest(ApiModel):
+    ids: list[str] = Field(max_length=200)
+
+
+class RecordingEventBulkDeleteRequest(ApiModel):
+    seqs: list[int] = Field(max_length=500)
 
 
 class ToScriptRequest(ApiModel):

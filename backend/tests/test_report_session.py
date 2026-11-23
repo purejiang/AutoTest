@@ -159,7 +159,7 @@ def test_web_session_stop_unregisters_and_recomputes_count(temp_db, driver_gette
     assert getattr(sess, "dropped", 0) >= 1
 
 
-def test_web_session_to_script_creates_recorded_script(temp_db, driver_getter) -> None:
+def test_web_session_to_script_creates_mirror_script(temp_db, driver_getter) -> None:
     recording_id = make_recording(temp_db)
     rec.create(recording_id, "fake-1", "web", driver_getter=driver_getter)
 
@@ -169,14 +169,17 @@ def test_web_session_to_script_creates_recorded_script(temp_db, driver_getter) -
 
     result = rec.to_script(recording_id, name="录制脚本A")
     assert result["id"].startswith("rec_")
-    assert result["source"] == "recorded"
+    assert result["source"] == "mirror"
+    assert result["origin_recording_id"] == recording_id
     assert [step["type"] for step in result["data"]["steps"]] == ["click", "input"]
+    assert all(step["when"] is None for step in result["data"]["steps"])
     assert isinstance(result["warnings"], list)
 
     with session_scope() as db:
         script = db.get(Script, result["id"])
         assert script is not None
-        assert script.source == "recorded"
+        assert script.source == "mirror"
+        assert script.origin_recording_id == recording_id
         assert script.name == "录制脚本A"
     assert read_recording(recording_id).script_id == result["id"]
 
@@ -187,6 +190,40 @@ def test_web_session_to_script_creates_recorded_script(temp_db, driver_getter) -
     with pytest.raises(Exception) as excinfo:
         rec.to_script(recording_id, include_kinds=["nonexistent"])
     assert getattr(excinfo.value, "code", "") == "INVALID_ARGUMENT"
+
+
+def test_physical_recording_to_script_maps_source(temp_db) -> None:
+    recording_id = make_recording(temp_db, recording_id="rec_phys_script", mode="physical")
+    with session_scope() as db:
+        db.add(
+            RecordingEvent(
+                recording_id=recording_id,
+                seq=1,
+                kind="tap",
+                payload={
+                    "x": 540,
+                    "y": 710,
+                    "duration_ms": 0,
+                    "node": {"by": "text", "value": "登录", "index": 0},
+                    "target": {"by": "text", "value": "登录", "index": 0},
+                    "source": "physical",
+                },
+                confidence="high",
+                created_at=now_iso(),
+            )
+        )
+
+    result = rec.to_script(recording_id, name="物理录制脚本")
+
+    assert result["source"] == "physical"
+    assert result["origin_recording_id"] == recording_id
+    assert all(step["when"] is None for step in result["data"]["steps"])
+    with session_scope() as db:
+        script = db.get(Script, result["id"])
+        assert script is not None
+        assert script.source == "physical"
+        assert script.origin_recording_id == recording_id
+        assert db.get(Recording, recording_id).script_id == result["id"]
 
 
 def test_web_session_note_manual_records_source(temp_db, driver_getter) -> None:

@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -81,11 +81,42 @@ def session_scope() -> Iterator[Session]:
         session.close()
 
 
+class IncompatibleDatabaseError(RuntimeError):
+    """旧库 schema 与 v0.2 不兼容：明确报错，绝不自动修改/删除用户数据。"""
+
+
+def _database_path() -> Path:
+    return _OVERRIDE_PATH or config.db_path()
+
+
+def _assert_v02_schema(engine: Engine) -> None:
+    """schema guard：v0.2 新库必须带 scripts.origin_recording_id。
+
+    create_all 只会建缺失的表，不会给旧表加列；如果这里发现旧库，直接抛出可操作的
+    异常，由用户自行备份并移走/删除旧库，绝不自动 ALTER / 回填 / 删数据。
+    """
+    inspector = inspect(engine)
+    if "scripts" not in inspector.get_table_names():
+        return
+    columns = {str(column["name"]) for column in inspector.get_columns("scripts")}
+    if "origin_recording_id" in columns:
+        return
+    path = _database_path()
+    raise IncompatibleDatabaseError(
+        "数据库 schema 与 AutoTest v0.2 不兼容：scripts 表缺少 origin_recording_id 列。"
+        "v0.2 不支持 v0.1.x 的旧数据库，也不会自动修改或删除任何数据。"
+        f"请先备份 {path}，然后把 ~/.autotest/data 下的旧数据库（或你配置的数据目录里的旧库）"
+        "移走或删除，再重新启动 AutoTest。"
+    )
+
+
 def init_db() -> None:
-    """建表（幂等）。启动时调用一次。"""
+    """建表（幂等）+ v0.2 schema guard。启动时调用一次。"""
     from . import models  # noqa: F401  注册 metadata
 
-    Base.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    _assert_v02_schema(engine)
 
 
 def reset_engine_for_tests(db_file: Path) -> None:

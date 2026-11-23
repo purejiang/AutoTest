@@ -3,16 +3,24 @@ import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import 'dayjs/locale/zh-cn'
 
-import type { Artifact, RunStatus } from '@/types/api'
+import type { Artifact, RunStatus, ScriptSource, StepConditionOutcome, StepResult } from '@/types/api'
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-cn')
+
+export type Tone = 'gray' | 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'cyan'
 
 // ---------------------------------------------------------------- 时间
 export function formatDateTime(value?: string | null): string {
   if (!value) return '—'
   const d = dayjs(value)
   return d.isValid() ? d.format('YYYY-MM-DD HH:mm:ss') : String(value)
+}
+
+export function formatShortDateTime(value?: string | null): string {
+  if (!value) return '—'
+  const d = dayjs(value)
+  return d.isValid() ? d.format('MM-DD HH:mm') : String(value)
 }
 
 export function formatTime(value?: string | null): string {
@@ -55,7 +63,6 @@ export function formatBytes(bytes?: number | null): string {
   return `${size.toFixed(size >= 100 ? 0 : size >= 10 ? 1 : 2)} ${units[unit]}`
 }
 
-/** 运行耗时：优先 summary.duration_ms，其次 started_at→ended_at 差值。 */
 export function runDurationMs(run: {
   started_at?: string | null
   ended_at?: string | null
@@ -103,7 +110,6 @@ export function shortText(value: unknown, max = 120): string {
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 
-/** antd InputNumber 的 onChange 值统一转成 number | null。 */
 export function numberOrNull(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined || value === '') return null
   const num = Number(value)
@@ -113,7 +119,7 @@ export function numberOrNull(value: number | string | null | undefined): number 
 // ---------------------------------------------------------------- 状态映射
 export interface StatusMeta {
   label: string
-  color: string
+  tone: Tone
 }
 
 export const RUN_STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -129,93 +135,105 @@ export const RUN_STATUS_OPTIONS: { value: string; label: string }[] = [
 ]
 
 const RUN_STATUS_META: Record<string, StatusMeta> = {
-  queued: { label: '排队中', color: 'default' },
-  running: { label: '运行中', color: 'processing' },
-  paused: { label: '已暂停', color: 'warning' },
-  stopping: { label: '停止中', color: 'warning' },
-  succeeded: { label: '成功', color: 'success' },
-  failed: { label: '失败', color: 'error' },
-  aborted: { label: '中止', color: 'error' },
-  stopped: { label: '已停止', color: 'default' },
-  interrupted: { label: '被中断', color: 'warning' },
+  queued: { label: '排队中', tone: 'gray' },
+  running: { label: '运行中', tone: 'blue' },
+  paused: { label: '已暂停', tone: 'amber' },
+  stopping: { label: '停止中', tone: 'amber' },
+  succeeded: { label: '成功', tone: 'green' },
+  failed: { label: '失败', tone: 'red' },
+  aborted: { label: '中止', tone: 'red' },
+  stopped: { label: '已停止', tone: 'gray' },
+  interrupted: { label: '被中断', tone: 'amber' },
 }
 
 export function runStatusMeta(status?: string | null): StatusMeta {
-  if (!status) return { label: '未知', color: 'default' }
-  return RUN_STATUS_META[status] ?? { label: status, color: 'default' }
+  if (!status) return { label: '未知', tone: 'gray' }
+  return RUN_STATUS_META[status] ?? { label: status, tone: 'gray' }
 }
 
 const STEP_STATUS_META: Record<string, StatusMeta> = {
-  passed: { label: '通过', color: 'success' },
-  failed: { label: '失败', color: 'error' },
-  skipped: { label: '跳过', color: 'default' },
-  error: { label: '异常', color: 'volcano' },
+  passed: { label: '通过', tone: 'green' },
+  failed: { label: '失败', tone: 'red' },
+  skipped: { label: '跳过', tone: 'gray' },
+  error: { label: '异常', tone: 'red' },
+  running: { label: '执行中', tone: 'blue' },
+  paused: { label: '已暂停', tone: 'amber' },
+  pending: { label: '未执行', tone: 'gray' },
 }
 
 export function stepStatusMeta(status?: string | null): StatusMeta {
-  if (!status) return { label: '未知', color: 'default' }
-  return STEP_STATUS_META[status] ?? { label: status, color: 'default' }
+  if (!status) return { label: '未知', tone: 'gray' }
+  return STEP_STATUS_META[status] ?? { label: status, tone: 'gray' }
 }
 
 const RECORDING_STATUS_META: Record<string, StatusMeta> = {
-  recording: { label: '录制中', color: 'processing' },
-  paused: { label: '已暂停', color: 'warning' },
-  stopped: { label: '已停止', color: 'default' },
+  recording: { label: '录制中', tone: 'red' },
+  paused: { label: '已暂停', tone: 'amber' },
+  stopped: { label: '已停止', tone: 'gray' },
 }
 
 export function recordingStatusMeta(status?: string | null): StatusMeta {
-  if (!status) return { label: '未知', color: 'default' }
-  return RECORDING_STATUS_META[status] ?? { label: status, color: 'default' }
+  if (!status) return { label: '未知', tone: 'gray' }
+  return RECORDING_STATUS_META[status] ?? { label: status, tone: 'gray' }
+}
+
+export function recordingModeMeta(mode?: string | null): StatusMeta {
+  if (mode === 'physical') return { label: '真机录制', tone: 'violet' }
+  if (mode === 'web') return { label: '镜像录制', tone: 'blue' }
+  return { label: '未知', tone: 'gray' }
 }
 
 export function confidenceMeta(confidence?: string | null): StatusMeta {
   switch (confidence) {
     case 'high':
-      return { label: '高置信', color: 'success' }
+      return { label: '高', tone: 'green' }
     case 'medium':
-      return { label: '中置信', color: 'warning' }
+      return { label: '中', tone: 'amber' }
     case 'low':
-      return { label: '低置信', color: 'error' }
+      return { label: '低', tone: 'red' }
     default:
-      return { label: confidence || '未知', color: 'default' }
+      return { label: confidence || '未知', tone: 'gray' }
   }
 }
 
 export function artifactKindMeta(kind?: string | null): StatusMeta {
   const map: Record<string, StatusMeta> = {
-    screenshot: { label: '截图', color: 'blue' },
-    video: { label: '视频', color: 'purple' },
-    screenrecord: { label: '录屏', color: 'magenta' },
-    logcat: { label: '日志', color: 'cyan' },
-    hierarchy: { label: '层级', color: 'geekblue' },
-    report: { label: '报告', color: 'green' },
-    network: { label: '网络', color: 'orange' },
+    screenshot: { label: '截图', tone: 'blue' },
+    video: { label: '视频', tone: 'violet' },
+    screenrecord: { label: '录屏', tone: 'violet' },
+    logcat: { label: '日志', tone: 'cyan' },
+    hierarchy: { label: '层级', tone: 'blue' },
+    report: { label: '报告', tone: 'green' },
+    network: { label: '网络', tone: 'amber' },
   }
-  if (!kind) return { label: '未知', color: 'default' }
-  return map[kind] ?? { label: kind, color: 'default' }
+  if (!kind) return { label: '未知', tone: 'gray' }
+  return map[kind] ?? { label: kind, tone: 'gray' }
 }
 
-export function sourceMeta(source?: string | null): StatusMeta {
+/** v0.2 脚本来源：手动 / 镜像录制 / 真机录制 / 导入。 */
+export function sourceMeta(source?: ScriptSource | string | null): StatusMeta {
   switch (source) {
     case 'manual':
-      return { label: '手动', color: 'blue' }
-    case 'recorded':
-      return { label: '录制', color: 'green' }
+      return { label: '手动', tone: 'blue' }
+    case 'mirror':
+      return { label: '镜像录制', tone: 'green' }
+    case 'physical':
+      return { label: '真机录制', tone: 'violet' }
     case 'imported':
-      return { label: '导入', color: 'orange' }
+      return { label: '导入', tone: 'amber' }
     default:
-      return { label: source || '未知', color: 'default' }
+      return { label: source || '未知', tone: 'gray' }
   }
 }
 
 export function settingSourceMeta(source?: string | null): StatusMeta {
   switch (source) {
     case 'db':
-      return { label: '数据库覆盖', color: 'green' }
+      return { label: '数据库覆盖', tone: 'green' }
     case 'file':
-      return { label: '配置文件', color: 'blue' }
+      return { label: '配置文件', tone: 'blue' }
     default:
-      return { label: '默认值', color: 'default' }
+      return { label: '默认值', tone: 'gray' }
   }
 }
 
@@ -224,43 +242,66 @@ export function isActiveRunStatus(status?: string | null): boolean {
 }
 
 export function isTerminalRunStatus(status?: RunStatus | string | null): boolean {
-  return status === 'succeeded' || status === 'failed' || status === 'aborted' || status === 'stopped' || status === 'interrupted'
+  return (
+    status === 'succeeded' ||
+    status === 'failed' ||
+    status === 'aborted' ||
+    status === 'stopped' ||
+    status === 'interrupted'
+  )
 }
 
 // ---------------------------------------------------------------- 运行事件
-const EVENT_TYPE_COLOR: Record<string, string> = {
+const EVENT_TONE: Record<string, Tone> = {
   run_started: 'green',
   run_state: 'blue',
-  step_started: 'processing',
-  step_finished: 'success',
-  step_skipped: 'default',
-  step_retry: 'orange',
+  step_started: 'blue',
+  step_finished: 'green',
+  step_skipped: 'gray',
+  step_retry: 'amber',
   assert_result: 'cyan',
-  log: 'default',
-  screenshot: 'purple',
-  run_paused: 'warning',
-  run_resumed: 'warning',
-  manual_intervention: 'gold',
+  log: 'gray',
+  screenshot: 'violet',
+  run_paused: 'amber',
+  run_resumed: 'amber',
+  manual_intervention: 'amber',
   run_finished: 'green',
-  error: 'error',
+  error: 'red',
+  when_started: 'cyan',
+  when_result: 'green',
 }
 
-export function runEventColor(type: string, payload?: Record<string, unknown> | null): string {
+export function runEventTone(type: string, payload?: Record<string, unknown> | null): Tone {
   if (type === 'step_finished' && payload && typeof payload.status === 'string' && payload.status !== 'passed') {
-    return payload.status === 'failed' ? 'error' : 'default'
+    return payload.status === 'failed' ? 'red' : 'gray'
   }
-  if (type === 'assert_result' && payload && payload.passed === false) return 'error'
-  return EVENT_TYPE_COLOR[type] ?? 'default'
+  if (type === 'assert_result' && payload && payload.passed === false) return 'red'
+  if (type === 'when_result' && payload && payload.met === false) return 'amber'
+  return EVENT_TONE[type] ?? 'gray'
+}
+
+const EVENT_LABEL: Record<string, string> = {
+  when_started: '条件检查',
+  when_result: '条件结果',
+}
+
+export function runEventLabel(type: string): string {
+  return EVENT_LABEL[type] ?? type
 }
 
 function pick(payload: Record<string, unknown> | undefined | null, key: string): unknown {
   return payload ? payload[key] : undefined
 }
 
-/** 事件一行的可读摘要（尽量覆盖契约 §5 全部类型）。 */
+function numberText(value: unknown): string {
+  return typeof value === 'number' ? String(value) : value === undefined || value === null ? '' : String(value)
+}
+
+/** 事件一行的可读摘要（覆盖契约 §5 与 v0.2 when_started/when_result）。 */
 export function summarizeRunEvent(event: { type: string; payload?: Record<string, unknown> | null }): string {
   const payload = event.payload ?? {}
-  const str = (value: unknown): string => (value === null || value === undefined ? '' : typeof value === 'string' ? value : prettyJson(value))
+  const str = (value: unknown): string =>
+    value === null || value === undefined ? '' : typeof value === 'string' ? value : prettyJson(value)
   switch (event.type) {
     case 'run_started':
       return `${str(pick(payload, 'script_name'))} → ${str(pick(payload, 'device_serial'))}（共 ${str(pick(payload, 'total_steps'))} 步）`
@@ -273,8 +314,18 @@ export function summarizeRunEvent(event: { type: string; payload?: Record<string
       const errorText = error && typeof error === 'object' ? ` · ${str((error as Record<string, unknown>).message)}` : ''
       return `${str(pick(payload, 'step_id'))} → ${str(pick(payload, 'status'))} · ${str(pick(payload, 'duration_ms'))}ms${errorText}`
     }
-    case 'step_skipped':
-      return `${str(pick(payload, 'step_id'))} 跳过（${str(pick(payload, 'reason'))}）`
+    case 'step_skipped': {
+      const reason = str(pick(payload, 'reason'))
+      const reasonText =
+        reason === 'when_not_met'
+          ? '条件不满足'
+          : reason === 'disabled'
+            ? '节点已禁用'
+            : reason === 'after_fail'
+              ? '失败后跳过'
+              : reason
+      return `${str(pick(payload, 'step_id'))} 跳过（${reasonText}）`
+    }
     case 'step_retry':
       return `${str(pick(payload, 'step_id'))} 第 ${str(pick(payload, 'attempt'))} 次重试：${str(pick(payload, 'error'))}`
     case 'assert_result':
@@ -293,16 +344,102 @@ export function summarizeRunEvent(event: { type: string; payload?: Record<string
       return `结束：${str(pick(payload, 'status'))} · 通过 ${str(pick(payload, 'passed_steps'))} / 失败 ${str(pick(payload, 'failed_steps'))} / 跳过 ${str(pick(payload, 'skipped_steps'))} · ${str(pick(payload, 'duration_ms'))}ms`
     case 'error':
       return `${str(pick(payload, 'code'))}: ${str(pick(payload, 'message'))}`
+    case 'when_started': {
+      const timeout = pick(payload, 'timeout_ms')
+      const mode = pick(payload, 'mode')
+      const summary = pick(payload, 'condition_summary')
+      const modeText = mode === 'optional' ? '（optional）' : mode === 'require' ? '（require）' : ''
+      const detail = summary !== undefined && summary !== null ? ` · ${str(summary)}` : ''
+      return `${str(pick(payload, 'step_id')) || '节点'} 开始检查执行条件${modeText}${timeout !== undefined ? ` · 最长 ${numberText(timeout)}ms` : ''}${detail}`
+    }
+    case 'when_result': {
+      const met = pick(payload, 'met')
+      const waited = pick(payload, 'waited_ms')
+      const summary = pick(payload, 'condition_summary')
+      const mode = pick(payload, 'mode')
+      const result = met === true ? '满足' : met === false ? '不满足' : '已求值'
+      const modeText = mode === 'optional' ? '（optional 将跳过）' : mode === 'require' ? '（require 将失败）' : ''
+      return `${str(pick(payload, 'step_id')) || '节点'} 条件${result}${modeText}${waited !== undefined ? ` · 等待 ${numberText(waited)}ms` : ''}${summary ? ` · ${str(summary)}` : ''}`
+    }
     default:
       return shortText(payload, 180)
   }
 }
 
-// ---------------------------------------------------------------- 产物 URL
+function summarizeConditionPayload(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (!value || typeof value !== 'object') return shortText(value, 80)
+  const record = value as Record<string, unknown>
+  if (typeof record.summary === 'string') return record.summary
+  if (typeof record.type === 'string') {
+    if (record.type === 'target') return `目标 ${String(record.by ?? '')} ${String(record.value ?? '')}`.trim()
+    if (record.type === 'app') return `应用 ${String(record.package ?? '')}`.trim()
+    if (record.type === 'time') return `时间 ${String(record.start ?? '')}-${String(record.end ?? '')}`
+    if (record.type === 'group') return `分组 ${String(record.op ?? '')}`
+    if (record.type === 'not') return '取反'
+  }
+  return shortText(value, 80)
+}
+
+// ---------------------------------------------------------------- 条件结果展示
+export interface ConditionOutcomeView {
+  tone: Tone
+  label: string
+  detail: string
+}
+
 /**
- * 后端 artifact.path 是数据目录内的文件系统路径；静态资源按 /artifacts 挂载（vite 已代理）。
- * 尽力从绝对路径中截出 artifacts 之后的相对路径，无法解析时返回 null（页面降级为纯文本）。
+ * wait 节点的实际等待时长。
+ *
+ * 后端 execute_wait 的两种输出都会带 waited_ms：
+ *   sleep -> {mode: "sleep", waited_ms}
+ *   until -> {mode: "until", state, waited_ms}
+ * 该等待发生在节点动作内部，不会出现在 output.when（执行条件）里，因此单独读取。
  */
+export function stepWaitMs(step: StepResult): number | null {
+  if (step.step_type !== 'wait') return null
+  const raw = step.output?.waited_ms
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return null
+  return raw
+}
+
+function asOutcome(value: unknown): StepConditionOutcome | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as StepConditionOutcome
+}
+
+/** 从 step.when 或 output.when 读取条件求值结果（v0.2 运行详情展示用）。 */
+export function stepConditionOutcome(step: StepResult): ConditionOutcomeView | null {
+  const outcome =
+    asOutcome(step.when) ??
+    asOutcome(step.output?.when) ??
+    asOutcome(step.output?.condition_result) ??
+    null
+  if (!outcome) return null
+  const waited = typeof outcome.waited_ms === 'number' ? ` · 等待 ${formatDuration(outcome.waited_ms)}` : ''
+  const timeout =
+    typeof outcome.timeout_ms === 'number' ? ` · 超时 ${formatDuration(outcome.timeout_ms)}` : ''
+  const detail = outcome.condition_summary
+    ? ` · ${outcome.condition_summary}`
+    : outcome.detail
+      ? ` · ${outcome.detail}`
+      : ''
+  if (outcome.skipped || (outcome.met === false && step.status === 'skipped')) {
+    return { tone: 'gray', label: '条件跳过', detail: `${waited || ' · 条件未满足'}${detail}` }
+  }
+  if (outcome.failed || (outcome.met === false && step.status === 'failed')) {
+    return { tone: 'red', label: '条件失败', detail: `${waited || ' · 条件未满足'}${detail}` }
+  }
+  if (outcome.met === true) {
+    return { tone: 'green', label: '条件满足', detail: `${waited}${timeout}${detail}` }
+  }
+  if (outcome.met === false) {
+    return { tone: 'amber', label: '条件未满足', detail: `${waited}${timeout}${detail}` }
+  }
+  return { tone: 'gray', label: '条件已求值', detail: `${waited}${timeout}${detail}` }
+}
+
+// ---------------------------------------------------------------- 产物 URL
 export function artifactUrl(artifact: Pick<Artifact, 'path'> | { path?: string | null }): string | null {
   const raw = artifact.path
   if (!raw) return null
@@ -315,10 +452,7 @@ export function artifactUrl(artifact: Pick<Artifact, 'path'> | { path?: string |
   return null
 }
 
-/** 优先用后端返回的 artifact.url（无直链为 null），否则尝试从 path 推导 /artifacts 直链。 */
-export function artifactHref(
-  artifact: Pick<Artifact, 'path'> & { url?: string | null },
-): string | null {
+export function artifactHref(artifact: Pick<Artifact, 'path'> & { url?: string | null }): string | null {
   const direct = artifact.url
   if (typeof direct === 'string' && direct.trim()) return direct
   return artifactUrl(artifact)

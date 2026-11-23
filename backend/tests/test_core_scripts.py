@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import tests.test_core_support as support
+from app import db, models
 
 core_client = support.core_client
 
@@ -38,6 +39,7 @@ def test_create_defaults_to_empty_script(core_client) -> None:
     assert len(script["id"]) >= 32
     assert script["name"] == "登录流程"
     assert script["source"] == "manual"
+    assert script["origin_recording_id"] is None
     assert script["schema_version"] == 1
     assert script["step_count"] == 1
     assert script["data"]["name"] == "登录流程"
@@ -148,6 +150,31 @@ def test_duplicate_script(core_client) -> None:
     assert clone["data"]["name"] == "副本A"
 
 
+def test_delete_script_clears_recording_link_only(core_client) -> None:
+    script = _create(core_client, name="待删脚本")
+    with db.session_scope() as session:
+        session.add(
+            models.Recording(
+                id="rec-link",
+                name="关联录制",
+                mode="web",
+                serial="fake-1",
+                status="stopped",
+                script_id=script["id"],
+            )
+        )
+
+    response = core_client.delete(f"/api/scripts/{script['id']}")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "id": script["id"]}
+    with db.session_scope() as session:
+        assert session.get(models.Script, script["id"]) is None
+        recording = session.get(models.Recording, "rec-link")
+        assert recording is not None  # 录制本身保留
+        assert recording.script_id is None  # 只清空引用
+
+
 def test_duplicate_without_body_uses_suffix(core_client) -> None:
     script = _create(core_client, name="原脚本")
     response = core_client.post(f"/api/scripts/{script['id']}/duplicate")
@@ -234,3 +261,52 @@ def test_run_missing_script_404(core_client, monkeypatch) -> None:
     response = core_client.post("/api/scripts/nope/run", json={})
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+# ---------------------------------------------------------------- 批量删除
+def test_bulk_delete_scripts_partial_success_dedup_and_unlinks(core_client) -> None:
+    first = _create(core_client, name="批量一")
+    second = _create(core_client, name="批量二")
+    with db.session_scope() as session:
+        session.add(
+            models.Recording(
+                id="rec-bulk-links",
+                name="批量关联录制",
+                mode="web",
+                serial="fake-1",
+                status="stopped",
+                script_id=first["id"],
+            )
+        )
+
+    response = core_client.post(
+        "/api/scripts/bulk-delete",
+        json={"ids": [first["id"], second["id"], "missing-script", first["id"]]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["deleted"] == 2  # 去重后删除 2 个
+    assert [(item["id"], item["code"]) for item in body["failed"]] == [
+        ("missing-script", "NOT_FOUND")
+    ]
+    assert core_client.get(f"/api/scripts/{first['id']}").status_code == 404
+    assert core_client.get(f"/api/scripts/{second['id']}").status_code == 404
+    with db.session_scope() as session:
+        recording = session.get(models.Recording, "rec-bulk-links")
+        assert recording is not None
+        assert recording.script_id is None
+
+
+def test_bulk_delete_scripts_empty_list_is_400(core_client) -> None:
+    response = core_client.post("/api/scripts/bulk-delete", json={"ids": []})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_bulk_delete_scripts_limit_200(core_client) -> None:
+    response = core_client.post(
+        "/api/scripts/bulk-delete", json={"ids": [f"s{i}" for i in range(201)]}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
