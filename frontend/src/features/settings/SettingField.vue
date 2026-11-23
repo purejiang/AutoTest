@@ -1,0 +1,82 @@
+<script setup lang="ts">
+import { RefreshLeft } from '@element-plus/icons-vue'
+
+import type { SettingEntry } from '@/types/api'
+import { numberOrNull, settingSourceMeta } from '@/lib/format'
+import StatusTag from '@/components/StatusTag.vue'
+
+defineProps<{
+  entry: SettingEntry
+  modelValue: any
+  source: 'default' | 'file' | 'db' | 'env'
+}>()
+
+const emit = defineEmits<{
+  'update:modelValue': [value: unknown]
+  clear: []
+}>()
+
+function update(value: unknown): void {
+  emit('update:modelValue', value)
+}
+</script>
+
+<template>
+  <div class="setting-field">
+    <div class="field-label">
+      {{ entry.title }}
+      <StatusTag :tone="settingSourceMeta(source).tone">
+        {{ settingSourceMeta(source).label }}
+      </StatusTag>
+      <el-button
+        v-if="source !== 'default'"
+        size="small"
+        text
+        :icon="RefreshLeft"
+        title="删除数据库/文件层覆盖，回到默认值"
+        @click="emit('clear')"
+      />
+    </div>
+
+    <el-switch
+      v-if="entry.type === 'bool'"
+      :model-value="Boolean(modelValue)"
+      size="small"
+      @update:model-value="update($event)"
+    />
+    <el-select
+      v-else-if="entry.type === 'enum'"
+      :model-value="modelValue"
+      size="small"
+      style="width: 100%"
+      @update:model-value="update($event)"
+    >
+      <el-option
+        v-for="option in entry.options ?? []"
+        :key="option.value"
+        :value="option.value"
+        :label="option.label"
+      />
+    </el-select>
+    <el-input-number
+      v-else-if="entry.type === 'int'"
+      :model-value="modelValue"
+      size="small"
+      :min="entry.min"
+      :max="entry.max"
+      :step="1"
+      controls-position="right"
+      style="width: 100%"
+      @update:model-value="update(numberOrNull($event))"
+    />
+    <el-input
+      v-else
+      :model-value="modelValue"
+      size="small"
+      clearable
+      class="code-text"
+      @update:model-value="update($event)"
+    />
+    <div v-if="entry.desc" class="unit">{{ entry.desc }}</div>
+  </div>
+</template>

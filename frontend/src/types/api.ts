@@ -442,7 +442,7 @@ export interface SettingEntry {
 
 export interface SettingsResponse {
   effective: Record<string, unknown>
-  sources: Record<string, 'default' | 'file' | 'db'>
+  sources: Record<string, 'default' | 'file' | 'db' | 'env'>
   schema: SettingEntry[]
 }
 

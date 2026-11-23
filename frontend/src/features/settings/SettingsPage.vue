@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Delete, Refresh, RefreshLeft, Setting } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useWindowSize } from '@vueuse/core'
 import { computed, reactive, ref, watch } from 'vue'
 
 import { describeApiError } from '@/api/client'
@@ -14,15 +15,10 @@ import {
   useUpdateSettings,
 } from '@/api/settings'
 import type { SettingEntry } from '@/types/api'
-import {
-  formatBytes,
-  formatDateTime,
-  numberOrNull,
-  prettyJson,
-  settingSourceMeta,
-} from '@/lib/format'
+import { formatBytes, formatDateTime, prettyJson } from '@/lib/format'
 import PageHead from '@/components/PageHead.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import SettingField from './SettingField.vue'
 
 const APP_VERSION = __APP_VERSION__
 const APP_COMMIT = __APP_COMMIT__
@@ -36,7 +32,12 @@ const healthQuery = useHealth()
 const statsQuery = useMaintenanceStats()
 const cleanupMutation = useCleanup()
 
-const activeTab = ref('settings')
+type SettingsGroup = 'general' | 'toolchain' | 'storage' | 'about'
+
+const activeTab = ref<SettingsGroup>('general')
+const { width: viewportWidth } = useWindowSize()
+// 桌面左右布局；窄屏改成顶部横向 tab，避免左侧导航把内容挤出视口。
+const tabPosition = computed(() => (viewportWidth.value <= 900 ? 'top' : 'left'))
 const values = reactive<Record<string, any>>({})
 const loaded = ref<Record<string, unknown>>({})
 const retentionDays = ref<number | undefined>(undefined)
@@ -62,6 +63,35 @@ watch(
 )
 
 const settings = computed(() => settingsQuery.data.value ?? null)
+
+// 设置页按“通用 / 工具链 / 存储 / 关于”分组；每个 key 只出现一次。
+const GROUP_KEYS: Record<Exclude<SettingsGroup, 'about'>, string[]> = {
+  general: [
+    'engine.poll_interval_ms',
+    'engine.default_timeout_ms',
+    'engine.max_total_ms',
+    'engine.max_steps',
+    'recording.click_dump',
+    'recording.confirm_before_save',
+    'recording.target_mode',
+    'capture.logcat_auto_attach',
+    'capture.network.enabled',
+    'security.token',
+  ],
+  toolchain: ['adb.path', 'scrcpy.max_size', 'scrcpy.max_fps', 'scrcpy.video_bit_rate', 'scrcpy.crop'],
+  storage: [
+    'runtime.data_dir',
+    'retention.days',
+    'retention.report_exclude_video',
+    'retention.report_max_mb',
+  ],
+}
+
+function entriesFor(group: Exclude<SettingsGroup, 'about'>): SettingEntry[] {
+  const keys = GROUP_KEYS[group]
+  return settings.value?.schema.filter((entry) => keys.includes(entry.key)) ?? []
+}
+
 const changedKeys = computed(() =>
   Object.keys(values).filter(
     (key) => JSON.stringify(values[key]) !== JSON.stringify(loaded.value[key]),
@@ -95,7 +125,7 @@ const cleanupSummary = computed(() => {
   return parts.join(' · ')
 })
 
-function sourceOf(entry: SettingEntry): 'default' | 'file' | 'db' {
+function sourceOf(entry: SettingEntry): 'default' | 'file' | 'db' | 'env' {
   return settings.value?.sources[entry.key] ?? 'default'
 }
 
@@ -181,100 +211,61 @@ async function runCleanup(): Promise<void> {
       </template>
     </PageHead>
 
-    <el-tabs v-model="activeTab" class="settings-tabs">
-      <el-tab-pane label="设置" name="settings">
-        <div v-if="settingsQuery.isLoading.value" class="card"><div class="card-body"><el-skeleton :rows="8" animated /></div></div>
-        <el-result
-          v-else-if="settingsQuery.isError.value || !settings"
-          icon="warning"
-          title="设置加载失败"
-          :sub-title="describeApiError(settingsQuery.error.value)"
-        >
-          <template #extra><el-button type="primary" @click="settingsQuery.refetch()">重试</el-button></template>
-        </el-result>
-        <template v-else>
-          <el-alert
-            type="warning"
-            :closable="false"
-            show-icon
-            title="数据目录 / 前端目录修改后需重启后端生效"
-            description="SQLite 数据库引擎不会热切换；产物挂载会按新目录动态解析。"
-            style="margin-bottom: 10px"
-          />
-          <div class="card">
-            <div class="card-body">
-              <div class="settings-grid">
-                <div v-for="entry in settings.schema" :key="entry.key" class="setting-field">
-                  <div class="field-label">
-                    {{ entry.title }}
-                    <StatusTag :tone="settingSourceMeta(sourceOf(entry)).tone">
-                      {{ settingSourceMeta(sourceOf(entry)).label }}
-                    </StatusTag>
-                    <el-button
-                      v-if="sourceOf(entry) !== 'default'"
-                      size="small"
-                      text
-                      :icon="RefreshLeft"
-                      title="删除数据库/文件层覆盖，回到默认值"
-                      @click="deleteOverride(entry)"
-                    />
-                  </div>
-                  <el-switch
-                    v-if="entry.type === 'bool'"
-                    v-model="values[entry.key]"
-                    size="small"
-                  />
-                  <el-select
-                    v-else-if="entry.type === 'enum'"
-                    v-model="values[entry.key]"
-                    size="small"
-                    style="width: 100%"
-                  >
-                    <el-option
-                      v-for="option in entry.options ?? []"
-                      :key="option.value"
-                      :value="option.value"
-                      :label="option.label"
-                    />
-                  </el-select>
-                  <el-input-number
-                    v-else-if="entry.type === 'int'"
-                    v-model="values[entry.key]"
-                    size="small"
-                    :min="entry.min"
-                    :max="entry.max"
-                    :step="1"
-                    controls-position="right"
-                    style="width: 100%"
-                    @update:model-value="values[entry.key] = numberOrNull($event)"
-                  />
-                  <el-input v-else v-model="values[entry.key]" size="small" clearable class="code-text" />
-                  <div v-if="entry.desc" class="unit">{{ entry.desc }}</div>
-                </div>
-              </div>
-            </div>
-            <div class="settings-savebar">
-              <el-button
-                type="primary"
-                :icon="Refresh"
-                :loading="updateMutation.isPending.value"
-                @click="saveSettings"
-              >
-                保存设置
-              </el-button>
-              <el-button :icon="RefreshLeft" :loading="resetMutation.isPending.value" @click="resetSettings">
-                恢复默认
-              </el-button>
-              <el-button @click="settingsQuery.refetch()">重新加载</el-button>
-              <span class="spacer" />
-              <span class="hint">只保存改动过的项 · 来源标记仅在覆盖时显示</span>
+    <div v-if="settingsQuery.isLoading.value" class="card"><div class="card-body"><el-skeleton :rows="8" animated /></div></div>
+    <el-result
+      v-else-if="settingsQuery.isError.value || !settings"
+      icon="warning"
+      title="设置加载失败"
+      :sub-title="describeApiError(settingsQuery.error.value)"
+    >
+      <template #extra><el-button type="primary" @click="settingsQuery.refetch()">重试</el-button></template>
+    </el-result>
+
+    <el-tabs v-else v-model="activeTab" :tab-position="tabPosition" class="settings-tabs">
+      <el-tab-pane label="通用" name="general">
+        <div class="card">
+          <div class="card-head">
+            <h2>通用设置</h2>
+            <span class="hint">执行节奏、录制行为、日志采集与访问令牌</span>
+          </div>
+          <div class="card-body">
+            <div class="settings-grid">
+              <SettingField
+                v-for="entry in entriesFor('general')"
+                :key="entry.key"
+                :entry="entry"
+                :model-value="values[entry.key]"
+                :source="sourceOf(entry)"
+                @update:model-value="values[entry.key] = $event"
+                @clear="deleteOverride(entry)"
+              />
             </div>
           </div>
-        </template>
+        </div>
       </el-tab-pane>
 
-      <el-tab-pane label="工具链" name="tools">
-        <div class="tool-grid">
+      <el-tab-pane label="工具链" name="toolchain">
+        <div class="card">
+          <div class="card-head">
+            <h2>工具链设置</h2>
+            <span class="hint">adb 路径与 scrcpy 镜像参数</span>
+          </div>
+          <div class="card-body">
+            <div class="settings-grid">
+              <SettingField
+                v-for="entry in entriesFor('toolchain')"
+                :key="entry.key"
+                :entry="entry"
+                :model-value="values[entry.key]"
+                :source="sourceOf(entry)"
+                @update:model-value="values[entry.key] = $event"
+                @clear="deleteOverride(entry)"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-grid" style="margin-top: 10px">
           <section class="card tool-card">
             <div class="card-body">
               <div class="tool-head"><el-icon :size="18"><Setting /></el-icon><strong>ADB</strong>
@@ -308,17 +299,6 @@ async function runCleanup(): Promise<void> {
               <div class="tool-row"><span>校验</span><code>启动前 SHA256 校验/必要时重推</code></div>
             </div>
           </section>
-          <section class="card tool-card">
-            <div class="card-body">
-              <div class="tool-head"><el-icon :size="18"><Setting /></el-icon><strong>数据与前端</strong>
-                <StatusTag tone="amber">部分需重启</StatusTag>
-              </div>
-              <div class="tool-row"><span>数据目录</span><code>{{ health?.data_dir ?? '—' }}</code></div>
-              <div class="tool-row"><span>产物挂载</span><code>/artifacts · 动态解析</code></div>
-              <div class="tool-row"><span>前端</span><code>{{ APP_VERSION }} · {{ APP_COMMIT }}</code></div>
-              <div class="tool-row"><span>页面构建</span><code>{{ formatDateTime(APP_BUILD_TIME) }}</code></div>
-            </div>
-          </section>
         </div>
         <el-alert
           type="info"
@@ -330,8 +310,36 @@ async function runCleanup(): Promise<void> {
         />
       </el-tab-pane>
 
-      <el-tab-pane label="维护" name="maintenance">
+      <el-tab-pane label="存储" name="storage">
+        <el-alert
+          type="warning"
+          :closable="false"
+          show-icon
+          title="数据目录 / 前端目录修改后需重启后端生效"
+          description="SQLite 数据库引擎不会热切换；产物挂载会按新目录动态解析。"
+          style="margin-bottom: 10px"
+        />
         <div class="card">
+          <div class="card-head">
+            <h2>存储设置</h2>
+            <span class="hint">数据库目录、产物目录与保留策略</span>
+          </div>
+          <div class="card-body">
+            <div class="settings-grid">
+              <SettingField
+                v-for="entry in entriesFor('storage')"
+                :key="entry.key"
+                :entry="entry"
+                :model-value="values[entry.key]"
+                :source="sourceOf(entry)"
+                @update:model-value="values[entry.key] = $event"
+                @clear="deleteOverride(entry)"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 10px">
           <div class="card-head">
             <h2>存储统计</h2>
             <el-button size="small" :icon="Refresh" :loading="statsQuery.isFetching.value" @click="statsQuery.refetch()">
@@ -379,8 +387,28 @@ async function runCleanup(): Promise<void> {
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="健康" name="health">
+      <el-tab-pane label="关于" name="about">
         <div class="card">
+          <div class="card-head">
+            <h2>关于 AutoTest</h2>
+            <StatusTag :tone="health?.status === 'ok' ? 'green' : 'amber'">{{ health?.status ?? '未知' }}</StatusTag>
+          </div>
+          <div class="card-body">
+            <div class="settings-grid">
+              <div class="kv"><span>前端版本</span><strong>{{ APP_VERSION }}</strong></div>
+              <div class="kv"><span>前端提交</span><strong class="code-text">{{ APP_COMMIT }}</strong></div>
+              <div class="kv"><span>页面构建</span><strong>{{ formatDateTime(APP_BUILD_TIME) }}</strong></div>
+              <div class="kv"><span>后端版本</span><strong>{{ health?.version ?? '—' }}</strong></div>
+              <div class="kv"><span>数据目录</span><strong class="code-text">{{ health?.data_dir ?? '—' }}</strong></div>
+              <div class="kv"><span>配置优先级</span><strong>默认 &lt; 文件 &lt; 数据库 &lt; 环境变量</strong></div>
+            </div>
+            <div class="hint" style="margin-top: 10px">
+              单机 Android UI 自动化平台：设备控制、脚本编排、录制回放、运行观测与报告。
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 10px">
           <div class="card-head">
             <h2>健康信息</h2>
             <el-button size="small" :icon="Refresh" :loading="healthQuery.isFetching.value" @click="healthQuery.refetch()">刷新</el-button>
@@ -413,5 +441,22 @@ async function runCleanup(): Promise<void> {
         </div>
       </el-tab-pane>
     </el-tabs>
+
+    <div v-if="settings && activeTab !== 'about'" class="settings-savebar settings-savebar-bottom">
+      <el-button
+        type="primary"
+        :icon="Refresh"
+        :loading="updateMutation.isPending.value"
+        @click="saveSettings"
+      >
+        保存设置
+      </el-button>
+      <el-button :icon="RefreshLeft" :loading="resetMutation.isPending.value" @click="resetSettings">
+        恢复默认
+      </el-button>
+      <el-button @click="settingsQuery.refetch()">重新加载</el-button>
+      <span class="spacer" />
+      <span class="hint">只保存改动过的项 · 来源标记仅在覆盖时显示</span>
+    </div>
   </div>
 </template>

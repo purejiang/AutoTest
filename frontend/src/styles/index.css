@@ -2010,7 +2010,42 @@ pre,
 
 /* ---------------------------------------------------------------- settings */
 .settings-tabs {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.settings-tabs .el-tabs__header.is-left {
+  flex: 0 0 188px;
+  width: 188px;
+  margin-right: 14px;
+}
+
+.settings-tabs .el-tabs__item.is-left {
+  justify-content: flex-start;
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.settings-tabs .el-tabs__item.is-left.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.settings-tabs .el-tabs__content {
+  min-width: 0;
+  overflow: visible;
+}
+
+.settings-tabs .el-tab-pane {
+  min-width: 0;
+}
+
+.settings-savebar-bottom {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
 }
 
 .settings-grid {
@@ -2221,6 +2256,17 @@ pre,
   }
   .top-build {
     display: none;
+  }
+  .settings-tabs {
+    display: block;
+  }
+  .settings-tabs .el-tabs__header.is-left {
+    float: none;
+    width: 100%;
+    margin: 0 0 8px;
+  }
+  .settings-tabs .el-tabs__content {
+    width: 100%;
   }
 }
 

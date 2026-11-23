@@ -232,6 +232,8 @@ export function settingSourceMeta(source?: string | null): StatusMeta {
       return { label: '数据库覆盖', tone: 'green' }
     case 'file':
       return { label: '配置文件', tone: 'blue' }
+    case 'env':
+      return { label: '环境变量', tone: 'amber' }
     default:
       return { label: '默认值', tone: 'gray' }
   }
