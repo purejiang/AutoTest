@@ -60,9 +60,9 @@ echo "[dev] 后端 http://127.0.0.1:${BACKEND_PORT}  (API 文档 /docs)"
 (
   cd backend
   if [ -x ".venv/bin/python" ]; then
-    exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" --reload
+    exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" --ws-per-message-deflate false --reload
   fi
-  exec uv run uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" --reload
+  exec uv run uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" --ws-per-message-deflate false --reload
 ) &
 PIDS+=($!)
 

@@ -51,7 +51,7 @@ def main() -> None:
     # 冻结（PyInstaller）环境下不能用 "app.main:app" 字符串，直接传对象
     from app.main import app as asgi_app
 
-    uvicorn.run(asgi_app, host=host, port=port, log_level="info")
+    uvicorn.run(asgi_app, host=host, port=port, log_level="info", ws_per_message_deflate=False)
 
 
 if __name__ == "__main__":

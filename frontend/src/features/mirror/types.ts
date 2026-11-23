@@ -12,6 +12,7 @@ export interface MirrorHelloInfo {
   codec: string
   maxSize?: number
   maxFps?: number
+  videoBitRate?: number
 }
 
 /** GET /api/devices/{serial}/mirror/status 的响应（契约 §7.1 / §14.3，向后兼容只读关键字段） */
@@ -23,6 +24,7 @@ export interface MirrorStatusInfo {
   codec?: string
   max_size?: number
   max_fps?: number
+  video_bit_rate?: number
   session_id?: string
   [key: string]: unknown
 }

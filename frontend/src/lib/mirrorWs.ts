@@ -29,6 +29,7 @@ export interface MirrorHello {
   pps_b64?: string
   max_size?: number
   max_fps?: number
+  video_bit_rate?: number
   [key: string]: unknown
 }
 
@@ -42,6 +43,7 @@ export interface MirrorConfigControl {
   pps_b64?: string
   max_size?: number
   max_fps?: number
+  video_bit_rate?: number
   [key: string]: unknown
 }
 

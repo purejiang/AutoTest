@@ -358,6 +358,7 @@ class MirrorSession:
             "codec": self._video_geometry.codec,
             "max_size": self.cfg.max_size,
             "max_fps": self.cfg.max_fps,
+            "video_bit_rate": self.cfg.video_bit_rate,
             "uptime_s": round(uptime, 1),
             "restarts": restarts,
             "subscribers": subscribers,
@@ -555,8 +556,8 @@ class MirrorSession:
         """
         if info is None:
             info = getattr(getattr(self._server, "reader", None), "last_info", None)
-        nals = scrcpy.split_nals(payload)
-        keyframe = bool(info.keyframe) if info is not None else scrcpy.is_keyframe(nals)
+        # reader 已经给出 keyframe；只有兜底缺 info 时才单独扫一次，避免每帧重复拆 NAL。
+        keyframe = bool(info.keyframe) if info is not None else scrcpy.is_keyframe(scrcpy.split_nals(payload))
         video_geometry = getattr(self._server, "geometry", None)
         if isinstance(video_geometry, scrcpy.VideoGeometry):
             self._video_geometry = video_geometry
@@ -601,16 +602,7 @@ class MirrorSession:
             and current.rotation
             == infer_rotation(video_geometry.width, video_geometry.height, *self._natural_size())
         ):
-            # 尺寸/旋转未变化，仅 codec/SPS 可能更新
-            self._geometry = MirrorGeometry(
-                stream_width=current.stream_width,
-                stream_height=current.stream_height,
-                natural_width=current.natural_width,
-                natural_height=current.natural_height,
-                rotation=current.rotation,
-                crop=current.crop,
-                max_size=current.max_size,
-            )
+            # 尺寸/旋转未变化：不重新分配 geometry 对象；只有 SPS 变化才广播 config。
             if sps_changed and self._state in ("running", "starting"):
                 self._broadcast_control({"kind": "config", **self._hello_fields()})
                 return True
@@ -922,6 +914,7 @@ class MirrorSession:
             "pps_b64": _b64(video.pps),
             "max_size": self.cfg.max_size,
             "max_fps": self.cfg.max_fps,
+            "video_bit_rate": self.cfg.video_bit_rate,
         }
 
 

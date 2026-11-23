@@ -18,6 +18,7 @@ import re
 import threading
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -88,7 +89,9 @@ class ScreenRecorder:
         self._local_path: Path | None = None
         self._pid: int | None = None
         self._started_at: float = 0.0
+        self._started_wall: float = 0.0
         self._time_limit_s: int = 0
+        self._name: str = ""
 
     def __repr__(self) -> str:
         return f"ScreenRecorder(serial={self.serial!r}, running={self.is_running})"
@@ -102,6 +105,38 @@ class ScreenRecorder:
             if self._time_limit_s > 0 and time.monotonic() - self._started_at >= self._time_limit_s:
                 return False
             return True
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def time_limit_s(self) -> int:
+        return self._time_limit_s
+
+    @property
+    def elapsed_s(self) -> float:
+        """已录制秒数（到 time-limit 封顶；未开始时为 0）。"""
+        with self._lock:
+            if self._device_path is None:
+                return 0.0
+            elapsed = max(0.0, time.monotonic() - self._started_at)
+            if self._time_limit_s > 0:
+                elapsed = min(elapsed, float(self._time_limit_s))
+            return round(elapsed, 1)
+
+    @property
+    def remaining_s(self) -> float:
+        if self._time_limit_s <= 0:
+            return 0.0
+        return round(max(0.0, float(self._time_limit_s) - self.elapsed_s), 1)
+
+    @property
+    def started_at(self) -> str:
+        """墙钟开始时间（ISO 8601 UTC）；未开始时为空串。"""
+        if self._started_wall <= 0:
+            return ""
+        return datetime.fromtimestamp(self._started_wall, UTC).isoformat()
 
     @property
     def device_path(self) -> str | None:
@@ -157,7 +192,9 @@ class ScreenRecorder:
             self._local_path = local_path
             self._pid = pid
             self._started_at = started_at
+            self._started_wall = time.time()
             self._time_limit_s = time_limit_s
+            self._name = name
             logger.info(
                 "screenrecord started serial=%s pid=%s device_path=%s local_path=%s bit_rate=%s limit=%ss",
                 self.serial,
@@ -334,7 +371,9 @@ class ScreenRecorder:
         self._local_path = None
         self._pid = None
         self._started_at = 0.0
+        self._started_wall = 0.0
         self._time_limit_s = 0
+        self._name = ""
 
     # ------------------------------------------------------------ 路径
     def _new_device_path(self, name: str) -> str:

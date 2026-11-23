@@ -183,6 +183,9 @@ def _mount_static(app: FastAPI) -> list[str]:
 
 # ---------------------------------------------------------------- 装配
 def create_app() -> FastAPI:
+    # 静态挂载（尤其 /artifacts）要读 data_dir/artifacts_dir：必须先装载文件层配置，
+    # 否则用 ~/.autotest/config.json 切换数据目录后，DB 在新区、产物静态目录还指向旧区。
+    config.reload_file_layer()
     application = FastAPI(
         title="AutoTest",
         version=__version__,
@@ -238,7 +241,7 @@ def _run_server() -> None:
     host = str(config.get("server.host") or "127.0.0.1")
     port = int(config.get("server.port") or 8787)
     logger.info("starting uvicorn on http://%s:%s", host, port)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info", ws_per_message_deflate=False)
 
 
 if __name__ == "__main__":

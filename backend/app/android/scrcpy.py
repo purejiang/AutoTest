@@ -656,6 +656,15 @@ def read_stream_headers(sock: socket.socket, spec: StreamHeaderSpec) -> StreamHe
     return StreamHeader(device_name=device_name, dummy_byte=dummy, codec_id=codec_id, codec=codec)
 
 
+def _first_nal_type(payload: bytes) -> int:
+    """只看起始码后的第一个 NAL header（不做全量扫描），用于判断是否值得扫参数集。"""
+    if payload.startswith(START_CODE_4):
+        return payload[4] & 0x1F if len(payload) > 4 else -1
+    if payload.startswith(START_CODE_3):
+        return payload[3] & 0x1F if len(payload) > 3 else -1
+    return payload[0] & 0x1F if payload else -1
+
+
 class VideoFrameReader:
     """从 scrcpy video socket 读帧（12 字节头 + Annex B payload）。
 
@@ -744,7 +753,15 @@ class VideoFrameReader:
         config: bool = False,
         keyframe_flag: bool = False,
     ) -> FrameInfo:
-        nals = split_nals(payload)
+        # 性能：普通 P 帧不扫 NAL。v5 帧头自带关键帧 flag，SPS/PPS 走独立 config 包；
+        # 只有 config / 关键帧 / 尚未拿到 SPS / 首 NAL 是 SPS/PPS/IDR 时才扫（兼容 in-band 参数集）。
+        need_scan = (
+            config
+            or keyframe_flag
+            or not self._sps
+            or _first_nal_type(payload) in (NAL_SPS, NAL_PPS, NAL_IDR)
+        )
+        nals = split_nals(payload) if need_scan else []
         sps_changed = False
         pps_changed = False
         types: list[int] = []
@@ -755,42 +772,44 @@ class VideoFrameReader:
                 if nal != self._sps:
                     self._sps = nal
                     sps_changed = True
-                try:
-                    info = parse_sps(nal)
-                except ScrcpyProtocolError as exc:
-                    logger.warning("failed to parse SPS: %s", exc)
-                    continue
-                if self.session_size is not None:
-                    width, height = self.session_size
-                else:
-                    width, height = info.width, info.height
-                self.geometry = VideoGeometry(
-                    width=width,
-                    height=height,
-                    rotation=self.geometry.rotation,
-                    codec=info.codec,
-                    sps=nal,
-                    pps=self._pps or None,
-                )
+                if sps_changed or not self.geometry.codec:
+                    try:
+                        info = parse_sps(nal)
+                    except ScrcpyProtocolError as exc:
+                        logger.warning("failed to parse SPS: %s", exc)
+                        continue
+                    if self.session_size is not None:
+                        width, height = self.session_size
+                    else:
+                        width, height = info.width, info.height
+                    self.geometry = VideoGeometry(
+                        width=width,
+                        height=height,
+                        rotation=self.geometry.rotation,
+                        codec=info.codec,
+                        sps=nal,
+                        pps=self._pps or None,
+                    )
             elif kind == NAL_PPS:
                 if nal != self._pps:
                     self._pps = nal
                     pps_changed = True
-        if self._sps:
-            self.geometry = VideoGeometry(
-                width=self.geometry.width,
-                height=self.geometry.height,
-                rotation=self.geometry.rotation,
-                codec=self.geometry.codec,
-                sps=self._sps,
-                pps=self._pps or None,
-            )
+                    if self._sps:
+                        self.geometry = VideoGeometry(
+                            width=self.geometry.width,
+                            height=self.geometry.height,
+                            rotation=self.geometry.rotation,
+                            codec=self.geometry.codec,
+                            sps=self._sps,
+                            pps=nal,
+                        )
         if config and payload:
             self.codec_config = payload
+        keyframe = keyframe_flag or (need_scan and NAL_IDR in types)
         return FrameInfo(
             pts_us=pts_us,
             size=len(payload),
-            keyframe=keyframe_flag or is_keyframe(nals),
+            keyframe=keyframe,
             config=config,
             nals=tuple(types),
             sps_changed=sps_changed,

@@ -64,6 +64,63 @@ watch(
 
 const settings = computed(() => settingsQuery.data.value ?? null)
 
+// 镜像画质预设：只是“一键填三项参数”的快捷方式，保存的仍是 max_size/max_fps/video_bit_rate。
+// 因此不需要额外的后端 key；三项被手动改动后会自然显示为“自定义”。
+const MIRROR_PRESETS = [
+  {
+    value: 'smooth',
+    label: '流畅优先',
+    detail: '1200px / 60fps / 10Mbps',
+    maxSize: 1200,
+    maxFps: 60,
+    videoBitRate: 10_000_000,
+  },
+  {
+    value: 'balanced',
+    label: '均衡（推荐）',
+    detail: '1600px / 60fps / 16Mbps',
+    maxSize: 1600,
+    maxFps: 60,
+    videoBitRate: 16_000_000,
+  },
+  {
+    value: 'sharp',
+    label: '清晰优先',
+    detail: '1600px / 30fps / 24Mbps',
+    maxSize: 1600,
+    maxFps: 30,
+    videoBitRate: 24_000_000,
+  },
+] as const
+
+type MirrorPresetValue = (typeof MIRROR_PRESETS)[number]['value'] | 'custom'
+
+const mirrorPreset = computed<MirrorPresetValue>(() => {
+  const maxSize = Number(values['scrcpy.max_size'])
+  const maxFps = Number(values['scrcpy.max_fps'])
+  const videoBitRate = Number(values['scrcpy.video_bit_rate'])
+  const matched = MIRROR_PRESETS.find(
+    (preset) =>
+      preset.maxSize === maxSize &&
+      preset.maxFps === maxFps &&
+      preset.videoBitRate === videoBitRate,
+  )
+  return matched?.value ?? 'custom'
+})
+
+const mirrorPresetLabel = computed(() => {
+  const matched = MIRROR_PRESETS.find((preset) => preset.value === mirrorPreset.value)
+  return matched ? `${matched.label}：${matched.detail}` : '自定义（下面三项手动组合）'
+})
+
+function applyMirrorPreset(value: unknown): void {
+  const preset = MIRROR_PRESETS.find((item) => item.value === value)
+  if (!preset) return
+  values['scrcpy.max_size'] = preset.maxSize
+  values['scrcpy.max_fps'] = preset.maxFps
+  values['scrcpy.video_bit_rate'] = preset.videoBitRate
+}
+
 // 设置页按“通用 / 工具链 / 存储 / 关于”分组；每个 key 只出现一次。
 const GROUP_KEYS: Record<Exclude<SettingsGroup, 'about'>, string[]> = {
   general: [
@@ -245,6 +302,28 @@ async function runCleanup(): Promise<void> {
       </el-tab-pane>
 
       <el-tab-pane label="工具链" name="toolchain">
+        <div class="card" style="margin-bottom: 10px">
+          <div class="card-head">
+            <h2>镜像画质</h2>
+            <span class="hint">一键套用分辨率 / 帧率 / 码率；保存后停止并重新启动镜像生效</span>
+          </div>
+          <div class="card-body">
+            <el-radio-group :model-value="mirrorPreset" @update:model-value="applyMirrorPreset">
+              <el-radio-button
+                v-for="preset in MIRROR_PRESETS"
+                :key="preset.value"
+                :value="preset.value"
+              >
+                {{ preset.label }}
+              </el-radio-button>
+              <el-radio-button value="custom" disabled>自定义</el-radio-button>
+            </el-radio-group>
+            <div class="hint" style="margin-top: 8px">
+              当前：{{ mirrorPresetLabel }}。预设只改下面的最大边 / 帧率 / 码率，保存前仍可手动微调。
+            </div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-head">
             <h2>工具链设置</h2>

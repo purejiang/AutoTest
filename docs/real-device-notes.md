@@ -84,6 +84,17 @@
 真机验证：down+up = 点击（2/2 正确）、down+move…+up 能把设置页从「我的设备/WLAN」滚到「锁屏/显示与亮度」、
 录制得到 `key → swipe → tap` 三条事件并成功转脚本。
 
+### 3.1.1 镜像传输性能（2026-11 打磨）
+
+- **Python 端每帧 NAL 扫描是最大隐藏开销**：40KB payload 的 `split_nals()` 在本机约 15ms；
+  旧实现 reader + `_ingest` 各扫一遍，20–30fps 时接近吃满一个核。现在 P 帧只依赖 v5 帧头的
+  keyframe flag，不扫 NAL；仅 config 包、关键帧、首帧、或首 NAL 为 SPS/PPS/IDR 时扫描。
+- WebSocket 关闭 per-message-deflate（H.264 本身已压缩）：实测帧到达抖动 std 15ms → 8ms。
+- `stats` 从 send 循环里的每帧 `wait_for(timeout=5)` 改为独立 5s 定时任务，避免每帧创建 timeout task。
+- 触摸 `move` 不再每条开 SQLite session（仅 run 占用/暂停判断才需要 DB）。
+- 2014 款 i7（2 核 4 线程）+ 1200 长边时，设置页「流畅优先」（1200/60/10M）明显比 1600 稳；
+  当前手机游戏源本身约 20–30fps，镜像不能凭空变 60。
+
 ## 3.2 录制→回放保真度（v1.1 修复，真机验证一致）
 
 用户反馈「录制出来的脚本运行起来和操作不一样」，真机复现后定位到 4 个缺陷并修复：

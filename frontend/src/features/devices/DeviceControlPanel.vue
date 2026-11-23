@@ -22,10 +22,12 @@ import {
   useDeviceText,
   useMirrorStatus,
   useScreenRecordStart,
+  useScreenRecordStatus,
   useScreenRecordStop,
+  type ScreenRecordLast,
 } from '@/api/devices'
 import type { Device } from '@/types/api'
-import { numberOrNull, prettyJson } from '@/lib/format'
+import { formatBytes, numberOrNull, prettyJson } from '@/lib/format'
 import StatusTag from '@/components/StatusTag.vue'
 
 const props = defineProps<{ device: Device }>()
@@ -37,7 +39,22 @@ const shellMutation = useDeviceShell(props.device.serial)
 const appMutation = useDeviceAppAction(props.device.serial)
 const screenStart = useScreenRecordStart(props.device.serial)
 const screenStop = useScreenRecordStop(props.device.serial)
+const screenStatus = useScreenRecordStatus(
+  computed(() => props.device.serial),
+  computed(() => activeTab.value === 'screenrecord'),
+)
 const mirrorQuery = useMirrorStatus(computed(() => props.device.serial))
+
+const recStatus = computed(() => screenStatus.data.value ?? null)
+const recActive = computed(() => Boolean(recStatus.value?.active))
+const recPending = computed(() => Boolean(recStatus.value?.pending))
+const lastVideo = computed<ScreenRecordLast | null>(() => recStatus.value?.last ?? null)
+
+function formatClock(seconds: number | undefined): string {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0))
+  const minutes = Math.floor(total / 60)
+  return `${String(minutes).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+}
 
 const text = ref('')
 const clearFirst = ref(false)
@@ -52,7 +69,6 @@ const appResult = ref<string | null>(null)
 const recName = ref('')
 const recBitRate = ref(4_000_000)
 const recTimeLimit = ref(180)
-const recResult = ref<string | null>(null)
 
 const QUICK_KEYS = [
   { key: 'back', label: '返回', icon: ArrowLeft },
@@ -143,9 +159,9 @@ function startScreenRecord(): void {
       time_limit_s: recTimeLimit.value,
     },
     {
-      onSuccess: (data) => {
-        recResult.value = prettyJson(data)
+      onSuccess: () => {
         ElMessage.success('设备录屏已开始')
+        void screenStatus.refetch()
       },
     },
   )
@@ -153,9 +169,9 @@ function startScreenRecord(): void {
 
 function stopScreenRecord(): void {
   screenStop.mutate(undefined, {
-    onSuccess: (data) => {
-      recResult.value = prettyJson(data)
-      ElMessage.success('设备录屏已停止')
+    onSuccess: () => {
+      ElMessage.success('设备录屏已停止，视频已保存')
+      void screenStatus.refetch()
     },
   })
 }
@@ -256,7 +272,7 @@ const mirrorLabel = computed(() => {
       <pre v-if="appResult" class="pre-block" style="margin-top: 8px">{{ appResult }}</pre>
     </el-tab-pane>
 
-    <el-tab-pane label="录屏" name="screenrecord">
+    <el-tab-pane label="设备录屏" name="screenrecord">
       <div class="ctrl-field">
         <label>名称（可选）</label>
         <el-input v-model="recName" size="small" placeholder="录屏名称" />
@@ -277,16 +293,55 @@ const mirrorLabel = computed(() => {
         <label>时长上限 time_limit_s</label>
         <el-input-number v-model="recTimeLimit" size="small" :min="5" :max="180" controls-position="right" style="width: 100%" />
       </div>
+
+      <div v-if="recActive || recPending" class="rec-status">
+        <span class="rec-dot" :class="{ 'is-live': recActive }" aria-hidden />
+        <StatusTag :tone="recActive ? 'red' : 'amber'">{{ recActive ? '录制中' : '已到时长上限' }}</StatusTag>
+        <span class="rec-clock">{{ formatClock(recStatus?.elapsed_s) }} / {{ formatClock(recStatus?.time_limit_s) }}</span>
+        <span v-if="recActive" class="hint">剩余 {{ formatClock(recStatus?.remaining_s) }}</span>
+      </div>
+
       <div class="row">
-        <el-button type="primary" size="small" :loading="screenStart.isPending.value" :disabled="busy" @click="startScreenRecord">
+        <el-button
+          type="primary"
+          size="small"
+          :loading="screenStart.isPending.value"
+          :disabled="busy || recActive || recPending"
+          @click="startScreenRecord"
+        >
           开始录屏
         </el-button>
-        <el-button type="danger" size="small" :loading="screenStop.isPending.value" @click="stopScreenRecord">
+        <el-button
+          type="danger"
+          size="small"
+          :loading="screenStop.isPending.value"
+          :disabled="!recActive && !recPending"
+          @click="stopScreenRecord"
+        >
           停止并保存
         </el-button>
       </div>
-      <div class="hint" style="margin-top: 6px">设备端 screenrecord（最长 180s），产物保存为 video artifact。</div>
-      <pre v-if="recResult" class="pre-block" style="margin-top: 8px">{{ recResult }}</pre>
+      <div class="hint" style="margin-top: 6px">
+        手机端 screenrecord（最长 180s）把手机画面录成 mp4；不含浏览器特效，也不生成脚本步骤。浏览器端录制在镜像页的「视频录制」。
+      </div>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="Android screenrecord 不支持暂停/续录"
+        description="需要中途停顿请先停止并保存，再开一段。需要可暂停、且能带点击特效的视频，得用浏览器端录制（另一条链路）。"
+        style="margin-top: 8px"
+      />
+
+      <div v-if="lastVideo?.url" class="rec-player">
+        <video :src="lastVideo.url" controls preload="metadata" />
+        <div class="rec-player-meta">
+          <span class="rec-player-name" :title="lastVideo.name">{{ lastVideo.name }}</span>
+          <span class="hint">{{ formatBytes(lastVideo.size) }}</span>
+          <a :href="lastVideo.url" target="_blank" rel="noreferrer">新标签打开</a>
+          <a :href="lastVideo.url" :download="lastVideo.name">下载</a>
+        </div>
+      </div>
     </el-tab-pane>
 
     <el-tab-pane label="信息" name="info">

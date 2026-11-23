@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CaretRight, SwitchButton, VideoCamera, VideoPause } from '@element-plus/icons-vue'
+import { CaretRight, EditPen, SwitchButton, VideoPause } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -25,7 +25,9 @@ const recording = ref<Recording | null>(null)
 const busy = ref<'start' | 'pause' | 'resume' | 'stop' | null>(null)
 const error = ref<string | null>(null)
 const stoppedId = ref<string | null>(null)
+const elapsedText = ref('00:00')
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
 const STATUS_TAG: Record<string, { tone: 'red' | 'amber' | 'gray'; text: string }> = {
   recording: { tone: 'red', text: '录制中' },
@@ -38,6 +40,18 @@ function stopPolling(): void {
     clearInterval(pollTimer)
     pollTimer = null
   }
+}
+
+function tickElapsed(): void {
+  const startedAt = recording.value?.started_at
+  const startedMs = startedAt ? Date.parse(startedAt) : Number.NaN
+  if (!Number.isFinite(startedMs)) {
+    elapsedText.value = '00:00'
+    return
+  }
+  const total = Math.max(0, Math.floor((Date.now() - startedMs) / 1000))
+  const minutes = Math.floor(total / 60)
+  elapsedText.value = `${String(minutes).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
 }
 
 function startPolling(): void {
@@ -94,8 +108,16 @@ watch(
 
 onMounted(() => {
   void recoverActive(props.serial)
+  elapsedTimer = setInterval(tickElapsed, 1000)
+  tickElapsed()
 })
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  stopPolling()
+  if (elapsedTimer !== null) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+})
 
 async function startRecording(): Promise<void> {
   busy.value = 'start'
@@ -166,9 +188,9 @@ function openRecording(withConvert = false): void {
   <div class="card mirror-recording">
     <div class="card-head">
       <h2>
-        <el-icon style="margin-right: 4px; vertical-align: -2px"><VideoCamera /></el-icon>
-        录制工具条
-        <StatusTag tone="blue" style="margin-left: 4px">镜像录制</StatusTag>
+        <el-icon style="margin-right: 4px; vertical-align: -2px"><EditPen /></el-icon>
+        脚本录制
+        <StatusTag tone="blue" style="margin-left: 4px">操作 → 脚本</StatusTag>
         <StatusTag
           v-if="recording"
           :tone="STATUS_TAG[recording.status]?.tone ?? 'gray'"
@@ -177,7 +199,10 @@ function openRecording(withConvert = false): void {
           {{ STATUS_TAG[recording.status]?.text ?? recording.status }}
         </StatusTag>
       </h2>
-      <span class="small muted">事件 {{ recording?.event_count ?? 0 }}</span>
+      <span class="small muted">
+        事件 {{ recording?.event_count ?? 0 }}
+        <template v-if="recording && recording.status !== 'stopped'"> · 已进行 {{ elapsedText }}</template>
+      </span>
     </div>
     <div class="card-body">
       <el-alert
@@ -201,14 +226,14 @@ function openRecording(withConvert = false): void {
         <el-button
           type="primary"
           size="small"
-          :icon="VideoCamera"
+          :icon="EditPen"
           :loading="busy === 'start'"
           :disabled="disabled"
           @click="startRecording"
         >
-          开始镜像录制
+          开始脚本录制
         </el-button>
-        <span class="hint">录制期间在镜像上手动操作会被记录为脚本步骤。</span>
+        <span class="hint">只记录点击/滑动等操作并转成脚本，不录制画面；画面录制在设备控制面板的「视频录屏」。</span>
       </div>
       <div v-else class="row wrap">
         <el-button

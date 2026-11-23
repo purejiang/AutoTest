@@ -48,6 +48,7 @@ router = APIRouter(prefix="/api/devices", tags=["devices"])
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _SCREEN_RECORDERS: dict[str, Any] = {}
+_SCREEN_LAST: dict[str, dict[str, Any]] = {}
 _SCREEN_RECORDER_LOCK = threading.RLock()
 
 
@@ -188,6 +189,22 @@ def _paused_run_id(session: Session, run_ref: Any) -> int | None:
     if row is not None and row.status == "paused":
         return run_id
     return None
+
+
+def _touch_needs_db(serial: str) -> bool:
+    """触摸路径唯一需要 DB 的原因是 run 占用（要查 paused run id）。
+
+    没有 run 时直接走内存镜像注入，避免每个 pointermove 都开一次 SQLite session。
+    其它 purpose 的占用在这里就拒绝，保持与 _manual_state 相同的 DEVICE_BUSY 语义。
+    """
+    for entry in device_registry.occupancy(serial):
+        purpose = str(entry.get("purpose"))
+        if purpose == "run":
+            return True
+        if purpose in ("recording", "mirror"):
+            continue
+        raise ApiError("DEVICE_BUSY", f"device {serial} is busy with {purpose}", {"serial": serial, "holder": entry})
+    return False
 
 
 def _manual_state(serial: str, session: Session) -> int | None:
@@ -444,17 +461,20 @@ def apply_stream_touch(
     - 运行中（非暂停）拒绝注入：REST 抛 409，WS 静默忽略（返回 {"ignored": True}）。
     """
     if session is None:
-        with session_scope() as db_session:
-            return apply_stream_touch(
-                serial, action, nx, ny, raise_on_busy=raise_on_busy, session=db_session
-            )
-
-    try:
-        manual_run_id = _manual_state(serial, session)
-    except ApiError:
-        if not raise_on_busy:
-            return {"ok": False, "ignored": True, "reason": "device_busy"}
-        raise
+        if _touch_needs_db(serial):
+            with session_scope() as db_session:
+                return apply_stream_touch(
+                    serial, action, nx, ny, raise_on_busy=raise_on_busy, session=db_session
+                )
+        # 普通镜像拖动：不碰 SQLite（每次 pointermove 都开 session 会明显增加输入延迟）。
+        manual_run_id = None
+    else:
+        try:
+            manual_run_id = _manual_state(serial, session)
+        except ApiError:
+            if not raise_on_busy:
+                return {"ok": False, "ignored": True, "reason": "device_busy"}
+            raise
     action = str(action).strip().lower()
 
     if action == "down":
@@ -758,8 +778,36 @@ def screenrecord_start(
         "ok": True,
         "serial": serial,
         "recording": True,
+        "active": True,
+        "pending": True,
         "name": name,
         "time_limit_s": int(payload.time_limit_s),
+        "elapsed_s": recorder.elapsed_s,
+        "remaining_s": recorder.remaining_s,
+        "started_at": recorder.started_at,
+    }
+
+
+@router.get("/{serial}/screenrecord/status")
+def screenrecord_status(serial: str) -> dict[str, Any]:
+    """录屏状态 + 最近一次产物直链（前端计时/刷新恢复/停止后直接播放用）。"""
+    with _SCREEN_RECORDER_LOCK:
+        recorder = _SCREEN_RECORDERS.get(serial)
+        last = _SCREEN_LAST.get(serial)
+    if recorder is None:
+        return {"ok": True, "serial": serial, "active": False, "pending": False, "last": last}
+    active = recorder.is_running
+    return {
+        "ok": True,
+        "serial": serial,
+        "active": active,
+        "pending": recorder.device_path is not None,
+        "name": recorder.name,
+        "time_limit_s": recorder.time_limit_s,
+        "elapsed_s": recorder.elapsed_s,
+        "remaining_s": recorder.remaining_s,
+        "started_at": recorder.started_at,
+        "last": last,
     }
 
 
@@ -776,12 +824,23 @@ def screenrecord_stop(serial: str) -> dict[str, Any]:
     except Exception as exc:
         raise device_unavailable(f"screenrecord stop failed: {exc}", {"serial": serial}) from exc
     path, size = result if isinstance(result, tuple) else (result, 0)
+    last = {
+        "name": Path(str(path)).name,
+        "path": str(path),
+        "size": int(size or 0),
+        "url": config.artifact_url(str(path)),
+        "stopped_at": models.now_iso(),
+    }
+    with _SCREEN_RECORDER_LOCK:
+        _SCREEN_LAST[serial] = last
     return {
         "ok": True,
         "serial": serial,
         "path": str(path),
         "size": int(size or 0),
-        "name": Path(str(path)).name,
+        "name": last["name"],
+        "url": last["url"],
+        "last": last,
     }
 
 

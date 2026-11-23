@@ -203,18 +203,20 @@ async def _receive_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
             logger.debug("mirror ws ignored control message: %s", kind)
 
 
+async def _stats_loop(session: Any, sub: Any) -> None:
+    """每 5s 推一条 stats；不占用帧队列，也不在 send 循环里每帧创建 timeout task。"""
+    while True:
+        await asyncio.sleep(5.0)
+        session.push_control(sub, {"kind": "stats", **session.stats()})
+
+
 async def _send_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
-    """串行发送：控制消息（controls，优先）→ 二进制帧 → 空闲时周期性 stats。"""
+    """串行发送：控制消息（controls，优先）→ 二进制帧。stats 由独立定时任务投递。"""
     while True:
         if sub.controls:
             item = sub.controls.popleft()
         else:
-            try:
-                item = await asyncio.wait_for(sub.queue.get(), timeout=5.0)
-            except TimeoutError:
-                stats = session.stats()
-                await websocket.send_json({"kind": "stats", **stats})
-                continue
+            item = await sub.queue.get()
             if item is mirror_module.WAKE_SENTINEL:
                 continue
         if item is None:  # session.stop() 的哨兵
@@ -252,6 +254,7 @@ async def mirror_ws(websocket: WebSocket, serial: str, token: str | None = Query
         return
     sub = session.subscribe()
     receive_task = asyncio.create_task(_receive_loop(websocket, session, sub))
+    stats_task = asyncio.create_task(_stats_loop(session, sub))
     try:
         await _send_loop(websocket, session, sub)
     except (WebSocketDisconnect, RuntimeError):
@@ -260,8 +263,13 @@ async def mirror_ws(websocket: WebSocket, serial: str, token: str | None = Query
         logger.exception("mirror ws send loop failed for %s", serial)
     finally:
         receive_task.cancel()
+        stats_task.cancel()
         try:
             await receive_task
         except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+            pass
+        try:
+            await stats_task
+        except (asyncio.CancelledError, RuntimeError):
             pass
         session.unsubscribe(sub)

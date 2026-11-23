@@ -217,6 +217,8 @@ GET /api/devices/{serial}/info|hierarchy?raw=|screenshot(png)|apps?keyword=&type
   hierarchy 响应：`{"node": HierarchyNode, "raw": str|null}`（raw=true 时尽量给原始 XML，取不到为 null 并带 `"raw_unavailable"`）；
 POST /api/devices/{serial}/tap|long_press|swipe|key|text|app|shell；
 POST /api/devices/{serial}/screenrecord/start {name,bit_rate,time_limit_s} / stop；
+GET /api/devices/{serial}/screenrecord/status → {active,pending,name,time_limit_s,elapsed_s,remaining_s,started_at,last:{name,size,url}}；
+  last 为最近一次录屏产物直链（/artifacts/screenrecord/…，支持 Range 播放/拖动）；
 POST /api/devices/{serial}/network/start|stop（未启用→UNSUPPORTED）；
 POST /api/devices/{serial}/mirror/start|stop；GET /api/devices/{serial}/mirror/status。
 > 录制挂钩：serial 有活跃录制时注入动作必须经 `app.recorder.hooks` 留痕（on_before_pointer→注入→on_action）。
@@ -400,7 +402,7 @@ def create_u2_driver(serial: str) -> U2Driver
 ```python
 # app/android/screen.py
 def screenshot_png(driver) -> bytes      # 带 PNG 头校验
-class ScreenRecorder:                    # exec-out screenrecord 流式拉取
+class ScreenRecorder:                    # 设备端 screenrecord → SIGINT 收尾 → adb pull
     def start(self, name: str, bit_rate: int, time_limit_s: int) -> None
     def stop(self) -> tuple[Path, int]   # (mp4 路径, 大小)
 ```

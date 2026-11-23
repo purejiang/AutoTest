@@ -43,6 +43,8 @@ interface DragState {
   moved: boolean
   committed: boolean
   streaming: boolean
+  /** pointerdown 时量到的画布位置：整段手势复用，避免每个 pointermove 都强制布局。 */
+  rect: DOMRect | null
 }
 
 interface NormalizedPoint {
@@ -96,10 +98,14 @@ export function usePointerGestures(options: PointerGesturesOptions) {
     }
   }
 
-  function normalize(clientX: number, clientY: number): NormalizedPoint | null {
+  function normalize(
+    clientX: number,
+    clientY: number,
+    measured?: DOMRect | null,
+  ): NormalizedPoint | null {
     const canvas = options.canvasRef.value
     if (!canvas) return null
-    const rect = canvas.getBoundingClientRect()
+    const rect = measured ?? canvas.getBoundingClientRect()
     if (rect.width <= 0 || rect.height <= 0) return null
     return {
       nx: clamp01((clientX - rect.left) / rect.width),
@@ -199,7 +205,7 @@ export function usePointerGestures(options: PointerGesturesOptions) {
 
   async function fireBuffered(dragState: DragState, end: NormalizedPoint): Promise<void> {
     const durationMs = Math.max(0, Date.now() - dragState.startedAt)
-    const rect = options.canvasRef.value?.getBoundingClientRect()
+    const rect = dragState.rect
     const dx = rect ? (end.nx - dragState.nx) * rect.width : 0
     const dy = rect ? (end.ny - dragState.ny) * rect.height : 0
     const distance = Math.hypot(dx, dy)
@@ -222,7 +228,8 @@ export function usePointerGestures(options: PointerGesturesOptions) {
 
   function onPointerDown(event: PointerEvent): void {
     if (!enabled.value) return
-    const point = normalize(event.clientX, event.clientY)
+    const rect = options.canvasRef.value?.getBoundingClientRect() ?? null
+    const point = normalize(event.clientX, event.clientY, rect)
     if (!point) return
     if (drag) return
     try {
@@ -241,6 +248,7 @@ export function usePointerGestures(options: PointerGesturesOptions) {
       moved: false,
       committed: false,
       streaming,
+      rect,
     }
     drag = dragState
 
@@ -279,9 +287,9 @@ export function usePointerGestures(options: PointerGesturesOptions) {
   function onPointerMove(event: PointerEvent): void {
     const dragState = drag
     if (!dragState || dragState.pointerId !== event.pointerId) return
-    const point = normalize(event.clientX, event.clientY)
+    const point = normalize(event.clientX, event.clientY, dragState.rect)
     if (!point) return
-    const rect = options.canvasRef.value?.getBoundingClientRect()
+    const rect = dragState.rect
     const dx = rect ? (point.nx - dragState.nx) * rect.width : 0
     const dy = rect ? (point.ny - dragState.ny) * rect.height : 0
     if (Math.hypot(dx, dy) >= MOVE_THRESHOLD_PX) {
@@ -293,7 +301,7 @@ export function usePointerGestures(options: PointerGesturesOptions) {
       const native = event as PointerEvent & { getCoalescedEvents?: () => PointerEvent[] }
       if (typeof native.getCoalescedEvents === 'function') {
         for (const sample of native.getCoalescedEvents()) {
-          const p = normalize(sample.clientX, sample.clientY)
+          const p = normalize(sample.clientX, sample.clientY, dragState.rect)
           if (p) {
             moveQueue.push(p)
             added = true
@@ -313,7 +321,10 @@ export function usePointerGestures(options: PointerGesturesOptions) {
     if (!dragState || dragState.pointerId !== event.pointerId) return
     drag = null
     clearLongPressTimer()
-    const point = normalize(event.clientX, event.clientY) ?? { nx: dragState.nx, ny: dragState.ny }
+    const point = normalize(event.clientX, event.clientY, dragState.rect) ?? {
+      nx: dragState.nx,
+      ny: dragState.ny,
+    }
     try {
       ;(event.currentTarget as HTMLCanvasElement | null)?.releasePointerCapture(event.pointerId)
     } catch {

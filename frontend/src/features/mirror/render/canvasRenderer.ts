@@ -35,6 +35,8 @@ export class CanvasRenderer {
   private lastVideoSize = { width: 0, height: 0 }
   private lastCanvasPixels = { width: 0, height: 0 }
   private lastDpr = 1
+  // 容器尺寸由 ResizeObserver 量一次后缓存：draw 里再读 clientWidth/Height 会每帧触发强制重排。
+  private containerSize = { width: 0, height: 0 }
 
   /** rVFC 能力探测（当前渲染路径不使用，保留给未来 <video> 路径） */
   static readonly hasVideoFrameCallback: boolean =
@@ -64,9 +66,11 @@ export class CanvasRenderer {
     }
     canvas.style.display = 'block'
     canvas.style.touchAction = 'none'
+    this.measureContainer()
     if (typeof ResizeObserver !== 'undefined' && this.container) {
       this.resizeObserver = new ResizeObserver(() => {
         if (this.disposed) return
+        this.measureContainer()
         // 容器变化后：有等待中的帧就重排一次；否则等下一帧到达时自然重排
         if (this.pendingFrame) this.schedule()
       })
@@ -85,6 +89,7 @@ export class CanvasRenderer {
     this.ctx = null
     this.canvas = null
     this.container = null
+    this.containerSize = { width: 0, height: 0 }
   }
 
   destroy(): void {
@@ -149,13 +154,25 @@ export class CanvasRenderer {
     }
   }
 
+  private measureContainer(): void {
+    const container = this.container
+    if (!container) return
+    this.containerSize = { width: container.clientWidth, height: container.clientHeight }
+  }
+
   /** 按容器可用空间与视频宽高比、DPR 重排 canvas 尺寸（CSS contain 效果）。 */
   private layout(videoWidth: number, videoHeight: number): void {
     const canvas = this.canvas
     const container = this.container
     if (!canvas || !container) return
-    const availableWidth = container.clientWidth
-    const availableHeight = container.clientHeight
+    let availableWidth = this.containerSize.width
+    let availableHeight = this.containerSize.height
+    if (!availableWidth || !availableHeight) {
+      // 容器刚显示/尚未被 observer 量到：补量一次，之后都走缓存。
+      this.measureContainer()
+      availableWidth = this.containerSize.width
+      availableHeight = this.containerSize.height
+    }
     if (!availableWidth || !availableHeight) return
     // DPR 上限 1.5：Retina(2x) 下画布像素是 CSS 的 4 倍，1436×3200 的 drawImage 在集显机器上
     // 会明显吃掉帧时间；1.5 在清晰度与流畅度之间取平衡。

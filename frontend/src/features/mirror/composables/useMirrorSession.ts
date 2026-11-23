@@ -56,6 +56,7 @@ function toHelloInfo(msg: MirrorHello, fallbackSerial: string): MirrorHelloInfo 
     codec: typeof msg.codec === 'string' ? msg.codec : '',
     maxSize: typeof msg.max_size === 'number' ? msg.max_size : undefined,
     maxFps: typeof msg.max_fps === 'number' ? msg.max_fps : undefined,
+    videoBitRate: typeof msg.video_bit_rate === 'number' ? msg.video_bit_rate : undefined,
   }
 }
 
@@ -294,6 +295,7 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
             if (typeof msg.codec === 'string') next.codec = msg.codec
             if (typeof msg.max_size === 'number') next.maxSize = msg.max_size
             if (typeof msg.max_fps === 'number') next.maxFps = msg.max_fps
+            if (typeof msg.video_bit_rate === 'number') next.videoBitRate = msg.video_bit_rate
             hello.value = next
           }
           applyParameterSets(msg.sps_b64, msg.pps_b64)
@@ -467,6 +469,7 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
               codec: typeof info.codec === 'string' ? info.codec : '',
               maxSize: typeof info.max_size === 'number' ? info.max_size : undefined,
               maxFps: typeof info.max_fps === 'number' ? info.max_fps : undefined,
+              videoBitRate: typeof info.video_bit_rate === 'number' ? info.video_bit_rate : undefined,
             }
           }
           connect()

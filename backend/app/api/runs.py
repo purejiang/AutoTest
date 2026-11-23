@@ -483,12 +483,7 @@ def _step_dict(row: StepResult) -> dict[str, Any]:
 
 def _artifact_url(path: str) -> str | None:
     """产物直链：/artifacts/<相对 artifacts_dir 的路径>（main.py 已挂载静态目录）。"""
-    try:
-        root = config.artifacts_dir().resolve()
-        rel = Path(path).resolve().relative_to(root)
-    except (ValueError, OSError):
-        return None
-    return f"/artifacts/{rel.as_posix()}"
+    return config.artifact_url(path)
 
 
 def _artifact_dict(row: Artifact) -> dict[str, Any]:

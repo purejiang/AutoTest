@@ -254,6 +254,16 @@ def reports_dir() -> Path:
     return path
 
 
+def artifact_url(path: str | Path) -> str | None:
+    """产物直链：/artifacts/<相对 artifacts_dir 的路径>（main.py 已挂载静态目录）。"""
+    try:
+        root = artifacts_dir().resolve()
+        rel = Path(path).resolve().relative_to(root)
+    except (ValueError, OSError):
+        return None
+    return f"/artifacts/{rel.as_posix()}"
+
+
 def static_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "static"
 
