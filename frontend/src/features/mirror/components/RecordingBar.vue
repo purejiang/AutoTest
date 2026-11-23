@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { CaretRight, SwitchButton, VideoCamera, VideoPause } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import type { Recording } from '@/types/api'
@@ -57,14 +57,33 @@ function startPolling(): void {
   }, 2000)
 }
 
+/** 刷新/重进页面时恢复该设备上仍在进行的录制，避免误显示“开始录制”后点出 409。 */
+async function recoverActive(serial: string): Promise<void> {
+  try {
+    const raw = await get<{ items?: Recording[] } | Recording[]>('/recordings', { query: { limit: 50 } })
+    const items = Array.isArray(raw) ? raw : (raw.items ?? [])
+    if (serial !== props.serial) return
+    const active = items.find(
+      (item) => item.serial === serial && (item.status === 'recording' || item.status === 'paused'),
+    )
+    if (active) {
+      stoppedId.value = null
+      recording.value = active
+    }
+  } catch {
+    // 恢复失败不阻塞手动开始；后端仍会用 409 兜底。
+  }
+}
+
 watch(
   () => props.serial,
-  () => {
+  (serial) => {
     stopPolling()
     recording.value = null
     stoppedId.value = null
     error.value = null
     busy.value = null
+    void recoverActive(serial)
   },
 )
 
@@ -73,6 +92,9 @@ watch(
   () => startPolling(),
 )
 
+onMounted(() => {
+  void recoverActive(props.serial)
+})
 onBeforeUnmount(stopPolling)
 
 async function startRecording(): Promise<void> {
@@ -86,7 +108,12 @@ async function startRecording(): Promise<void> {
     recording.value = created
     name.value = ''
   } catch (err) {
-    error.value = `开始录制失败：${errorMessage(err)}`
+    await recoverActive(props.serial)
+    if (recording.value) {
+      error.value = '该设备已有进行中的录制，已切换到当前录制'
+    } else {
+      error.value = `开始录制失败：${errorMessage(err)}`
+    }
   } finally {
     busy.value = null
   }
