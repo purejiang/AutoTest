@@ -481,3 +481,31 @@ def test_drag_with_recorded_path_prefers_native_drag(runner_env, monkeypatch):
     assert calls == [{"x1": 540, "y1": 710, "x2": 540, "y2": 710, "duration_ms": 400}]
     assert output["duration_ms"] == 400
     assert runner_env.driver.calls_of("swipe_path") == []
+
+
+def test_long_recorded_swipe_falls_back_to_simple_swipe(runner_env, monkeypatch):
+    """长轨迹在真机可能卡住；超过 12 点时退化为两点 swipe。"""
+    install_selectors(monkeypatch)
+    path = [{"x": 100 + i * 10, "y": 200 + i * 20, "dt_ms": i * 20} for i in range(20)]
+    script = make_script(
+        [
+            make_step(
+                "s1",
+                "swipe",
+                {
+                    "from": {"by": "point", "x": 442, "y": 2455},
+                    "to": {"by": "point", "x": 528, "y": 1421},
+                    "duration_ms": 258,
+                    "path": path,
+                },
+            )
+        ]
+    )
+    ctx = make_ctx(runner_env, script)
+    output = executors.execute_swipe(ctx, parsed_step(script))
+
+    assert runner_env.driver.calls_of("swipe_path") == []
+    swipe_call = runner_env.driver.calls_of("swipe")[-1]
+    assert swipe_call.kwargs["duration_ms"] == 258
+    assert output["duration_ms"] == 258
+    assert "path_points" not in output

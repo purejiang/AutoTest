@@ -277,11 +277,13 @@ def _execute_gesture(ctx: RunContext, step: Any, default_duration: int) -> dict[
         "duration_ms": duration,
     }
     if path:
-        # 录制轨迹回放：按真实轨迹（含弧度/变速）重演，和录制时的手势一致
         points = [(int(sample.x), int(sample.y)) for sample in path]
-        ctx.driver.swipe_path(points, duration_ms=duration)
-        output["path_points"] = len(points)
-        return output
+        # 短轨迹回放更贴近录制手势；长轨迹在部分真机上会让 u2 swipePoints 长时间不返回，
+        # 直接退化为两点 swipe，避免 8s 节点超时。drag 已单独优先走原生 drag。
+        if len(points) <= 12:
+            ctx.driver.swipe_path(points, duration_ms=duration)
+            output["path_points"] = len(points)
+            return output
     ctx.driver.swipe(start.x, start.y, end.x, end.y, duration_ms=duration)
     return output
 
