@@ -291,7 +291,25 @@ def execute_swipe(ctx: RunContext, step: Any) -> dict[str, Any]:
 
 
 def execute_drag(ctx: RunContext, step: Any) -> dict[str, Any]:
-    return _execute_gesture(ctx, step, 1000)
+    """拖拽优先走驱动原生 drag。
+
+    录制节点带 path 时，drag 的轨迹回放（u2 swipe_points）在真机上可能长时间不返回，
+    导致 8s 节点超时。drag 的语义是“按住拖到目标点”，用原生 drag 更稳定；曲线轨迹
+    仍由 swipe 节点负责回放。
+    """
+    start = _resolve(ctx, step.params.from_)
+    end = _resolve(ctx, step.params.to)
+    duration = int(getattr(step.params, "duration_ms", 1000) or 1000)
+    drag_fn = getattr(ctx.driver, "drag", None)
+    if callable(drag_fn):
+        drag_fn(start.x, start.y, end.x, end.y, duration_ms=duration)
+    else:
+        ctx.driver.swipe(start.x, start.y, end.x, end.y, duration_ms=duration)
+    return {
+        "from": _resolved_output(start),
+        "to": _resolved_output(end),
+        "duration_ms": duration,
+    }
 
 
 def execute_input(ctx: RunContext, step: Any) -> dict[str, Any]:

@@ -446,3 +446,38 @@ def test_execute_step_dispatches(runner_env, monkeypatch):
     output = executors.execute_step(ctx, parsed_step(script))
 
     assert output["x"] == 540
+
+
+def test_drag_with_recorded_path_prefers_native_drag(runner_env, monkeypatch):
+    """drag 不应走 swipe_points 轨迹回放：真机上可能卡到节点超时。"""
+    install_selectors(monkeypatch)
+    script = make_script(
+        [
+            make_step(
+                "s1",
+                "drag",
+                {
+                    "from": {"by": "point", "x": 10, "y": 20},
+                    "to": {"by": "point", "x": 30, "y": 40},
+                    "duration_ms": 400,
+                    "path": [
+                        {"x": 10, "y": 20, "dt_ms": 0},
+                        {"x": 20, "y": 30, "dt_ms": 100},
+                        {"x": 30, "y": 40, "dt_ms": 200},
+                    ],
+                },
+            )
+        ]
+    )
+    ctx = make_ctx(runner_env, script)
+    calls: list[dict] = []
+
+    def native_drag(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 1000) -> None:
+        calls.append({"x1": x1, "y1": y1, "x2": x2, "y2": y2, "duration_ms": duration_ms})
+
+    monkeypatch.setattr(ctx.driver, "drag", native_drag, raising=False)
+    output = executors.execute_drag(ctx, parsed_step(script))
+
+    assert calls == [{"x1": 540, "y1": 710, "x2": 540, "y2": 710, "duration_ms": 400}]
+    assert output["duration_ms"] == 400
+    assert runner_env.driver.calls_of("swipe_path") == []
