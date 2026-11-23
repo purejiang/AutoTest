@@ -287,6 +287,25 @@ def test_physical_drag_records_timed_path(temp_db, monkeypatch) -> None:
     ]
 
 
+def test_physical_circle_returns_to_start_still_drag(temp_db, monkeypatch) -> None:
+    """物理画圆：终点回到起点，但轨迹范围足够大，不能被误判成 long_press。"""
+    monkeypatch.setattr(rec, "_map_point", lambda serial, x, y, mapper=None, screen=None: (x, y))
+    recorder, captured = _physical_with_capture()
+    recorder._on_touch(FakeSample(100.0, 500, 1000, True))
+    recorder._on_touch(FakeSample(100.1, 600, 1000, True))
+    recorder._on_touch(FakeSample(100.2, 600, 1100, True))
+    recorder._on_touch(FakeSample(100.3, 500, 1100, True))
+    recorder._on_touch(FakeSample(100.4, 500, 1000, True))
+    recorder._on_touch(FakeSample(100.5, 500, 1000, False))
+
+    assert len(captured) == 1
+    kind, payload, _confidence = captured[0]
+    assert kind == "drag"
+    assert payload["from"] == {"x": 500, "y": 1000}
+    assert payload["to"] == {"x": 500, "y": 1000}
+    assert len(payload["path"]) >= 5
+
+
 @pytest.mark.parametrize(
     ("duration_s", "dx", "expected_kind"),
     [

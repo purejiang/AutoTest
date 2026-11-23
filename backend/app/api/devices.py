@@ -538,29 +538,37 @@ def apply_stream_touch(
     duration_ms = int(round((time.monotonic() - float(gesture["started_at"])) * 1000))
     start = _normalized_to_device(serial, gesture["sx"], gesture["sy"])
     end = _normalized_to_device(serial, nx, ny)
+    path_samples = gesture.get("path") if isinstance(gesture.get("path"), list) else []
+    # 先转设备坐标轨迹：画圆/画圈会回到起点，终点位移很小，但轨迹离起点的最大距离
+    # 可能很大；分类必须同时看这个“轨迹范围”。
+    device_path: list[dict[str, int]] = []
+    for sample in path_samples:
+        try:
+            elapsed_ms, sx, sy = sample
+            mapped = _normalized_to_device(serial, float(sx), float(sy))
+            if mapped is None:
+                continue
+            device_path.append({"x": int(mapped[0]), "y": int(mapped[1]), "dt_ms": int(elapsed_ms)})
+        except (TypeError, ValueError):
+            continue
     kind = "tap"
     if start and end:
         dist = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
-        if dist < _SWIPE_MIN_DIST_PX:
+        extent = max(
+            (
+                ((point["x"] - start[0]) ** 2 + (point["y"] - start[1]) ** 2) ** 0.5
+                for point in device_path
+            ),
+            default=0.0,
+        )
+        if max(dist, extent) < _SWIPE_MIN_DIST_PX:
             kind = "long_press" if duration_ms >= _TAP_MAX_MS else "tap"
         else:
             kind = "swipe" if duration_ms < _SWIPE_MAX_MS else "drag"
-    path_samples = gesture.get("path") if isinstance(gesture.get("path"), list) else []
     if kind in ("tap", "long_press") and start:
         event = {"x": start[0], "y": start[1], "duration_ms": duration_ms}
     elif start and end:
         event = {"x1": start[0], "y1": start[1], "x2": end[0], "y2": end[1], "duration_ms": duration_ms}
-        # 设备坐标轨迹（录制端归一化 → 设备像素），供回放按原轨迹重演
-        device_path: list[dict[str, int]] = []
-        for sample in path_samples:
-            try:
-                elapsed_ms, sx, sy = sample
-                mapped = _normalized_to_device(serial, float(sx), float(sy))
-                if mapped is None:
-                    continue
-                device_path.append({"x": int(mapped[0]), "y": int(mapped[1]), "dt_ms": int(elapsed_ms)})
-            except (TypeError, ValueError):
-                continue
         if len(device_path) >= 2:
             event["path"] = device_path
     else:

@@ -858,7 +858,16 @@ class PhysicalRecorder(_BaseRecorder):
         distance = int(
             round(math.hypot(gesture.last_x - gesture.start_x, gesture.last_y - gesture.start_y))
         )
-        kind = convert.gesture_from_samples(duration_ms, distance)
+        # 画圆/画圈会回到起点，终点位移很小；用轨迹离起点的最大距离判别是否真的滑了。
+        extent = max(
+            (
+                math.hypot(int(sample.get("x", gesture.start_x)) - gesture.start_x,
+                           int(sample.get("y", gesture.start_y)) - gesture.start_y)
+                for sample in gesture.samples
+            ),
+            default=float(distance),
+        )
+        kind = convert.gesture_from_samples(duration_ms, distance, extent)
         body: dict[str, Any] = {
             "x": None,
             "y": None,

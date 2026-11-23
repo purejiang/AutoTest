@@ -295,6 +295,8 @@ RecorderSession 需实现：`before_pointer() -> dict|None`、`handle(kind, payl
 
 v0.2.5 手势回放补充：
 - 录制事件 `swipe/drag` 可带 `path:[{x,y,dt_ms}]`（物理录制与镜像录制都采集；最多 240 点）。
+- 手势分类同时看「起点→终点直线位移」与「轨迹离起点的最大距离」：画圆/画圈即使回到起点，
+  只要轨迹范围超过 10px，就按 swipe/drag 保留 path，不再误判成点击/长按。
 - 回放优先级：当前设备有活跃镜像会话 → 通过 scrcpy control 通道按 `dt_ms` 逐点注入 DOWN/MOVE/UP，
   保留轨迹形状、变速和末端停顿；没有镜像会话 → 退化为两点 u2 swipe。
 - 不再使用 u2 `swipePoints` 回放录制轨迹（部分 Unity/游戏设备上会长时间不返回，卡到节点超时）；

@@ -48,6 +48,14 @@ def test_gesture_from_samples_boundaries(duration_ms: int, distance: int, expect
     assert convert.gesture_from_samples(duration_ms, distance) == expected
 
 
+def test_gesture_from_samples_uses_path_extent_for_circles() -> None:
+    """画圆回到起点：终点位移很小，但轨迹离起点很远，应判为 swipe/drag。"""
+    assert convert.gesture_from_samples(500, 2) == "long_press"
+    assert convert.gesture_from_samples(500, 2, 120) == "drag"
+    assert convert.gesture_from_samples(200, 2, 120) == "swipe"
+    assert convert.gesture_from_samples(500, 2, 8) == "long_press"
+
+
 # ---------------------------------------------------------------- 节点归属
 def test_attribute_button_center_hits_text_node() -> None:
     driver = FakeDriver("fake-convert")
@@ -294,3 +302,30 @@ def test_swipe_keeps_recorded_path_and_long_waits_are_not_truncated() -> None:
     ]
     assert steps[2]["delay_before_ms"] == 8000
     assert validate_script(script)["valid"] is True
+
+
+def test_circle_event_becomes_named_drag_with_path() -> None:
+    """画圈事件：type=drag、名称可读（画圈）、path 完整保留。"""
+    event = {
+        "seq": 1,
+        "kind": "drag",
+        "confidence": "high",
+        "created_at": "2026-01-01T00:00:00.000+00:00",
+        "payload": {
+            "from": {"x": 500, "y": 1000},
+            "to": {"x": 500, "y": 1000},
+            "duration_ms": 800,
+            "path": [
+                {"x": 500, "y": 1000, "dt_ms": 0},
+                {"x": 600, "y": 1000, "dt_ms": 100},
+                {"x": 600, "y": 1100, "dt_ms": 200},
+                {"x": 500, "y": 1100, "dt_ms": 300},
+                {"x": 500, "y": 1000, "dt_ms": 400},
+            ],
+        },
+    }
+    script, _warnings = convert.events_to_script([event], "画圈脚本")
+    step = script["steps"][0]
+    assert step["type"] == "drag"
+    assert step["name"] == "画圈"
+    assert len(step["params"]["path"]) == 5

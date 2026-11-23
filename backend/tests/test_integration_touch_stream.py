@@ -108,6 +108,23 @@ def test_touch_hold_without_move_is_long_press(client: TestClient, monkeypatch):
     assert up["kind"] == "long_press"
 
 
+def test_touch_circle_with_same_endpoint_is_drag(client: TestClient, monkeypatch):
+    """画圈回到起点：起点→终点距离≈0，但轨迹范围大，仍应被归为 drag 并保留 path。"""
+    monkeypatch.setattr(mirror_mod, "inject_touch", lambda *a, **k: True)
+    monkeypatch.setattr(
+        mirror_mod, "map_normalized_to_device", lambda serial, nx, ny: (int(nx * 1200), int(ny * 2670))
+    )
+    _touch(client, "down", 0.5, 0.5)
+    for nx, ny in ((0.6, 0.5), (0.6, 0.6), (0.5, 0.6), (0.4, 0.6), (0.4, 0.5), (0.5, 0.5)):
+        _touch(client, "move", nx, ny)
+    time.sleep(0.35)
+    up = _touch(client, "up", 0.5, 0.5)
+    assert up["kind"] == "drag"
+    assert up["event"]["x1"] == up["event"]["x2"] == 600
+    assert up["event"]["y1"] == up["event"]["y2"] == int(0.5 * 2670)
+    assert len(up["event"]["path"]) >= 6
+
+
 def test_touch_slow_drag_is_drag(client: TestClient, monkeypatch):
     monkeypatch.setattr(mirror_mod, "inject_touch", lambda *a, **k: True)
     monkeypatch.setattr(

@@ -13,6 +13,7 @@ touchmap 映射为设备像素）。两者都直接使用设备像素坐标。
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable
 from datetime import datetime
@@ -69,11 +70,20 @@ def classify(kind: str, payload: dict[str, Any] | None = None) -> str:
     return _KIND_TO_STEP.get(str(kind or "").strip().lower(), str(kind or ""))
 
 
-def gesture_from_samples(duration_ms: float, distance_px: float) -> str:
-    """按契约 §8 阈值把一次触摸手势归并为 tap / long_press / swipe / drag。"""
+def gesture_from_samples(
+    duration_ms: float,
+    distance_px: float,
+    path_extent_px: float | None = None,
+) -> str:
+    """按契约 §8 阈值把一次触摸手势归并为 tap / long_press / swipe / drag。
+
+    ``distance_px`` 只是起点→终点的直线位移；画圆/画圈会回到起点附近，
+    仅看它会把整段轨迹误判成点击。``path_extent_px`` 是轨迹上离起点最远的
+    距离，二者取最大值后再判断“有没有产生位移”。
+    """
     duration_ms = float(duration_ms or 0)
-    distance_px = float(distance_px or 0)
-    if distance_px < POINT_MAX_PX:
+    extent = max(float(distance_px or 0), float(path_extent_px or 0))
+    if extent < POINT_MAX_PX:
         return "tap" if duration_ms < TAP_MAX_MS else "long_press"
     if duration_ms < SWIPE_MAX_MS:
         return "swipe"
@@ -576,6 +586,16 @@ def _convert_event(
                     continue
             if len(samples) >= 2:
                 params["path"] = samples
+                try:
+                    sx, sy = int(start.get("x", 0)), int(start.get("y", 0))
+                    ex, ey = int(end.get("x", 0)), int(end.get("y", 0))
+                    extent = max(
+                        math.hypot(point["x"] - sx, point["y"] - sy) for point in samples
+                    )
+                    if math.hypot(ex - sx, ey - sy) < POINT_MAX_PX and extent >= POINT_MAX_PX:
+                        name = "画圈"
+                except (TypeError, ValueError):
+                    pass
     elif step_type == "input":
         text = payload.get("text")
         if text is None:
