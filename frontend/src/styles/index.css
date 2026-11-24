@@ -150,6 +150,8 @@ html.dark .el-table {
   --el-table-header-text-color: var(--muted);
 }
 
+html.dark .editor-validation-head,
+html.dark .node-editor-head,
 html.dark .validation-list,
 html.dark .settings-savebar,
 html.dark .tab-btn.active,
@@ -157,6 +159,10 @@ html.dark .pre-block,
 html.dark .event-list {
   background: var(--surface-2);
   color: var(--ink);
+}
+
+html.dark .validation-item:hover {
+  background: var(--surface-hover);
 }
 
 html.dark .condition-card {
@@ -1658,6 +1664,38 @@ pre,
   border-bottom: 1px solid var(--line);
 }
 
+.node-add-menu {
+  min-width: 214px;
+}
+
+.node-add-group {
+  padding: 7px 12px 3px;
+  color: var(--muted-2);
+  font-size: 10.5px;
+  font-weight: 650;
+  list-style: none;
+}
+
+.node-add-menu .el-dropdown-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.node-add-icon {
+  display: inline-flex;
+  width: 18px;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.node-add-code {
+  margin-left: auto;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
 .node-row {
   display: flex;
   align-items: center;
@@ -1728,15 +1766,21 @@ pre,
 }
 
 .node-tools {
-  display: none;
+  display: flex;
   align-items: center;
   gap: 1px;
   flex: none;
 }
 
-.node-row:hover .node-tools,
-.node-row.selected .node-tools {
-  display: flex;
+.node-tools .el-switch {
+  opacity: 0.58;
+  transition: opacity 0.12s ease;
+}
+
+.node-row:hover .node-tools .el-switch,
+.node-row.selected .node-tools .el-switch,
+.node-row:focus-within .node-tools .el-switch {
+  opacity: 1;
 }
 
 .node-tools .el-button {
@@ -1745,17 +1789,178 @@ pre,
   padding: 0;
 }
 
+.node-delete {
+  visibility: hidden;
+}
+
+.node-row:hover .node-delete,
+.node-row.selected .node-delete,
+.node-row:focus-within .node-delete {
+  visibility: visible;
+}
+
 .editor-main {
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-height: 0;
-  overflow: auto;
-  padding-right: 2px;
+  overflow: hidden;
 }
 
 .editor-card {
   flex: none;
+}
+
+/* 脚本名过长时不要让标题把页头操作挤到下一行 */
+.script-editor-page .page-title h1 {
+  max-width: min(52vw, 560px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 节点编辑区：卡片自身滚动，操作头吸顶，长表单不会把工具条顶走 */
+.editor-card.node-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.node-card > .card-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  overflow: auto;
+}
+
+.node-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.node-editor-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.node-editor-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.node-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.node-head-actions .el-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.node-head-divider {
+  width: 1px;
+  height: 14px;
+  margin: 0 3px;
+  background: var(--line);
+}
+
+.node-editor-form {
+  padding: 10px 12px 16px;
+}
+
+.editor-json-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-color: var(--amber);
+  background: var(--amber-soft);
+  color: var(--ink);
+  font-size: 11.5px;
+}
+
+.editor-json-warning .spacer {
+  flex: 1;
+}
+
+.editor-validation {
+  flex: none;
+  overflow: hidden;
+}
+
+.editor-validation-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+.editor-validation-head strong {
+  font-weight: 650;
+}
+
+.editor-validation-body {
+  max-height: 150px;
+  overflow: auto;
+  padding: 4px 10px 8px;
+}
+
+.editor-validation .validation-item {
+  padding: 3px 0;
+}
+
+.editor-validation .validation-item .code-text {
+  flex: none;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 脚本设置抽屉：表单下方的来源信息 */
+.script-meta {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 7px 10px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.script-meta > div {
+  display: contents;
+}
+
+.script-meta code {
+  color: var(--ink);
+  overflow-wrap: anywhere;
 }
 
 .form-grid {
@@ -1832,6 +2037,7 @@ pre,
   display: flex;
   align-items: baseline;
   gap: 6px;
+  flex-wrap: wrap;
   padding: 2px 0;
   font-size: 11.5px;
   cursor: pointer;
@@ -2525,7 +2731,7 @@ pre,
   }
   .editor-grid {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 240px minmax(0, 1fr);
+    grid-template-rows: 220px minmax(0, 1fr);
   }
   .top-build {
     display: none;

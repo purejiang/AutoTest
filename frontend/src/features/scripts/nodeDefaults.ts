@@ -39,6 +39,14 @@ export const NODE_TYPES: NodeType[] = [
   'screenshot',
 ]
 
+/** 「新增节点」菜单分组：12 类节点一次扫完，不必在长列表里找。 */
+export const NODE_TYPE_GROUPS: Array<{ label: string; types: NodeType[] }> = [
+  { label: '交互', types: ['click', 'long_click', 'swipe', 'drag', 'input', 'key'] },
+  { label: '流程', types: ['wait', 'app', 'sub_script'] },
+  { label: '校验与采集', types: ['assert', 'screenshot'] },
+  { label: '系统', types: ['shell'] },
+]
+
 function textTarget(): Record<string, unknown> {
   return { by: 'text', value: '', index: 0 }
 }

@@ -5,7 +5,7 @@ import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Check, MagicStick } from '@element-plus/icons-vue'
+import { Check, MagicStick, RefreshLeft } from '@element-plus/icons-vue'
 
 import type { ScriptValidation } from '@/types/api'
 import { useTheme } from '@/composables/useTheme'
@@ -22,6 +22,7 @@ const emit = defineEmits<{
   'update:text': [text: string]
   format: []
   apply: []
+  reset: []
   jumpPath: [path: string]
 }>()
 
@@ -123,6 +124,14 @@ onBeforeUnmount(() => {
         <StatusTag :tone="dirty ? 'amber' : 'green'">{{ dirty ? '未应用' : '与表单同步' }}</StatusTag>
       </span>
       <div class="row" style="gap: 4px">
+        <el-button
+          size="small"
+          :icon="RefreshLeft"
+          :disabled="!dirty"
+          title="放弃源码改动，恢复为表单内容"
+          @click="emit('reset')"
+          >重置</el-button
+        >
         <el-button size="small" :icon="MagicStick" @click="emit('format')">格式化</el-button>
         <el-button size="small" type="primary" plain :icon="Check" @click="emit('apply')"
           >应用到表单</el-button

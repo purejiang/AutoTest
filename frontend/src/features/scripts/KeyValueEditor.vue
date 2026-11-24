@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Delete, Plus } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 const props = withDefaults(
   defineProps<{
@@ -19,6 +20,10 @@ const emit = defineEmits<{ 'update:value': [value: Record<string, string>] }>()
 
 function renameKey(oldKey: string, nextKey: string): void {
   if (nextKey === oldKey) return
+  if (nextKey && nextKey in props.value) {
+    ElMessage.warning(`变量名「${nextKey}」已存在`)
+    return
+  }
   const next: Record<string, string> = {}
   for (const [key, itemValue] of Object.entries(props.value)) {
     next[key === oldKey ? nextKey : key] = itemValue

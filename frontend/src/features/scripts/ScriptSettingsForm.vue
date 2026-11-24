@@ -26,20 +26,32 @@ function toggleRetry(checked: boolean): void {
 
 <template>
   <el-form label-position="top" size="small" @submit.prevent>
+    <div class="section-label">基础信息</div>
     <div class="form-grid">
-      <el-form-item label="脚本名称">
+      <el-form-item label="脚本名称" class="full">
         <el-input :model-value="data.name" @update:model-value="patchData({ name: $event })" />
       </el-form-item>
-      <el-form-item label="备注 notes">
-        <el-input :model-value="data.notes" @update:model-value="patchData({ notes: $event })" />
+      <el-form-item label="备注 notes" class="full">
+        <el-input
+          :model-value="data.notes"
+          type="textarea"
+          :rows="2"
+          autosize
+          placeholder="脚本用途、前置条件等（可留空）"
+          @update:model-value="patchData({ notes: $event })"
+        />
       </el-form-item>
       <el-form-item label="脚本变量 variables" class="full">
         <KeyValueEditor
           :value="data.variables"
-          empty-hint="暂无脚本变量"
+          empty-hint="暂无脚本变量；步骤参数里支持变量插值"
           @update:value="patchData({ variables: $event })"
         />
       </el-form-item>
+    </div>
+
+    <div class="section-label">执行默认值</div>
+    <div class="form-grid">
       <el-form-item label="默认节点超时 (ms)">
         <el-input-number
           :model-value="settings.default_timeout_ms"

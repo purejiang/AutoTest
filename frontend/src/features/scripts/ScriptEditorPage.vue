@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, Document, Refresh, VideoPlay } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, Close, Document, Plus, Refresh, Setting, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useWindowSize } from '@vueuse/core'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 
 import { describeApiError, validationErrorsOf } from '@/api/client'
 import { useScript, useUpdateScript, useValidateScriptData } from '@/api/scripts'
 import type { NodeType, Script, ScriptData, ScriptValidation, StepNode } from '@/types/api'
-import { prettyJson, safeParseJson } from '@/lib/format'
+import { formatShortDateTime, prettyJson, safeParseJson, sourceMeta } from '@/lib/format'
 import PageHead from '@/components/PageHead.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
@@ -33,17 +33,25 @@ const jsonText = ref('')
 const jsonDirty = ref(false)
 const jsonError = ref<string | null>(null)
 const validation = ref<ScriptValidation | null>(null)
-const settingsOpen = ref<string[]>([])
+const settingsDrawerOpen = ref(false)
 const jsonOpen = ref(false)
+const validationOpen = ref(false)
 const loadedId = ref<string | null>(null)
+const nodeListRef = ref<{ clearSearch: () => void } | null>(null)
+const nodeScrollRef = ref<HTMLElement | null>(null)
 
 const { width: windowWidth } = useWindowSize()
 const jsonDrawerSize = computed(() => (windowWidth.value <= 900 ? '100%' : '560px'))
+const settingsDrawerSize = computed(() => (windowWidth.value <= 900 ? '100%' : '520px'))
 
-function loadFromScript(script: Script): void {
-  if (loadedId.value === script.id) return
-  loadedId.value = script.id
-  const data = cloneScriptData(normalizeScriptData(script))
+const hasUnsavedChanges = computed(() => dirty.value || jsonDirty.value)
+const script = computed<Script | null>(() => scriptQuery.data.value ?? null)
+const source = computed(() => sourceMeta(script.value?.source))
+
+function loadFromScript(nextScript: Script): void {
+  if (loadedId.value === nextScript.id) return
+  loadedId.value = nextScript.id
+  const data = cloneScriptData(normalizeScriptData(nextScript))
   draft.value = data
   selectedId.value = data.steps[0]?.id ?? null
   jsonText.value = prettyJson(data)
@@ -51,15 +59,23 @@ function loadFromScript(script: Script): void {
   jsonError.value = null
   dirty.value = false
   validation.value = null
+  validationOpen.value = false
+  settingsDrawerOpen.value = false
+  jsonOpen.value = false
 }
 
 watch(
   () => scriptQuery.data.value,
-  (script) => {
-    if (script) loadFromScript(script)
+  (nextScript) => {
+    if (nextScript) loadFromScript(nextScript)
   },
   { immediate: true },
 )
+
+watch(selectedId, async () => {
+  await nextTick()
+  nodeScrollRef.value?.scrollTo({ top: 0 })
+})
 
 const selectedIndex = computed(() => {
   if (!draft.value || !selectedId.value) return -1
@@ -73,10 +89,18 @@ const selectedNode = computed(() => {
 
 const stepCount = computed(() => draft.value?.steps.length ?? 0)
 
+const subtitle = computed(() => {
+  const parts = [`${stepCount.value} 个节点`]
+  const updated = script.value?.updated_at
+  if (updated) parts.push(`更新于 ${formatShortDateTime(updated)}`)
+  return parts.join(' · ')
+})
+
 function applyDraft(next: ScriptData): void {
   draft.value = next
   dirty.value = true
   validation.value = null
+  validationOpen.value = false
   if (!jsonDirty.value) {
     jsonText.value = prettyJson(next)
     jsonError.value = null
@@ -87,6 +111,13 @@ function patchNode(next: StepNode): void {
   const data = draft.value
   if (!data) return
   applyDraft({ ...data, steps: data.steps.map((step) => (step.id === next.id ? next : step)) })
+}
+
+function nextNodeId(existingIds: string[]): string {
+  const used = new Set(existingIds)
+  let index = existingIds.length + 1
+  while (used.has(`s${index}`)) index += 1
+  return `s${index}`
 }
 
 function addNode(type: NodeType): void {
@@ -100,7 +131,25 @@ function addNode(type: NodeType): void {
   const insertAt = selectedIndex.value >= 0 ? selectedIndex.value + 1 : steps.length
   steps.splice(insertAt, 0, step)
   applyDraft({ ...data, steps })
+  nodeListRef.value?.clearSearch()
   selectedId.value = step.id
+}
+
+function duplicateNode(nodeId: string): void {
+  const data = draft.value
+  if (!data) return
+  const index = data.steps.findIndex((step) => step.id === nodeId)
+  const sourceNode = data.steps[index]
+  if (!sourceNode) return
+  const copy = JSON.parse(JSON.stringify(sourceNode)) as StepNode
+  copy.id = nextNodeId(data.steps.map((step) => step.id))
+  copy.name = `${sourceNode.name || '节点'} 副本`
+  const steps = [...data.steps]
+  steps.splice(index + 1, 0, copy)
+  applyDraft({ ...data, steps })
+  nodeListRef.value?.clearSearch()
+  selectedId.value = copy.id
+  ElMessage.success('已复制节点（保存后生效）')
 }
 
 function moveNode(nodeId: string, direction: -1 | 1): void {
@@ -140,8 +189,13 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest('[contenteditable="true"]'))
 }
 
-/** 全局 Alt+↑/↓：移动当前选中节点；输入框/文本域/contenteditable 内不拦截。 */
-function handleAltMove(event: KeyboardEvent): void {
+/** ⌘/Ctrl+S 保存；Alt+↑/↓ 移动当前节点（输入框内不拦截 Alt 移动）。 */
+function handleGlobalKeydown(event: KeyboardEvent): void {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's') {
+    event.preventDefault()
+    if (hasUnsavedChanges.value && !updateMutation.isPending.value) void handleSave()
+    return
+  }
   if (!event.altKey || event.ctrlKey || event.metaKey) return
   if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
   if (isEditableTarget(event.target)) return
@@ -151,11 +205,23 @@ function handleAltMove(event: KeyboardEvent): void {
   moveNode(nodeId, event.key === 'ArrowUp' ? -1 : 1)
 }
 
-onMounted(() => window.addEventListener('keydown', handleAltMove))
-onBeforeUnmount(() => window.removeEventListener('keydown', handleAltMove))
+function handleBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!hasUnsavedChanges.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('beforeunload', handleBeforeUnload)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+})
 
 onBeforeRouteLeave(async () => {
-  if (!dirty.value && !jsonDirty.value) return true
+  if (!hasUnsavedChanges.value) return true
   try {
     await ElMessageBox.confirm('当前脚本有未保存的修改，离开后修改将丢失。', '未保存的修改', {
       type: 'warning',
@@ -190,6 +256,18 @@ function toggleNodeEnabled(nodeId: string, enabled: boolean): void {
     ...data,
     steps: data.steps.map((step) => (step.id === nodeId ? { ...step, enabled } : step)),
   })
+}
+
+function duplicateSelected(): void {
+  if (selectedNode.value) duplicateNode(selectedNode.value.id)
+}
+
+function deleteSelected(): void {
+  if (selectedNode.value) deleteNode(selectedNode.value.id)
+}
+
+function moveSelected(direction: -1 | 1): void {
+  if (selectedNode.value) moveNode(selectedNode.value.id, direction)
 }
 
 function parseJsonToData(text: string): { data?: ScriptData; error?: string } {
@@ -233,10 +311,21 @@ function handleApplyJson(): void {
   jsonText.value = prettyJson(parsed.data)
   jsonError.value = null
   validation.value = null
+  validationOpen.value = false
   if (!parsed.data.steps.some((step) => step.id === selectedId.value)) {
     selectedId.value = parsed.data.steps[0]?.id ?? null
   }
   ElMessage.success('已应用到表单')
+}
+
+function handleResetJson(): void {
+  if (!draft.value) return
+  jsonText.value = prettyJson(draft.value)
+  jsonDirty.value = false
+  jsonError.value = null
+  validation.value = null
+  validationOpen.value = false
+  ElMessage.success('已恢复为表单内容')
 }
 
 /** 保存/校验前取有效数据：JSON 有改动且能解析时以源码为准。 */
@@ -248,6 +337,7 @@ function effectiveData(): ScriptData | null {
   if (parsed.error || !parsed.data) {
     const errorText = parsed.error ?? 'JSON 无效'
     jsonError.value = errorText
+    jsonOpen.value = true
     ElMessage.error(`JSON 无效：${errorText}`)
     return null
   }
@@ -259,22 +349,48 @@ function effectiveData(): ScriptData | null {
   return parsed.data
 }
 
-async function handleSave(): Promise<void> {
+async function handleSave(): Promise<boolean> {
   const data = effectiveData()
-  if (!data) return
+  if (!data) return false
   if (data.steps.length === 0) {
     ElMessage.warning('脚本至少需要一个节点')
-    return
+    return false
   }
   try {
     await updateMutation.mutateAsync({ name: data.name, notes: data.notes, data })
     dirty.value = false
+    jsonDirty.value = false
     validation.value = null
+    validationOpen.value = false
     loadedId.value = id.value
     ElMessage.success('脚本已保存')
+    return true
   } catch (error) {
     const errors = validationErrorsOf(error)
-    if (errors.length > 0) validation.value = { valid: false, errors, warnings: [] }
+    if (errors.length > 0) {
+      validation.value = { valid: false, errors, warnings: [] }
+      validationOpen.value = true
+      // 节点内错误：关掉设置抽屉，让用户直接看到可点击定位的校验条
+      if (settingsDrawerOpen.value && errors.every((item) => item.path.startsWith('steps'))) {
+        settingsDrawerOpen.value = false
+      }
+      ElMessage.error(`保存失败：${errors[0]?.message ?? '校验未通过'}`)
+    }
+    return false
+  }
+}
+
+async function handleSaveFromSettings(): Promise<void> {
+  if (await handleSave()) settingsDrawerOpen.value = false
+}
+
+function applyValidation(result: ScriptValidation): void {
+  validation.value = result
+  validationOpen.value = !result.valid || result.warnings.length > 0
+  if (result.valid) {
+    ElMessage.success(result.warnings.length ? `校验通过，有 ${result.warnings.length} 条警告` : '校验通过')
+  } else {
+    ElMessage.error(`校验未通过：${result.errors.length} 个错误`)
   }
 }
 
@@ -282,23 +398,29 @@ async function handleValidate(): Promise<void> {
   const data = effectiveData()
   if (!data) return
   try {
-    const result = await validateMutation.mutateAsync({ data })
-    validation.value = result
-    if (result.valid) ElMessage.success('校验通过')
+    applyValidation(await validateMutation.mutateAsync({ data }))
   } catch (error) {
     const errors = validationErrorsOf(error)
-    if (errors.length > 0) validation.value = { valid: false, errors, warnings: [] }
+    if (errors.length > 0) applyValidation({ valid: false, errors, warnings: [] })
   }
 }
 
 function jumpToPath(path: string): void {
   const data = draft.value
   if (!data) return
-  const match = path.match(/steps[.[](\d+)/)
-  if (!match) return
-  const index = Number(match[1])
-  const node = data.steps[index]
-  if (node) selectedId.value = node.id
+  const match = path.match(/^steps(?:\[|\.)(\d+)/)
+  if (match) {
+    const node = data.steps[Number(match[1])]
+    if (node) {
+      nodeListRef.value?.clearSearch()
+      selectedId.value = node.id
+      return
+    }
+  }
+  if (path.startsWith('name') || path.startsWith('notes') || path.startsWith('settings') || path.startsWith('defaults') || path.startsWith('variables')) {
+    settingsDrawerOpen.value = true
+    ElMessage.info('该问题在「脚本设置」中')
+  }
 }
 </script>
 
@@ -320,28 +442,84 @@ function jumpToPath(path: string): void {
     <el-skeleton :rows="10" animated />
   </div>
 
-  <div v-else class="page-fill">
-    <PageHead
-      :title="draft.name || '脚本编辑器'"
-      :subtitle="`${stepCount} 个节点 · ${id}`"
-      @back="router.push('/scripts')"
-    >
+  <div v-else class="page-fill script-editor-page">
+    <PageHead :title="draft.name || '脚本编辑器'" :subtitle="subtitle" @back="router.push('/scripts')">
       <template #back><el-icon><ArrowLeft /></el-icon></template>
       <template #title-extra>
-        <StatusTag :tone="dirty ? 'amber' : 'green'">{{ dirty ? '未保存' : '已保存' }}</StatusTag>
+        <StatusTag v-if="script" :tone="source.tone">{{ source.label }}</StatusTag>
+        <StatusTag :tone="hasUnsavedChanges ? 'amber' : 'green'">
+          {{ hasUnsavedChanges ? '未保存' : '已保存' }}
+        </StatusTag>
       </template>
       <template #actions>
         <el-button :icon="Check" :loading="validateMutation.isPending.value" @click="handleValidate">校验</el-button>
-        <el-button type="primary" :icon="Refresh" :loading="updateMutation.isPending.value" :disabled="!dirty && !jsonDirty" @click="handleSave">
+        <el-button :icon="Setting" @click="settingsDrawerOpen = true">设置</el-button>
+        <el-button :icon="Document" @click="jsonOpen = true">JSON</el-button>
+        <el-button :icon="VideoPlay" :disabled="stepCount === 0" @click="goRun">运行</el-button>
+        <el-button
+          type="primary"
+          :icon="Refresh"
+          :loading="updateMutation.isPending.value"
+          :disabled="!hasUnsavedChanges"
+          title="保存（⌘S / Ctrl+S）"
+          @click="handleSave"
+        >
           保存
         </el-button>
-        <el-button :icon="VideoPlay" @click="goRun">运行</el-button>
-        <el-button :icon="Document" @click="jsonOpen = true">JSON</el-button>
       </template>
     </PageHead>
 
+    <div v-if="jsonDirty" class="card editor-json-warning">
+      <StatusTag tone="amber">源码未应用</StatusTag>
+      <span>JSON 源码有未应用的修改；保存时会以源码为准。</span>
+      <span class="spacer" />
+      <el-button size="small" @click="jsonOpen = true">查看</el-button>
+      <el-button size="small" type="primary" plain @click="handleApplyJson">应用到表单</el-button>
+      <el-button size="small" @click="handleResetJson">放弃源码改动</el-button>
+    </div>
+
+    <div v-if="validation && validationOpen" class="card editor-validation">
+      <div class="editor-validation-head">
+        <StatusTag :tone="!validation.valid ? 'red' : validation.warnings.length ? 'amber' : 'green'">
+          {{ !validation.valid ? '未通过' : validation.warnings.length ? '有警告' : '通过' }}
+        </StatusTag>
+        <strong>脚本校验</strong>
+        <span class="hint">错误 {{ validation.errors.length }} · 警告 {{ validation.warnings.length }}</span>
+        <span class="spacer" />
+        <el-button text :icon="Close" title="关闭校验结果" @click="validationOpen = false" />
+      </div>
+      <div class="editor-validation-body">
+        <div
+          v-for="(item, index) in validation.errors"
+          :key="`error-${index}-${item.path}`"
+          class="validation-item"
+          :title="item.path ? `点击定位：${item.path}` : undefined"
+          @click="jumpToPath(item.path)"
+        >
+          <StatusTag tone="red">错误</StatusTag>
+          <span class="code-text">{{ item.path || 'script' }}</span>
+          <span>{{ item.message }}</span>
+        </div>
+        <div
+          v-for="(item, index) in validation.warnings"
+          :key="`warning-${index}-${item.path}`"
+          class="validation-item"
+          :title="item.path ? `点击定位：${item.path}` : undefined"
+          @click="jumpToPath(item.path)"
+        >
+          <StatusTag tone="amber">警告</StatusTag>
+          <span class="code-text">{{ item.path || 'script' }}</span>
+          <span>{{ item.message }}</span>
+        </div>
+        <div v-if="validation.errors.length === 0 && validation.warnings.length === 0" class="hint">
+          没有发现错误
+        </div>
+      </div>
+    </div>
+
     <div class="editor-grid">
       <NodeList
+        ref="nodeListRef"
         :steps="draft.steps"
         :selected-id="selectedId"
         @select="selectedId = $event"
@@ -352,34 +530,54 @@ function jumpToPath(path: string): void {
       />
 
       <div class="editor-main">
-        <div class="card editor-card">
-          <el-collapse v-model="settingsOpen">
-            <el-collapse-item name="settings">
-              <template #title>
-                脚本设置
-                <span class="hint" style="margin-left: 6px">名称 / 变量 / 默认超时 / 失败策略 / logcat</span>
-              </template>
-              <ScriptSettingsForm :data="draft" @change="applyDraft" />
-            </el-collapse-item>
-          </el-collapse>
-        </div>
-
-        <div class="card editor-card">
-          <div class="card-body">
+        <div class="card editor-card node-card">
+          <div ref="nodeScrollRef" class="card-body">
             <NodeForm
               v-if="selectedNode"
               :node="selectedNode"
               :index="selectedIndex"
               :total="stepCount"
               :steps="draft.steps"
+              :default-on-fail="draft.settings.on_fail"
+              :default-retry="draft.defaults.retry ?? draft.settings.retry"
+              :default-timeout-ms="draft.settings.default_timeout_ms"
               @change="patchNode"
+              @duplicate="duplicateSelected"
+              @delete="deleteSelected"
+              @move="moveSelected"
             />
-            <el-empty v-else description="选择左侧节点进行编辑，或新增一个节点" :image-size="72" />
+            <el-empty v-else description="选择左侧节点进行编辑" :image-size="64">
+              <el-button size="small" type="primary" plain :icon="Plus" @click="addNode('click')">
+                新增点击节点
+              </el-button>
+            </el-empty>
           </div>
         </div>
       </div>
-
     </div>
+
+    <el-drawer v-model="settingsDrawerOpen" title="脚本设置" :size="settingsDrawerSize" append-to-body class="settings-drawer">
+      <ScriptSettingsForm :data="draft" @change="applyDraft" />
+      <div class="script-meta">
+        <div><span>脚本 ID</span><code class="code-text">{{ id }}</code></div>
+        <div><span>来源</span><StatusTag :tone="source.tone">{{ source.label }}</StatusTag></div>
+        <template v-if="script">
+          <div><span>创建</span><span>{{ formatShortDateTime(script.created_at) }}</span></div>
+          <div><span>更新</span><span>{{ formatShortDateTime(script.updated_at) }}</span></div>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="settingsDrawerOpen = false">关闭</el-button>
+        <el-button
+          type="primary"
+          :loading="updateMutation.isPending.value"
+          :disabled="!hasUnsavedChanges"
+          @click="handleSaveFromSettings"
+        >
+          保存脚本
+        </el-button>
+      </template>
+    </el-drawer>
 
     <el-drawer v-model="jsonOpen" title="JSON 源码" :size="jsonDrawerSize" append-to-body class="json-drawer">
       <div class="json-drawer-content">
@@ -391,6 +589,7 @@ function jumpToPath(path: string): void {
           @update:text="handleJsonChange"
           @format="handleFormat"
           @apply="handleApplyJson"
+          @reset="handleResetJson"
           @jump-path="jumpToPath"
         />
       </div>

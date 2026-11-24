@@ -4,8 +4,7 @@ import { useDebounceFn } from '@vueuse/core'
 import { computed, onBeforeUnmount, ref } from 'vue'
 
 import type { NodeType, StepNode } from '@/types/api'
-import { NODE_TYPE_META, NODE_TYPES } from './nodeDefaults'
-import StatusTag from '@/components/StatusTag.vue'
+import { NODE_TYPE_GROUPS, NODE_TYPE_META } from './nodeDefaults'
 
 type DropPosition = 'before' | 'after'
 
@@ -48,6 +47,13 @@ const visibleSteps = computed(() => {
 function addNode(type: string): void {
   emit('add', type as NodeType)
 }
+
+function clearSearch(): void {
+  search.value = ''
+  filteredSearch.value = ''
+}
+
+defineExpose({ clearSearch })
 
 // ---------------------------------------------------------------- 拖拽排序
 const draggingId = ref<string | null>(null)
@@ -130,10 +136,15 @@ onBeforeUnmount(() => {
       <el-dropdown trigger="click" @command="addNode">
         <el-button size="small" type="primary" :icon="Plus">新增节点</el-button>
         <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item v-for="type in NODE_TYPES" :key="type" :command="type">
-              {{ NODE_TYPE_META[type].icon }} {{ NODE_TYPE_META[type].label }}（{{ type }}）
-            </el-dropdown-item>
+          <el-dropdown-menu class="node-add-menu">
+            <template v-for="group in NODE_TYPE_GROUPS" :key="group.label">
+              <li class="node-add-group" role="presentation">{{ group.label }}</li>
+              <el-dropdown-item v-for="type in group.types" :key="type" :command="type">
+                <span class="node-add-icon">{{ NODE_TYPE_META[type].icon }}</span>
+                <span>{{ NODE_TYPE_META[type].label }}</span>
+                <span class="node-add-code">{{ type }}</span>
+              </el-dropdown-item>
+            </template>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -145,6 +156,7 @@ onBeforeUnmount(() => {
         size="small"
         placeholder="搜索节点"
         clearable
+        aria-label="搜索节点"
         :prefix-icon="Search"
         @update:model-value="onSearchInput"
       />
@@ -165,7 +177,12 @@ onBeforeUnmount(() => {
           },
         ]"
         :title="`${step.id} · ${step.type}${step.enabled ? '' : '（已禁用）'}`"
+        role="button"
+        tabindex="0"
+        :aria-current="step.id === selectedId ? 'true' : undefined"
         @click="onRowClick(step)"
+        @keydown.enter.prevent="onRowClick(step)"
+        @keydown.space.prevent="onRowClick(step)"
         @dragover.prevent="onDragOver(step, $event)"
         @dragleave="onDragLeave(step, $event)"
         @drop.prevent="onDrop(step)"
@@ -187,16 +204,18 @@ onBeforeUnmount(() => {
           <span class="node-name">{{ step.name || step.id }}</span>
           <span class="node-type">
             {{ NODE_TYPE_META[step.type].subtitle }}
-            <span v-if="step.when" style="color: var(--cyan)"> · when</span>
+            <span v-if="step.when" class="node-when"> · when</span>
           </span>
         </span>
-        <span class="node-tools" @click.stop>
+        <span class="node-tools" @click.stop @keydown.stop>
           <el-switch
             :model-value="step.enabled"
             size="small"
+            :aria-label="`${step.name || step.id}：启用/禁用`"
             @update:model-value="emit('toggleEnabled', step.id, Boolean($event))"
           />
           <el-button
+            class="node-delete"
             size="small"
             text
             type="danger"
@@ -213,12 +232,11 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="editor-col-head editor-col-foot">
+    <div class="editor-col-foot">
       <span class="hint">
         {{ steps.length }} 个节点 ·
-        {{ isFiltering ? '搜索过滤时拖拽已禁用' : '拖动手柄排序 · Alt+↑/↓ 也可移动' }}
+        {{ isFiltering ? '搜索过滤时拖拽已禁用' : '拖动排序 · Alt+↑/↓ 也可移动' }}
       </span>
-      <StatusTag tone="gray">when 默认关闭</StatusTag>
     </div>
   </div>
 </template>
@@ -226,6 +244,15 @@ onBeforeUnmount(() => {
 <style scoped>
 .node-row {
   position: relative;
+}
+
+.node-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.node-when {
+  color: var(--cyan);
 }
 
 .drag-handle {
@@ -272,7 +299,14 @@ onBeforeUnmount(() => {
 }
 
 .editor-col-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  min-height: 34px;
+  padding: 6px 9px;
   border-top: 1px solid var(--line);
-  border-bottom: 0;
+  background: var(--surface-2);
 }
 </style>
