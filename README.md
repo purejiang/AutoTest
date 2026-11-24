@@ -182,6 +182,7 @@ sh scripts/stop.sh                 # 停止 AutoTest（--port / --dev / --dry-ru
 4. **设置页**：通用（主题 / 语言）/ 工具链 / 执行（镜像画质 + 运行节奏 + 录制采集 + 安全）/ 存储 / 关于；主题支持浅色、深色、跟随系统。
 5. **报告**：运行结束一键生成 zip，含 JUnit XML 与失败截图。
 6. **logcat / 网络抓包**：控制台手动工具可开始/停止 logcat 采集并保存产物；网络抓包只记录域名（host/port/scheme），不含 Header 与正文，需要设备系统代理，当前同时只支持一台设备。
+7. **失败证据**：节点失败时自动保存 logcat 尾部、节点开始后的域名记录，并关联到该节点的 step_result；需要在设置里开启对应采集。
 
 ## 已验证（真机 Xiaomi 23127PN0CC / Android 16 / 1200×2670）
 
@@ -190,6 +191,7 @@ sh scripts/stop.sh                 # 停止 AutoTest（--port / --dev / --dry-ru
 | 设备发现·信息·层级·截图·shell·logcat·应用列表 | ✅ 实测 |
 | logcat 采集（手动开始/停止 + 运行自动 attach） | 🧪 单元测试 |
 | 网络域名抓包（只记 host/port，不含正文） | 🧪 单元测试 |
+| 失败节点证据快照（logcat 尾部 + 时间窗域名 + 截图） | 🧪 单元测试 |
 | 脚本执行（app/wait/click/assert/swipe/shell/screenshot/key） | ✅ 10 步 succeeded |
 | 失败重试 · 失败截图 · on_fail abort/continue/goto | ✅ 实测 |
 | 暂停 = 干预模式（暂停期手动控制 + `manual_intervention` 留痕）· 预检 · 热恢复 | ✅ 实测 |

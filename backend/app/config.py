@@ -60,6 +60,7 @@ DEFAULTS: dict[str, Any] = {
     "capture.logcat_auto_attach": False,
     "capture.logcat_max_lines": 5000,
     "capture.network.enabled": False,
+    "capture.network.auto_attach": False,
     "capture.network.port": 8080,
     "retention.days": 30,
     "retention.report_exclude_video": True,
@@ -113,6 +114,12 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "type": "bool",
         "title": "网络域名抓包",
         "desc": "只记录 host/port，不抓 Header 与正文；需要设备系统代理",
+    },
+    {
+        "key": "capture.network.auto_attach",
+        "type": "bool",
+        "title": "运行自动开启域名抓包",
+        "desc": "随脚本运行开始/停止；手动抓包不会被运行结束误停",
     },
     {
         "key": "capture.network.port",

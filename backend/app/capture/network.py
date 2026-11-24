@@ -25,6 +25,7 @@ import socket
 import socketserver
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
@@ -548,9 +549,15 @@ def _stop_proxy_if_idle() -> None:
 class NetworkCapture:
     """单个 serial 的域名采集会话：设备代理 + JSONL + artifact。"""
 
-    def __init__(self, serial: str, run_id: int | None = None) -> None:
+    def __init__(
+        self,
+        serial: str,
+        run_id: int | None = None,
+        started_by_run: bool = False,
+    ) -> None:
         self.serial = str(serial)
         self.run_id = run_id
+        self.started_by_run = bool(started_by_run and run_id is not None)
         self.started_at = now_iso()
         self._started_monotonic = time.monotonic()
         self.port: int | None = None
@@ -561,6 +568,7 @@ class NetworkCapture:
         self._record_count = 0
         self._domains: set[str] = set()
         self._recent: list[str] = []
+        self._recent_records: deque[dict[str, Any]] = deque(maxlen=500)
         self.original_proxy: str | None = None
         self._reverse_installed = False
         self._proxy_touched = False
@@ -724,6 +732,7 @@ class NetworkCapture:
                 return
             self._record_count += 1
             self._domains.add(host)
+            self._recent_records.append(dict(record))
             if host in self._recent:
                 self._recent.remove(host)
             self._recent.append(host)
@@ -750,7 +759,18 @@ class NetworkCapture:
             "record_count": record_count,
             "recent_domains": recent,
             "started_at": self.started_at,
+            "run_id": self.run_id,
+            "started_by_run": self.started_by_run,
         }
+
+    def recent_records(self, limit: int = 200, since_iso: str | None = None) -> list[dict[str, Any]]:
+        """返回最近的域名记录（时间正序）；可按 ISO 时间戳过滤节点时间窗。"""
+        count = max(1, int(limit or 200))
+        with self._lock:
+            records = list(self._recent_records)
+        if since_iso:
+            records = [record for record in records if str(record.get("ts") or "") >= str(since_iso)]
+        return records[-count:]
 
     def _size(self) -> int:
         try:
@@ -765,7 +785,7 @@ class NetworkCapture:
             with session_scope() as db:
                 db.add(
                     Artifact(
-                        run_id=None,
+                        run_id=self.run_id,
                         step_result_id=None,
                         kind="network",
                         name=f"network {self.serial}",
@@ -789,7 +809,11 @@ class NetworkCapture:
 
 
 # ================================================================ 模块级入口
-def start(serial: str, run_id: int | None = None) -> dict[str, Any]:
+def start(
+    serial: str,
+    run_id: int | None = None,
+    started_by_run: bool = False,
+) -> dict[str, Any]:
     _ensure_available()
     serial = str(serial)
     with _LOCK:
@@ -806,7 +830,7 @@ def start(serial: str, run_id: int | None = None) -> dict[str, Any]:
                 "网络域名抓包同时只支持一台设备",
                 {"serial": serial, "active_serial": other.serial},
             )
-        capture = NetworkCapture(serial, run_id=run_id).start()
+        capture = NetworkCapture(serial, run_id=run_id, started_by_run=started_by_run).start()
         _ACTIVE[serial] = capture
         _LAST.pop(serial, None)
         return capture.to_dict()
@@ -831,6 +855,80 @@ def _stop_capture(serial: str) -> dict[str, Any]:
 def stop(serial: str) -> dict[str, Any]:
     _ensure_available()
     return _stop_capture(str(serial))
+
+
+def attach_if_needed(run_id: int) -> NetworkCapture | None:
+    """运行期自动开启域名抓包；只复用本 run 的采集，不抢占手动/其他 run 的采集。"""
+    if not bool(config.get("capture.network.enabled")):
+        return None
+    if not bool(config.get("capture.network.auto_attach")):
+        return None
+    try:
+        run_key = int(run_id)
+    except (TypeError, ValueError):
+        return None
+    try:
+        from ..models import Run
+
+        with session_scope() as db:
+            run = db.get(Run, run_key)
+            serial = str(run.device_serial or "") if run is not None else ""
+    except Exception:  # pragma: no cover - DB 异常
+        return None
+    if not serial:
+        return None
+    with _LOCK:
+        existing = _ACTIVE.get(serial)
+        if existing is not None and existing.active:
+            if existing.started_by_run and existing.run_id == run_key:
+                return existing
+            return None
+        other = next(
+            (capture for key, capture in _ACTIVE.items() if key != serial and capture.active),
+            None,
+        )
+        if other is not None:
+            return None
+        capture = NetworkCapture(serial, run_id=run_key, started_by_run=True).start()
+        _ACTIVE[serial] = capture
+        _LAST.pop(serial, None)
+        return capture
+
+
+def stop_run_capture(run_id: int, serial: str | None = None) -> dict[str, Any] | None:
+    """只停止本 run 自动启动的网络抓包；手动采集不误停。"""
+    try:
+        run_key = int(run_id)
+    except (TypeError, ValueError):
+        return None
+    with _LOCK:
+        target: NetworkCapture | None = None
+        if serial is not None:
+            candidate = _ACTIVE.get(str(serial))
+            if candidate is not None and candidate.started_by_run and candidate.run_id == run_key:
+                target = candidate
+        else:
+            for candidate in _ACTIVE.values():
+                if candidate.started_by_run and candidate.run_id == run_key:
+                    target = candidate
+                    break
+        if target is None:
+            return None
+        target_serial = target.serial
+    return _stop_capture(target_serial)
+
+
+def recent_records(
+    serial: str,
+    limit: int = 200,
+    since_iso: str | None = None,
+) -> list[dict[str, Any]]:
+    """当前活跃采集的最近域名记录；没有活跃采集时返回空列表。"""
+    with _LOCK:
+        capture = _ACTIVE.get(str(serial))
+    if capture is None or not capture.active:
+        return []
+    return capture.recent_records(limit=limit, since_iso=since_iso)
 
 
 def status(serial: str) -> dict[str, Any]:
@@ -872,4 +970,14 @@ def shutdown_all() -> None:
         _stop_proxy()
 
 
-__all__ = ["NetworkCapture", "available", "shutdown_all", "start", "status", "stop"]
+__all__ = [
+    "NetworkCapture",
+    "attach_if_needed",
+    "available",
+    "recent_records",
+    "shutdown_all",
+    "start",
+    "status",
+    "stop",
+    "stop_run_capture",
+]

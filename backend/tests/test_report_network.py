@@ -23,7 +23,7 @@ from app.android.driver import CommandResult
 from app.capture import network
 from app.db import session_scope
 from app.errors import ApiError
-from app.models import Artifact
+from app.models import Artifact, Run
 
 core_client = support.core_client
 
@@ -226,14 +226,71 @@ def test_second_device_conflicts(net_env, monkeypatch) -> None:
         network.stop("fake-first")
 
 
-def test_artifact_run_id_stays_none(net_env, monkeypatch) -> None:
+def test_artifact_run_id_links_when_provided(net_env, monkeypatch) -> None:
     _enable()
     monkeypatch.setattr(network, "_adb_module", lambda: _StubAdb())
+    with session_scope() as db:
+        db.add(Run(id=123, script_name="network", device_serial="fake-run", status="running"))
     network.start("fake-run", run_id=123)
     network.stop("fake-run")
     with session_scope() as db:
         artifact = db.scalars(select(Artifact).where(Artifact.kind == "network")).one()
-    assert artifact.run_id is None
+    assert artifact.run_id == 123
+
+
+def test_attach_if_needed_links_run(net_env, monkeypatch) -> None:
+    _enable()
+    config.set_db_overrides(
+        {
+            "runtime.data_dir": str(config.data_dir()),
+            "capture.network.enabled": True,
+            "capture.network.auto_attach": True,
+            "capture.network.port": 0,
+        }
+    )
+    monkeypatch.setattr(network, "_adb_module", lambda: _StubAdb())
+    with session_scope() as db:
+        db.add(Run(id=7, script_name="network", device_serial="fake-run", status="running"))
+
+    capture = network.attach_if_needed(7)
+    assert capture is not None
+    assert capture.run_id == 7
+    assert capture.started_by_run is True
+    assert network.recent_records("fake-run") == []
+
+    stopped = network.stop_run_capture(7, "fake-run")
+    assert stopped is not None
+    assert stopped["active"] is False
+    with session_scope() as db:
+        artifact = db.scalars(select(Artifact).where(Artifact.kind == "network")).one()
+    assert artifact.run_id == 7
+
+    # 手动采集不属于任何 run，运行停止逻辑不会碰它
+    manual = network.start("manual-device")
+    assert manual["active"] is True
+    assert network.stop_run_capture(7, "manual-device") is None
+    assert network.status("manual-device")["active"] is True
+    network.stop("manual-device")
+
+
+def test_attach_if_needed_skips_manual_capture(net_env, monkeypatch) -> None:
+    _enable()
+    config.set_db_overrides(
+        {
+            "runtime.data_dir": str(config.data_dir()),
+            "capture.network.enabled": True,
+            "capture.network.auto_attach": True,
+            "capture.network.port": 0,
+        }
+    )
+    monkeypatch.setattr(network, "_adb_module", lambda: _StubAdb())
+    with session_scope() as db:
+        db.add(Run(id=8, script_name="network", device_serial="fake-run", status="running"))
+    network.start("fake-run")
+    assert network.attach_if_needed(8) is None
+    assert network.stop_run_capture(8, "fake-run") is None
+    assert network.status("fake-run")["active"] is True
+    network.stop("fake-run")
 
 
 # ---------------------------------------------------------------- 设备代理保存 / 恢复

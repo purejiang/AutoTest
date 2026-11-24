@@ -458,12 +458,18 @@ def capture_status(serial: str) -> dict[str, Any]:
     }
 
 
-def recent(serial: str, lines: int = 200) -> list[str]:
-    """最近 logcat 行：活跃采集取环形缓冲，否则 `logcat -d -t N` 兜底。"""
+def recent(serial: str, lines: int = 200, *, active_only: bool = False) -> list[str]:
+    """最近 logcat 行：活跃采集取环形缓冲，否则 `logcat -d -t N` 兜底。
+
+    ``active_only=True`` 时没有活跃采集直接返回空，避免失败快照在节点失败路径上
+    额外等待 adb dump；用于运行期失败证据，采集必须提前开启。
+    """
     count = max(1, int(lines or 200))
     capture = active_capture(serial)
     if capture is not None:
         return capture.tail(count)
+    if active_only:
+        return []
     dumped = _adb_logcat_dump(serial, count)
     if dumped is not None:
         return dumped

@@ -107,6 +107,10 @@ artifacts/recordings/recording_events/reports/settings，索引见 models.py。
 - step_results.status：`passed|failed|skipped|error`
 - recording.status：`recording|paused|stopped`
 - artifact.kind：`screenshot|video|logcat|hierarchy|report|screenrecord|network`
+- 失败节点会额外写两类证据 artifact（`step_result_id` 关联）：
+  - `kind=logcat`：节点失败时的活跃 logcat 采集尾部（未开启采集则跳过，不额外等 adb dump）；
+  - `kind=network`：节点开始时间窗内的域名记录（需网络抓包处于活跃状态）。
+  这是失败现场快照，不做全量节点归类和逐请求归因。
 
 ### 2.1 v0.2 数据库与来源字段（不兼容 v0.1.x）
 
@@ -215,7 +219,8 @@ client→server：`{"kind":"ping"}`→`{"kind":"pong"}`；`{"kind":"ack","last_s
 GET /api/devices；POST /api/devices/connect {address}；POST /api/devices/{serial}/disconnect；
 GET /api/devices/{serial}/info|hierarchy?raw=|screenshot(png)|apps?keyword=&type=(all|system|third_party，`third` 为兼容别名)|logcat?lines=200；
 POST /api/devices/{serial}/logcat/start|stop；GET /api/devices/{serial}/logcat/status
-（start 可带 run_id/max_lines/package；P0 package 仅记录不生效）；
+（start 可带 run_id/max_lines/package；P0 package 仅记录不生效）。运行期自动采集由
+`capture.logcat_auto_attach` + 脚本 settings.logcat 控制，artifact 关联 run。
   hierarchy 响应：`{"node": HierarchyNode, "raw": str|null}`（raw=true 时尽量给原始 XML，取不到为 null 并带 `"raw_unavailable"`）；
 POST /api/devices/{serial}/tap|long_press|swipe|key|text|app|shell；
 POST /api/devices/{serial}/screenrecord/start {name,bit_rate,time_limit_s} / stop；
@@ -224,7 +229,8 @@ GET /api/devices/{serial}/screenrecord/status → {active,pending,name,time_limi
 POST /api/devices/{serial}/network/start|stop；GET /api/devices/{serial}/network/status
 （未启用→UNSUPPORTED）。域名模式：本机 stdlib 代理 + 设备 http_proxy + adb reverse，
 只记录 host/port/scheme，不安装 CA、不抓 Header/正文；同一时间只允许一台设备抓包；
-停止时恢复设备原 http_proxy。
+停止时恢复设备原 http_proxy。设置 `capture.network.auto_attach=true` 时随 run 自动启停，
+artifact 关联 `run_id`；手动抓包不会被运行结束误停。
 POST /api/devices/{serial}/mirror/start|stop；GET /api/devices/{serial}/mirror/status。
 > 录制挂钩：serial 有活跃录制时注入动作必须经 `app.recorder.hooks` 留痕（on_before_pointer→注入→on_action）。
 

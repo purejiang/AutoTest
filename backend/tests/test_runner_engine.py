@@ -7,9 +7,15 @@ shell、sub_script 嵌套与深度、三环保护、pause/resume、stop、debug 
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
+from sqlalchemy import select
+
 from app.android.driver import CommandResult
+from app.capture import logcat, network
+from app.db import session_scope
+from app.models import Artifact
 from app.runner import controls, engine, executors
 from app.runner.context import RunSnapshot
 from tests.test_runner_kits import (
@@ -316,6 +322,63 @@ def test_assert_failure_is_not_retried(runner_env, monkeypatch):
     assert types.count("step_retry") == 0
     assert types.count("assert_result") == 1
     assert types.count("step_started") == 1
+
+
+def test_runner_hooks_network_capture_lifecycle(runner_env, monkeypatch):
+    install_selectors(monkeypatch)
+    calls: list[tuple] = []
+    monkeypatch.setattr(network, "attach_if_needed", lambda run_id: calls.append(("attach", run_id)))
+    monkeypatch.setattr(
+        network,
+        "stop_run_capture",
+        lambda run_id, serial=None: calls.append(("stop", run_id, serial)),
+    )
+    run_id, run = run_script(make_script([click_step("s1")]))
+    assert run["status"] == "succeeded"
+    assert calls[0] == ("attach", run_id)
+    assert calls[-1] == ("stop", run_id, "fake-test")
+
+
+# ---------------------------------------------------------------- failure evidence
+def test_failed_step_saves_logcat_and_network_evidence(runner_env, monkeypatch):
+    stub = install_selectors(monkeypatch)
+    stub.check_result = False
+    monkeypatch.setattr(logcat, "recent", lambda serial, lines, active_only=False: ["failure-line"])
+    monkeypatch.setattr(
+        network,
+        "recent_records",
+        lambda serial, limit=200, since_iso=None: [
+            {"ts": "2026-01-01T00:00:00.000+00:00", "host": "api.example.com", "port": 443, "scheme": "https"}
+        ],
+    )
+    script = make_script(
+        [
+            make_step(
+                "a1",
+                "assert",
+                {"kind": "exists", "target": {"by": "text", "value": "登录"}},
+            )
+        ]
+    )
+    run_id, run = run_script(script)
+    assert run["status"] == "failed"
+    step = get_steps(run_id)[0]
+
+    with session_scope() as db:
+        artifacts = list(
+            db.scalars(
+                select(Artifact).where(
+                    Artifact.run_id == run_id,
+                    Artifact.kind.in_(["logcat", "network"]),
+                )
+            )
+        )
+    assert {artifact.kind for artifact in artifacts} == {"logcat", "network"}
+    assert all(artifact.step_result_id == step["id"] for artifact in artifacts)
+    logcat_artifact = next(artifact for artifact in artifacts if artifact.kind == "logcat")
+    network_artifact = next(artifact for artifact in artifacts if artifact.kind == "network")
+    assert "failure-line" in Path(logcat_artifact.path).read_text(encoding="utf-8")
+    assert "api.example.com" in Path(network_artifact.path).read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------- shell

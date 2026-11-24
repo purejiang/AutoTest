@@ -14,17 +14,19 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
-from ..capture import logcat
+from .. import config
+from ..capture import logcat, network
 from ..db import session_scope
 from ..errors import ApiError
 from ..events import RunEventBus
 from ..logs import logger
-from ..models import Run, StepResult, now_iso
+from ..models import Artifact, Run, StepResult, now_iso
 from . import conditions, controls, executors
 from .context import (
     BudgetExceeded,
@@ -177,6 +179,7 @@ def _run(run_id: int) -> None:
     # 运行生命周期挂接：按 capture.logcat_auto_attach + 脚本 settings.logcat 自动采集。
     # 只 attach 本 run 拥有的会话；停止时也只停本 run 启动的采集（手动采集不误停）。
     _attach_run_logcat(run_id, snapshot)
+    _attach_run_network(run_id)
     summary: dict[str, Any] = {}
     status = "failed"
     error: dict[str, Any] | None = None
@@ -198,7 +201,8 @@ def _run(run_id: int) -> None:
         summary = getattr(exc, "summary", None) or summary
         error = {"code": "INTERNAL", "message": f"{type(exc).__name__}: {exc}"}
     finally:
-        # 先收尾 logcat（写 artifact + artifacts 行），再落运行终态；异常/stop 也走这里。
+        # 先收尾采集（写 artifact + artifacts 行），再落运行终态；异常/stop 也走这里。
+        _stop_run_network(run_id, serial)
         _stop_run_logcat(run_id, serial)
         ended_at = now_iso()
         duration_ms = ctx.active_elapsed_ms()
@@ -256,6 +260,35 @@ def _stop_run_logcat(run_id: int, serial: str) -> None:
             logger.info("run %s saved logcat artifact: %s", run_id, path)
     except Exception:
         logger.exception("run %s failed to stop logcat capture", run_id)
+
+
+def _attach_run_network(run_id: int) -> None:
+    """按 capture.network.auto_attach 自动开启域名抓包；失败绝不能拖垮运行。"""
+    try:
+        capture = network.attach_if_needed(run_id)
+        if capture is not None:
+            logger.info(
+                "run %s attached network capture (serial=%s port=%s)",
+                run_id,
+                capture.serial,
+                capture.port,
+            )
+    except Exception:
+        logger.exception("run %s failed to attach network capture", run_id)
+
+
+def _stop_run_network(run_id: int, serial: str) -> None:
+    """只停止本 run 自动启动的域名抓包，不误停手动采集。"""
+    try:
+        result = network.stop_run_capture(run_id, serial)
+        if result is not None:
+            logger.info(
+                "run %s saved network artifact: %s",
+                run_id,
+                result.get("path"),
+            )
+    except Exception:
+        logger.exception("run %s failed to stop network capture", run_id)
 
 
 def _finish_early_failure(
@@ -894,6 +927,9 @@ def _record_attempt(
         except Exception:
             logger.exception("failed to save failure screenshot run=%s step=%s", ctx.run_id, step.id)
 
+    if status == "failed":
+        _save_failure_evidence(ctx, step, step_result_id, started_iso)
+
     payload: dict[str, Any] = {
         "step_id": step.id,
         "status": status,
@@ -908,6 +944,82 @@ def _record_attempt(
         payload["when"] = when_info
     _safe_emit(ctx.run_id, "step_finished", payload)
     return step_result_id
+
+
+def _save_failure_evidence(
+    ctx: RunContext,
+    step: Any,
+    step_result_id: int,
+    started_iso: str,
+) -> None:
+    """失败现场快照：保存当前 logcat 尾部与节点时间窗内的域名清单。
+
+    这是失败节点的证据，不做全量节点归类；截图仍由 save_screenshot 单独落库。
+    任何采集/落盘失败都不能影响运行结束。
+    """
+    try:
+        with session_scope() as session:
+            run = session.get(Run, int(ctx.run_id))
+            serial = str(run.device_serial or "") if run is not None else ""
+        if not serial:
+            return
+        run_dir = config.artifacts_dir() / f"run_{ctx.run_id}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        stamp = int(time.time() * 1000)
+        artifacts: list[Artifact] = []
+
+        lines = logcat.recent(serial, 300, active_only=True)
+        if lines:
+            path = run_dir / f"{stamp}_step{step_result_id}_fail.log"
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            artifacts.append(
+                Artifact(
+                    run_id=ctx.run_id,
+                    step_result_id=step_result_id or None,
+                    kind="logcat",
+                    name=f"{step.id}-fail-logcat",
+                    path=str(path),
+                    size=path.stat().st_size,
+                    meta={
+                        "reason": "step_failure",
+                        "step_id": step.id,
+                        "lines": len(lines),
+                        "window": "tail",
+                    },
+                    created_at=now_iso(),
+                )
+            )
+
+        records = network.recent_records(serial, limit=200, since_iso=started_iso)
+        if records:
+            path = run_dir / f"{stamp}_step{step_result_id}_fail_domains.jsonl"
+            path.write_text(
+                "\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n",
+                encoding="utf-8",
+            )
+            artifacts.append(
+                Artifact(
+                    run_id=ctx.run_id,
+                    step_result_id=step_result_id or None,
+                    kind="network",
+                    name=f"{step.id}-fail-domains",
+                    path=str(path),
+                    size=path.stat().st_size,
+                    meta={
+                        "reason": "step_failure",
+                        "step_id": step.id,
+                        "records": len(records),
+                        "window_since": started_iso,
+                    },
+                    created_at=now_iso(),
+                )
+            )
+
+        if artifacts:
+            with session_scope() as session:
+                session.add_all(artifacts)
+    except Exception:
+        logger.exception("failed to save failure evidence run=%s step=%s", ctx.run_id, step.id)
 
 
 def _record_skipped(
