@@ -19,6 +19,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
+from ..capture import logcat
 from ..db import session_scope
 from ..errors import ApiError
 from ..events import RunEventBus
@@ -173,6 +174,9 @@ def _run(run_id: int) -> None:
     )
     _safe_emit(run_id, "run_state", {"status": "running", "step_index": 0})
 
+    # 运行生命周期挂接：按 capture.logcat_auto_attach + 脚本 settings.logcat 自动采集。
+    # 只 attach 本 run 拥有的会话；停止时也只停本 run 启动的采集（手动采集不误停）。
+    _attach_run_logcat(run_id, snapshot)
     summary: dict[str, Any] = {}
     status = "failed"
     error: dict[str, Any] | None = None
@@ -194,6 +198,8 @@ def _run(run_id: int) -> None:
         summary = getattr(exc, "summary", None) or summary
         error = {"code": "INTERNAL", "message": f"{type(exc).__name__}: {exc}"}
     finally:
+        # 先收尾 logcat（写 artifact + artifacts 行），再落运行终态；异常/stop 也走这里。
+        _stop_run_logcat(run_id, serial)
         ended_at = now_iso()
         duration_ms = ctx.active_elapsed_ms()
         final_summary = {
@@ -230,6 +236,26 @@ def _run(run_id: int) -> None:
         except Exception:  # 释放占用失败不能影响最终状态
             logger.exception("run %s failed to release device %s", run_id, serial)
         controls.cleanup(run_id)
+
+
+def _attach_run_logcat(run_id: int, snapshot: RunSnapshot) -> None:
+    """自动 attach logcat；采集失败绝不能拖垮运行。"""
+    try:
+        capture = logcat.attach_if_needed(run_id, snapshot.settings)
+        if capture is not None:
+            logger.info("run %s attached logcat capture (serial=%s)", run_id, capture.serial)
+    except Exception:
+        logger.exception("run %s failed to attach logcat capture", run_id)
+
+
+def _stop_run_logcat(run_id: int, serial: str) -> None:
+    """停止本 run 启动的 logcat 并保存 artifact；幂等且不误停手动采集。"""
+    try:
+        path = logcat.stop_run_capture(run_id, serial)
+        if path is not None:
+            logger.info("run %s saved logcat artifact: %s", run_id, path)
+    except Exception:
+        logger.exception("run %s failed to stop logcat capture", run_id)
 
 
 def _finish_early_failure(

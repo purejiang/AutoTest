@@ -8,7 +8,12 @@
 - `recent(serial, lines)`：有活跃采集时取环形缓冲尾部，否则 `logcat -d -t N` 兜底
   （优先 `app.android.adb.run_adb`，不可用时退化为 driver.shell）；
 - `attach_if_needed(run_id, script_settings)`：按 `capture.logcat_auto_attach` 与脚本
-  `settings.logcat` 决定运行期自动采集。
+  `settings.logcat` 决定运行期自动采集；只复用本 run 启动的采集，不抢占用户手动采集；
+- `stop_run_capture(run_id, serial)`：运行结束只停止本 run 启动的采集（幂等）；
+- `capture_status(serial)`：手动采集 API 的 active/lines/started_at/path/size 状态。
+
+`package` 参数当前只记录、不参与 adb 过滤（P0 限制）：`adb logcat` 没有按包名
+过滤的原生参数，需要先解析 pid 再 `--pid`，留待后续实现。
 """
 
 from __future__ import annotations
@@ -29,6 +34,8 @@ from ..models import Artifact, now_iso
 
 _SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _ACTIVE: dict[str, LogcatCapture] = {}
+# serial -> 最近一次 stop 的摘要（status 在无活跃采集时仍可返回保存路径）
+_LAST: dict[str, dict[str, Any]] = {}
 _LOCK = threading.RLock()
 _LINE_LIMIT = 5000
 
@@ -106,18 +113,63 @@ class LogcatCapture:
         serial: str,
         run_id: int | None = None,
         max_lines: int | None = None,
+        package: str | None = None,
+        started_by_run: bool = False,
     ) -> None:
         self.serial = str(serial)
         self.run_id = run_id
+        # 只有运行引擎自动 attach 的采集才归该 run；手动 API 启动的采集即使带 run_id 也不归引擎管
+        self.started_by_run = bool(started_by_run and run_id is not None)
+        self.package = str(package).strip() or None
         self.max_lines = int(max_lines or config.get("capture.logcat_max_lines") or _LINE_LIMIT)
         self._lines: deque[str] = deque(maxlen=self.max_lines)
         self._lock = threading.Lock()
+        self._stop_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._proc: Any = None
         self._path: Path | None = None
+        self._stopped = False
+        self._stopped_at: str | None = None
         self._started_at = now_iso()
         self._started_monotonic = time.monotonic()
+
+    # ---- 状态查询
+    @property
+    def lines(self) -> int:
+        with self._lock:
+            return len(self._lines)
+
+    @property
+    def started_at(self) -> str:
+        return self._started_at
+
+    @property
+    def path(self) -> Path | None:
+        return self._path
+
+    def state(self) -> dict[str, Any]:
+        """采集状态摘要（API status / stop 响应用）。"""
+        path = self._path
+        size = 0
+        if path is not None:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
+        return {
+            "serial": self.serial,
+            "active": self.running,
+            "lines": self.lines,
+            "started_at": self._started_at,
+            "path": str(path) if path is not None else None,
+            "size": size,
+            "max_lines": self.max_lines,
+            "run_id": self.run_id,
+            "started_by_run": self.started_by_run,
+            "package": self.package,
+            "stopped_at": self._stopped_at,
+        }
 
     # ---- 生命周期
     @property
@@ -169,38 +221,48 @@ class LogcatCapture:
                 pass
 
     def stop(self) -> Path | None:
-        """停止采集，写出 artifact 文件并落 `artifacts` 行；返回文件路径。"""
-        self._stop_event.set()
-        process = self._proc
-        if process is not None:
-            for action in ("terminate", "kill"):
-                method = getattr(process, action, None)
-                if not callable(method):
-                    continue
-                try:
-                    method()
-                except Exception:
-                    pass
-                try:
-                    process.wait(timeout=2)
-                    break
-                except Exception:
-                    continue
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=3)
-        self._thread = None
-        self._proc = None
+        """停止采集，写出 artifact 文件并落 `artifacts` 行；返回文件路径。
 
-        with self._lock:
-            lines = list(self._lines)
-        path = self._write_artifact(lines)
-        self._path = path
-        with _LOCK:
-            if _ACTIVE.get(self.serial) is self:
-                _ACTIVE.pop(self.serial, None)
-        logger.info("logcat capture stopped: %s lines=%s path=%s", self.serial, len(lines), path)
-        return path
+        同一实例重复 stop 是幂等的：只写一次 artifact，后续直接返回已有路径。
+        """
+        with self._stop_lock:
+            if self._stopped:
+                return self._path
+            self._stopped = True
+            self._stop_event.set()
+            process = self._proc
+            if process is not None:
+                for action in ("terminate", "kill"):
+                    method = getattr(process, action, None)
+                    if not callable(method):
+                        continue
+                    try:
+                        method()
+                    except Exception:
+                        pass
+                    try:
+                        process.wait(timeout=2)
+                        break
+                    except Exception:
+                        continue
+            thread = self._thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=3)
+            self._thread = None
+            self._proc = None
+
+            with self._lock:
+                lines = list(self._lines)
+            path = self._write_artifact(lines)
+            self._path = path
+            self._stopped_at = now_iso()
+            state = self.state()
+            with _LOCK:
+                if _ACTIVE.get(self.serial) is self:
+                    _ACTIVE.pop(self.serial, None)
+                _LAST[self.serial] = state
+            logger.info("logcat capture stopped: %s lines=%s path=%s", self.serial, len(lines), path)
+            return path
 
     def _write_artifact(self, lines: list[str]) -> Path | None:
         directory = config.artifacts_dir() / "logcat"
@@ -227,6 +289,8 @@ class LogcatCapture:
                             "lines": len(lines),
                             "started_at": self._started_at,
                             "duration_ms": int((time.monotonic() - self._started_monotonic) * 1000),
+                            "started_by_run": self.started_by_run,
+                            "package": self.package,
                         },
                         created_at=now_iso(),
                     )
@@ -244,8 +308,16 @@ class LogcatCapture:
 
 
 # ================================================================ 模块级入口
-def attach_if_needed(run_id: int, script_settings: Any) -> LogcatCapture | None:
-    """运行期按设置自动开始采集；返回会话或 None。"""
+def attach_if_needed(
+    run_id: int,
+    script_settings: Any,
+    max_lines: int | None = None,
+) -> LogcatCapture | None:
+    """运行期按设置自动开始采集；返回会话或 None。
+
+    幂等：本 run 已 attach 过则返回同一会话；若该 serial 已有**用户手动**采集
+    （或别的 run 的采集），不抢占，返回 None。
+    """
     if not bool(config.get("capture.logcat_auto_attach")):
         return None
     enabled = False
@@ -255,27 +327,52 @@ def attach_if_needed(run_id: int, script_settings: Any) -> LogcatCapture | None:
         enabled = bool(getattr(script_settings, "logcat", False))
     if not enabled:
         return None
+    try:
+        run_key = int(run_id)
+    except (TypeError, ValueError):
+        return None
     serial = ""
     try:
         from ..models import Run
 
         with session_scope() as db:
-            run = db.get(Run, int(run_id))
+            run = db.get(Run, run_key)
             serial = str(run.device_serial or "") if run is not None else ""
     except Exception:  # pragma: no cover - DB 异常
         return None
     if not serial:
         return None
-    return start_capture(serial, run_id=int(run_id))
+    with _LOCK:
+        existing = _ACTIVE.get(serial)
+        if existing is not None and existing.running:
+            if existing.started_by_run and existing.run_id == run_key:
+                return existing
+            logger.info(
+                "logcat capture already active for %s (run_id=%s); skip auto attach for run %s",
+                serial,
+                existing.run_id,
+                run_key,
+            )
+            return None
+        capture = LogcatCapture(serial, run_id=run_key, max_lines=max_lines, started_by_run=True)
+        capture.start()
+        _ACTIVE[serial] = capture
+        return capture
 
 
-def start_capture(serial: str, run_id: int | None = None) -> LogcatCapture:
+def start_capture(
+    serial: str,
+    run_id: int | None = None,
+    max_lines: int | None = None,
+    package: str | None = None,
+) -> LogcatCapture:
+    """手动采集入口；同 serial 已有活跃采集时直接复用（幂等）。"""
     serial = str(serial)
     with _LOCK:
         existing = _ACTIVE.get(serial)
         if existing is not None and existing.running:
             return existing
-        capture = LogcatCapture(serial, run_id=run_id)
+        capture = LogcatCapture(serial, run_id=run_id, max_lines=max_lines, package=package)
         capture.start()
         _ACTIVE[serial] = capture
         return capture
@@ -290,6 +387,36 @@ def stop_capture(serial: str) -> Path | None:
     return capture.stop()
 
 
+def stop_run_capture(run_id: int, serial: str | None = None) -> Path | None:
+    """只停止由 `run_id` 自动 attach 的采集；手动采集/别的 run 的采集不动。
+
+    幂等：本 run 没启动采集、已被手动停止或重复调用时返回 None。
+    """
+    try:
+        run_key = int(run_id)
+    except (TypeError, ValueError):
+        return None
+    with _LOCK:
+        target: LogcatCapture | None = None
+        if serial is not None:
+            candidate = _ACTIVE.get(str(serial))
+            if (
+                candidate is not None
+                and candidate.started_by_run
+                and candidate.run_id == run_key
+            ):
+                target = candidate
+        else:
+            for candidate in _ACTIVE.values():
+                if candidate.started_by_run and candidate.run_id == run_key:
+                    target = candidate
+                    break
+        if target is None:
+            return None
+        _ACTIVE.pop(target.serial, None)
+    return target.stop()
+
+
 def active_capture(serial: str) -> LogcatCapture | None:
     capture = _ACTIVE.get(str(serial))
     return capture if capture is not None and capture.running else None
@@ -297,6 +424,38 @@ def active_capture(serial: str) -> LogcatCapture | None:
 
 def is_capturing(serial: str) -> bool:
     return active_capture(serial) is not None
+
+
+def capture_status(serial: str) -> dict[str, Any]:
+    """采集状态：活跃时含环形缓冲行数，停止后仍返回最近一次保存的 path/size。"""
+    serial = str(serial)
+    with _LOCK:
+        capture = _ACTIVE.get(serial)
+        last = dict(_LAST.get(serial) or {})
+    if capture is not None:
+        state = capture.state()
+        state["last"] = dict(last) if last else None
+        return state
+    if last:
+        state = dict(last)
+        state["serial"] = serial
+        state["active"] = False
+        state["last"] = dict(last)
+        return state
+    return {
+        "serial": serial,
+        "active": False,
+        "lines": 0,
+        "started_at": None,
+        "path": None,
+        "size": 0,
+        "max_lines": int(config.get("capture.logcat_max_lines") or _LINE_LIMIT),
+        "run_id": None,
+        "started_by_run": False,
+        "package": None,
+        "stopped_at": None,
+        "last": None,
+    }
 
 
 def recent(serial: str, lines: int = 200) -> list[str]:
