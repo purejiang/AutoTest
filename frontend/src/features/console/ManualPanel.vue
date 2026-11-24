@@ -2,6 +2,7 @@
 import {
   Camera,
   Connection,
+  DataLine,
   Document,
   EditPen,
   Grid,
@@ -47,6 +48,7 @@ const emit = defineEmits<{
   screenshot: []
   hierarchy: []
   logcat: []
+  network: []
   refreshDevices: []
 }>()
 
@@ -404,6 +406,15 @@ function refreshDeviceInfo(): void {
               <strong>logcat</strong><small>查看最近日志，支持自动刷新与复制</small>
             </div>
             <el-button size="small" @click="emit('logcat')">打开</el-button>
+          </div>
+          <div class="tool-item">
+            <span class="tool-ico"
+              ><el-icon><DataLine /></el-icon
+            ></span>
+            <div class="tool-main">
+              <strong>网络抓包</strong><small>只记录访问域名，不含 Header 与正文</small>
+            </div>
+            <el-button size="small" @click="emit('network')">打开</el-button>
           </div>
           <div class="tool-item">
             <span class="tool-ico"

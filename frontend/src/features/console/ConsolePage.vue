@@ -11,6 +11,7 @@ import { useUiStore } from '@/stores/ui'
 import DeviceConnectDialog from '@/features/devices/DeviceConnectDialog.vue'
 import DeviceHierarchyDrawer from '@/features/devices/DeviceHierarchyDrawer.vue'
 import DeviceLogcatDrawer from '@/features/devices/DeviceLogcatDrawer.vue'
+import DeviceNetworkDrawer from '@/features/devices/DeviceNetworkDrawer.vue'
 import ScreenshotDialog from '@/features/devices/ScreenshotDialog.vue'
 import type { MirrorUiStatus } from '@/features/mirror/types'
 
@@ -51,6 +52,7 @@ const connectOpen = ref(false)
 const screenshotOpen = ref(false)
 const hierarchyOpen = ref(false)
 const logcatOpen = ref(false)
+const networkOpen = ref(false)
 
 const autoRunning = ref(false)
 const autoPaused = ref(false)
@@ -116,6 +118,7 @@ watch(selectedDevice, (device) => {
   screenshotOpen.value = false
   hierarchyOpen.value = false
   logcatOpen.value = false
+  networkOpen.value = false
 })
 
 async function selectDevice(serial: string): Promise<void> {
@@ -172,6 +175,11 @@ function openHierarchy(): void {
 function openLogcat(): void {
   if (!selectedDevice.value) return
   logcatOpen.value = true
+}
+
+function openNetwork(): void {
+  if (!selectedDevice.value) return
+  networkOpen.value = true
 }
 
 function openConnect(): void {
@@ -262,6 +270,7 @@ function openConnect(): void {
               @screenshot="openScreenshot"
               @hierarchy="openHierarchy"
               @logcat="openLogcat"
+              @network="openNetwork"
               @refresh-devices="refreshDevices"
             />
             <div v-else class="dock-empty">
@@ -299,6 +308,11 @@ function openConnect(): void {
       :serial="selectedDevice?.serial ?? null"
       :open="logcatOpen"
       @close="logcatOpen = false"
+    />
+    <DeviceNetworkDrawer
+      :serial="selectedDevice?.serial ?? null"
+      :open="networkOpen"
+      @close="networkOpen = false"
     />
   </div>
 </template>

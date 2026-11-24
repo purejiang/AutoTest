@@ -126,7 +126,7 @@ const GROUP_KEYS: Record<KeyGroup, string[]> = {
   scrcpyJar: ['scrcpy.jar'],
   engine: ['engine.poll_interval_ms', 'engine.default_timeout_ms', 'engine.max_total_ms', 'engine.max_steps'],
   recording: ['recording.click_dump', 'recording.confirm_before_save', 'recording.target_mode'],
-  capture: ['capture.logcat_auto_attach', 'capture.network.enabled'],
+  capture: ['capture.logcat_auto_attach', 'capture.network.enabled', 'capture.network.port'],
   security: ['security.token'],
   storage: [
     'runtime.data_dir',
@@ -645,7 +645,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
             <section class="card exec-card">
               <div class="card-head">
                 <h2>采集</h2>
-                <span class="card-hint" title="采集内容会进入运行产物与报告。">logcat · 网络 · 写入产物</span>
+                <span class="card-hint" title="logcat 进入运行产物；网络抓包只记录域名，不含正文。">logcat · 域名抓包 · 产物</span>
               </div>
               <div class="card-body">
                 <div class="field-row">

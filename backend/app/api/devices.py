@@ -994,4 +994,28 @@ def network_stop(serial: str) -> dict[str, Any]:
     return {"ok": True, "serial": serial, "started": False, "capture": _jsonable(result)}
 
 
+@router.get("/{serial}/network/status")
+def network_status(serial: str) -> dict[str, Any]:
+    """域名抓包状态：active/port/path/size/domain_count/recent_domains（供 UI 展示）。"""
+    _ensure_network_enabled()
+    fn = _network_fn("status")
+    if fn is None:
+        raise ApiError("UNSUPPORTED", "network capture module is not available")
+    try:
+        result = fn(serial)
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise ApiError(
+            "UNSUPPORTED", f"network capture status failed: {exc}", {"serial": serial}
+        ) from exc
+    body: dict[str, Any] = {"ok": True, "serial": serial}
+    payload = _jsonable(result)
+    if isinstance(payload, dict):
+        body.update(payload)
+    else:  # pragma: no cover - 模块契约保证 dict
+        body["capture"] = payload
+    return body
+
+
 __all__ = ["router"]
