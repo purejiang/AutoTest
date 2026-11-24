@@ -62,6 +62,8 @@ const MIRROR_PRESETS = [
 
 type MirrorPreset = (typeof MIRROR_PRESETS)[number]
 
+const DEFAULT_PRESET: MirrorPreset = MIRROR_PRESETS.find((preset) => preset.recommended) ?? MIRROR_PRESETS[1]
+
 const mirrorPreset = computed<string>(() => {
   const maxSize = Number(props.values['scrcpy.max_size'])
   const maxFps = Number(props.values['scrcpy.max_fps'])
@@ -82,6 +84,10 @@ function applyPreset(preset: MirrorPreset): void {
   emit('change', 'scrcpy.max_size', preset.maxSize)
   emit('change', 'scrcpy.max_fps', preset.maxFps)
   emit('change', 'scrcpy.video_bit_rate', preset.videoBitRate)
+}
+
+function restoreDefaultPreset(): void {
+  applyPreset(DEFAULT_PRESET)
 }
 
 function numeric(key: string): number | null {
@@ -162,7 +168,18 @@ function sourceTitle(key: string): string {
       </div>
 
       <div class="preset-current">
-        当前：<b>{{ mirrorPresetLabel }}</b> · 保存后停止并重新启动镜像生效
+        当前：<b>{{ mirrorPresetLabel }}</b>
+        <el-button
+          v-if="mirrorPreset === 'custom'"
+          size="small"
+          text
+          type="primary"
+          title="套用默认画质：均衡 1600px / 30fps / 8Mbps"
+          @click="restoreDefaultPreset"
+        >
+          恢复默认画质
+        </el-button>
+        <span> · 默认 {{ DEFAULT_PRESET.detail }} · 保存后停止并重新启动镜像生效</span>
       </div>
 
       <div class="field-grid">
@@ -359,6 +376,10 @@ function sourceTitle(key: string): string {
 }
 
 .preset-current {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
   margin: 9px 0 8px;
   color: var(--muted);
   font-size: 10.5px;
