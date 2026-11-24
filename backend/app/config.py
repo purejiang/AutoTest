@@ -112,14 +112,14 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
     {
         "key": "capture.network.enabled",
         "type": "bool",
-        "title": "网络域名抓包",
-        "desc": "只记录 host/port，不抓 Header 与正文；需要设备系统代理",
+        "title": "网络域名抓包（总开关）",
+        "desc": "关闭后手动和运行期都不可用；只记录 host/port，不抓 Header 与正文",
     },
     {
         "key": "capture.network.auto_attach",
         "type": "bool",
-        "title": "运行自动开启域名抓包",
-        "desc": "随脚本运行开始/停止；手动抓包不会被运行结束误停",
+        "title": "网络抓包跟随运行",
+        "desc": "总开关开启后生效；关闭时仍可在控制台手动开始/停止，运行不会自动抓包",
     },
     {
         "key": "capture.network.port",
