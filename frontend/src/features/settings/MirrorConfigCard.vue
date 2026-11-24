@@ -125,6 +125,14 @@ function sourceOf(key: string): SettingSource {
 function sourceMeta(key: string) {
   return settingSourceMeta(sourceOf(key))
 }
+
+function sourceTitle(key: string): string {
+  const source = sourceOf(key)
+  if (source === 'db') return '来自数据库覆盖，可点 ↺ 删除；删除后按优先级回到文件/默认值'
+  if (source === 'file') return '来自配置文件，优先级高于默认值；需修改配置文件后重新加载'
+  if (source === 'env') return '来自环境变量，优先级最高；需取消环境变量并重启进程'
+  return '当前使用代码默认值'
+}
 </script>
 
 <template>
@@ -164,15 +172,16 @@ function sourceMeta(key: string) {
             <StatusTag
               v-if="sourceOf('scrcpy.max_size') !== 'default'"
               :tone="sourceMeta('scrcpy.max_size').tone"
+              :title="sourceTitle('scrcpy.max_size')"
             >
               {{ sourceMeta('scrcpy.max_size').label }}
             </StatusTag>
             <el-button
-              v-if="sourceOf('scrcpy.max_size') !== 'default'"
+              v-if="sourceOf('scrcpy.max_size') === 'db'"
               size="small"
               text
               :icon="RefreshLeft"
-              title="删除该 key 的覆盖，回到默认值"
+              title="删除数据库覆盖，按优先级回到配置文件/默认值"
               @click="emit('clear', 'scrcpy.max_size')"
             />
           </span>
@@ -195,15 +204,16 @@ function sourceMeta(key: string) {
             <StatusTag
               v-if="sourceOf('scrcpy.max_fps') !== 'default'"
               :tone="sourceMeta('scrcpy.max_fps').tone"
+              :title="sourceTitle('scrcpy.max_fps')"
             >
               {{ sourceMeta('scrcpy.max_fps').label }}
             </StatusTag>
             <el-button
-              v-if="sourceOf('scrcpy.max_fps') !== 'default'"
+              v-if="sourceOf('scrcpy.max_fps') === 'db'"
               size="small"
               text
               :icon="RefreshLeft"
-              title="删除该 key 的覆盖，回到默认值"
+              title="删除数据库覆盖，按优先级回到配置文件/默认值"
               @click="emit('clear', 'scrcpy.max_fps')"
             />
           </span>
@@ -226,15 +236,16 @@ function sourceMeta(key: string) {
             <StatusTag
               v-if="sourceOf('scrcpy.video_bit_rate') !== 'default'"
               :tone="sourceMeta('scrcpy.video_bit_rate').tone"
+              :title="sourceTitle('scrcpy.video_bit_rate')"
             >
               {{ sourceMeta('scrcpy.video_bit_rate').label }}
             </StatusTag>
             <el-button
-              v-if="sourceOf('scrcpy.video_bit_rate') !== 'default'"
+              v-if="sourceOf('scrcpy.video_bit_rate') === 'db'"
               size="small"
               text
               :icon="RefreshLeft"
-              title="删除该 key 的覆盖，回到默认值"
+              title="删除数据库覆盖，按优先级回到配置文件/默认值"
               @click="emit('clear', 'scrcpy.video_bit_rate')"
             />
           </span>
@@ -254,15 +265,19 @@ function sourceMeta(key: string) {
         <div class="field">
           <span class="field-label">
             裁剪 w:h:x:y
-            <StatusTag v-if="sourceOf('scrcpy.crop') !== 'default'" :tone="sourceMeta('scrcpy.crop').tone">
+            <StatusTag
+              v-if="sourceOf('scrcpy.crop') !== 'default'"
+              :tone="sourceMeta('scrcpy.crop').tone"
+              :title="sourceTitle('scrcpy.crop')"
+            >
               {{ sourceMeta('scrcpy.crop').label }}
             </StatusTag>
             <el-button
-              v-if="sourceOf('scrcpy.crop') !== 'default'"
+              v-if="sourceOf('scrcpy.crop') === 'db'"
               size="small"
               text
               :icon="RefreshLeft"
-              title="删除该 key 的覆盖，回到默认值"
+              title="删除数据库覆盖，按优先级回到配置文件/默认值"
               @click="emit('clear', 'scrcpy.crop')"
             />
           </span>

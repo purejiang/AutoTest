@@ -19,21 +19,28 @@ const emit = defineEmits<{
 function update(value: unknown): void {
   emit('update:modelValue', value)
 }
+
+function sourceTitle(source: 'default' | 'file' | 'db' | 'env'): string {
+  if (source === 'db') return '来自数据库覆盖，可点右侧 ↺ 删除；删除后按优先级回到文件/默认值'
+  if (source === 'file') return '来自配置文件，优先级高于默认值；需修改配置文件后重新加载'
+  if (source === 'env') return '来自环境变量，优先级最高；需取消环境变量并重启进程'
+  return '当前使用代码默认值'
+}
 </script>
 
 <template>
   <div class="setting-field">
     <div class="field-label">
       {{ entry.title }}
-      <StatusTag :tone="settingSourceMeta(source).tone">
+      <StatusTag :tone="settingSourceMeta(source).tone" :title="sourceTitle(source)">
         {{ settingSourceMeta(source).label }}
       </StatusTag>
       <el-button
-        v-if="source !== 'default'"
+        v-if="source === 'db'"
         size="small"
         text
         :icon="RefreshLeft"
-        title="删除数据库/文件层覆盖，回到默认值"
+        title="删除数据库覆盖，按优先级回到配置文件/默认值"
         @click="emit('clear')"
       />
     </div>

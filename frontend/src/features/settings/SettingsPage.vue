@@ -168,7 +168,21 @@ const health = computed(() => healthQuery.data.value)
 const stats = computed(() => statsQuery.data.value)
 const cleanupResult = computed(() => cleanupMutation.data.value ?? null)
 
-const hasOverrides = computed(() => Object.values(sources.value).some((source) => source !== 'default'))
+const overrideCount = computed(
+  () => Object.values(sources.value).filter((source) => source !== 'default').length,
+)
+const hasOverrides = computed(() => overrideCount.value > 0)
+const overrideTooltip = computed(() => {
+  const counts: Record<string, number> = { db: 0, file: 0, env: 0 }
+  for (const source of Object.values(sources.value)) {
+    if (source in counts) counts[source] += 1
+  }
+  return [
+    `有 ${overrideCount.value} 项设置不是代码默认值：数据库覆盖 ${counts.db} 项 · 配置文件 ${counts.file} 项 · 环境变量 ${counts.env} 项。`,
+    '优先级：默认值 < 配置文件 < 数据库 < 环境变量。',
+    '每项标题旁的来源标签显示具体来源；只有「数据库覆盖」可以在页面上点 ↺ 删除，文件/环境变量需要修改配置或重启进程。',
+  ].join('\n')
+})
 
 const cleanupSummary = computed(() => {
   const data = cleanupResult.value
@@ -336,8 +350,15 @@ function applyThemeChoice(choice: ThemeChoice): void {
   <div class="page">
     <PageHead title="设置" subtitle="配置优先级：默认 &lt; 文件 &lt; 数据库 &lt; 环境变量">
       <template #actions>
-        <StatusTag v-if="hasOverrides" tone="amber">存在覆盖项</StatusTag>
-        <StatusTag v-else-if="showSavedTag" tone="green" dot>已保存</StatusTag>
+        <StatusTag v-if="showSavedTag" tone="green" dot>已保存</StatusTag>
+        <el-tooltip
+          v-if="hasOverrides"
+          :content="overrideTooltip"
+          placement="bottom-end"
+          popper-class="settings-override-tooltip"
+        >
+          <StatusTag tone="blue">{{ overrideCount }} 项使用覆盖值</StatusTag>
+        </el-tooltip>
         <el-dropdown trigger="click" placement="bottom-end" @command="onMoreCommand">
           <el-button
             size="small"

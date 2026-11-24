@@ -1002,6 +1002,13 @@ pre,
   word-break: break-word;
 }
 
+.settings-override-tooltip {
+  max-width: min(520px, calc(100vw - 24px));
+  white-space: pre-line;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
 .el-dropdown-menu__item {
   font-size: 12px;
 }
