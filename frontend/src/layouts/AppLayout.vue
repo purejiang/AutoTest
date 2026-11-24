@@ -26,7 +26,6 @@ watch(
 
 const health = computed(() => healthQuery.data.value)
 const healthOk = computed(() => Boolean(health.value) && !healthQuery.isError.value)
-const deviceCount = computed(() => Number(health.value?.adb?.devices ?? 0))
 
 const healthLines = computed<string[]>(() => {
   const data = health.value
@@ -68,6 +67,10 @@ const breadcrumb = computed<string[]>(() => {
 function navigate(path: string): void {
   if (route.path !== path) void router.push(path)
 }
+
+function openHealth(): void {
+  void router.push({ path: '/settings', query: { tab: 'about' } })
+}
 </script>
 
 <template>
@@ -75,7 +78,10 @@ function navigate(path: string): void {
     <aside class="rail">
       <div class="brand">
         <span class="brand-mark">AT</span>
-        <span class="brand-name">AutoTest</span>
+        <span class="brand-text">
+          <span class="brand-name">AutoTest</span>
+          <span class="brand-version">v{{ APP_VERSION }}</span>
+        </span>
       </div>
       <nav class="nav" aria-label="主导航">
         <button
@@ -95,11 +101,22 @@ function navigate(path: string): void {
         </button>
       </nav>
       <div class="rail-foot">
-        <div class="rail-version" :title="`页面 ${APP_VERSION} · ${APP_COMMIT}`">
-          <span class="dot" :class="healthOk ? (deviceCount > 0 ? 'online' : 'offline') : 'offline'" />
-          <span>v{{ APP_VERSION }}</span>
-          <span class="rail-build">{{ APP_COMMIT }}</span>
-        </div>
+        <el-tooltip placement="right-end" popper-class="health-tooltip">
+          <template #content>
+            <div v-for="(line, index) in healthLines" :key="index" class="health-tooltip-line">
+              {{ line }}
+            </div>
+          </template>
+          <button
+            type="button"
+            class="rail-health"
+            :aria-label="healthOk ? '后端正常，查看健康信息' : '后端离线，查看健康信息'"
+            @click="openHealth"
+          >
+            <span class="dot" :class="healthOk ? 'online' : 'offline'" />
+            <span class="rail-health-label">{{ healthOk ? '正常' : '后端离线' }}</span>
+          </button>
+        </el-tooltip>
       </div>
     </aside>
 
@@ -127,20 +144,6 @@ function navigate(path: string): void {
               <el-icon :size="16"><Sunny v-if="resolvedTheme === 'dark'" /><Moon v-else /></el-icon>
             </button>
           </el-tooltip>
-
-          <el-tooltip placement="bottom-end" popper-class="health-tooltip">
-            <template #content>
-              <div v-for="(line, index) in healthLines" :key="index" class="health-tooltip-line">
-                {{ line }}
-              </div>
-            </template>
-            <button type="button" class="status-chip">
-              <span class="dot" :class="healthOk ? 'online' : 'offline'" />
-              <span>{{ healthOk ? '正常' : '后端离线' }}</span>
-            </button>
-          </el-tooltip>
-
-          <span class="top-build" title="页面构建信息">{{ APP_VERSION }} · {{ APP_COMMIT }}</span>
 
           <el-button class="top-settings" size="small" :icon="Setting" title="打开设置" @click="navigate('/settings')">
             设置
