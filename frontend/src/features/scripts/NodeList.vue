@@ -11,6 +11,7 @@ type DropPosition = 'before' | 'after'
 const props = defineProps<{
   steps: StepNode[]
   selectedId: string | null
+  issues?: Record<string, { errors: number; warnings: number }>
 }>()
 
 const emit = defineEmits<{
@@ -46,6 +47,22 @@ const visibleSteps = computed(() => {
 
 function addNode(type: string): void {
   emit('add', type as NodeType)
+}
+
+function issueTone(stepId: string): 'error' | 'warning' | null {
+  const issue = props.issues?.[stepId]
+  if (!issue) return null
+  if (issue.errors > 0) return 'error'
+  return issue.warnings > 0 ? 'warning' : null
+}
+
+function issueTitle(stepId: string): string {
+  const issue = props.issues?.[stepId]
+  if (!issue) return ''
+  const parts: string[] = []
+  if (issue.errors) parts.push(`${issue.errors} 个错误`)
+  if (issue.warnings) parts.push(`${issue.warnings} 个警告`)
+  return parts.join(' · ')
 }
 
 function clearSearch(): void {
@@ -207,6 +224,13 @@ onBeforeUnmount(() => {
             <span v-if="step.when" class="node-when"> · when</span>
           </span>
         </span>
+        <span
+          v-if="issueTone(step.id)"
+          class="node-issue"
+          :class="issueTone(step.id)"
+          :title="issueTitle(step.id)"
+          :aria-label="issueTitle(step.id)"
+        />
         <span class="node-tools" @click.stop @keydown.stop>
           <el-switch
             :model-value="step.enabled"
@@ -253,6 +277,23 @@ onBeforeUnmount(() => {
 
 .node-when {
   color: var(--cyan);
+}
+
+.node-issue {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.node-issue.error {
+  background: var(--red);
+  box-shadow: 0 0 0 2px var(--red-soft);
+}
+
+.node-issue.warning {
+  background: var(--amber);
+  box-shadow: 0 0 0 2px var(--amber-soft);
 }
 
 .drag-handle {

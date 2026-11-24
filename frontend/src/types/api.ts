@@ -215,6 +215,23 @@ export interface ScriptData {
 
 export type ScriptSource = 'manual' | 'mirror' | 'physical' | 'imported'
 
+/** 脚本列表/详情附带的“最近一次运行”摘要（后端 additive 字段）。 */
+export interface ScriptLastRun {
+  id: number
+  status: RunStatus
+  started_at: string | null
+  ended_at: string | null
+  created_at: string
+  device_serial: string
+  error: { code?: string; message?: string } | null
+  summary: {
+    passed_steps?: number
+    failed_steps?: number
+    skipped_steps?: number
+    duration_ms?: number
+  } | null
+}
+
 export interface Script {
   id: string
   name: string
@@ -227,6 +244,7 @@ export interface Script {
   step_count?: number
   created_at: string
   updated_at: string
+  last_run?: ScriptLastRun | null
 }
 
 export interface ValidationErrorItem {

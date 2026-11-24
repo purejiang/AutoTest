@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, Close, Document, Plus, Refresh, Setting, VideoPlay } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, Close, Document, EditPen, Plus, Refresh, Setting, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useWindowSize } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -8,7 +8,14 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { describeApiError, validationErrorsOf } from '@/api/client'
 import { useScript, useUpdateScript, useValidateScriptData } from '@/api/scripts'
 import type { NodeType, Script, ScriptData, ScriptValidation, StepNode } from '@/types/api'
-import { formatShortDateTime, prettyJson, safeParseJson, sourceMeta } from '@/lib/format'
+import {
+  formatRelative,
+  formatShortDateTime,
+  prettyJson,
+  runStatusMeta,
+  safeParseJson,
+  sourceMeta,
+} from '@/lib/format'
 import PageHead from '@/components/PageHead.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
@@ -39,6 +46,10 @@ const validationOpen = ref(false)
 const loadedId = ref<string | null>(null)
 const nodeListRef = ref<{ clearSearch: () => void } | null>(null)
 const nodeScrollRef = ref<HTMLElement | null>(null)
+const editingName = ref(false)
+const nameDraft = ref('')
+const nameBeforeEdit = ref('')
+const nameInputRef = ref<{ focus: () => void } | null>(null)
 
 const { width: windowWidth } = useWindowSize()
 const jsonDrawerSize = computed(() => (windowWidth.value <= 900 ? '100%' : '560px'))
@@ -62,6 +73,7 @@ function loadFromScript(nextScript: Script): void {
   validationOpen.value = false
   settingsDrawerOpen.value = false
   jsonOpen.value = false
+  editingName.value = false
 }
 
 watch(
@@ -95,6 +107,65 @@ const subtitle = computed(() => {
   if (updated) parts.push(`更新于 ${formatShortDateTime(updated)}`)
   return parts.join(' · ')
 })
+
+const stepIssues = computed<Record<string, { errors: number; warnings: number }>>(() => {
+  const result: Record<string, { errors: number; warnings: number }> = {}
+  const data = draft.value
+  if (!data || !validation.value) return result
+  const add = (path: string, key: 'errors' | 'warnings'): void => {
+    const match = path.match(/^(?:script\.)?steps(?:\[|\.)(\d+)/)
+    if (!match) return
+    const node = data.steps[Number(match[1])]
+    if (!node) return
+    const issue = (result[node.id] ??= { errors: 0, warnings: 0 })
+    issue[key] += 1
+  }
+  validation.value.errors.forEach((item) => add(item.path, 'errors'))
+  validation.value.warnings.forEach((item) => add(item.path, 'warnings'))
+  return result
+})
+
+function startEditName(): void {
+  if (!draft.value) return
+  nameBeforeEdit.value = draft.value.name
+  nameDraft.value = draft.value.name
+  editingName.value = true
+  void nextTick(() => nameInputRef.value?.focus())
+}
+
+function commitName(): void {
+  if (!editingName.value || !draft.value) return
+  const name = nameDraft.value.trim()
+  if (!name) {
+    ElMessage.warning('脚本名称不能为空')
+    nameDraft.value = draft.value.name
+    editingName.value = false
+    return
+  }
+  editingName.value = false
+  if (name !== nameBeforeEdit.value) {
+    applyDraft({ ...draft.value, name })
+  }
+}
+
+function cancelName(): void {
+  editingName.value = false
+  nameDraft.value = nameBeforeEdit.value
+}
+
+function openRun(runId: number): void {
+  void router.push(`/runs/${runId}`)
+}
+
+function openLastRun(): void {
+  const run = script.value?.last_run
+  if (run) openRun(run.id)
+}
+
+function openOriginRecording(): void {
+  const recordingId = script.value?.origin_recording_id
+  if (recordingId) void router.push(`/recorder/${recordingId}`)
+}
 
 function applyDraft(next: ScriptData): void {
   draft.value = next
@@ -193,6 +264,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 function handleGlobalKeydown(event: KeyboardEvent): void {
   if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's') {
     event.preventDefault()
+    if (editingName.value) commitName()
     if (hasUnsavedChanges.value && !updateMutation.isPending.value) void handleSave()
     return
   }
@@ -233,6 +305,15 @@ onBeforeRouteLeave(async () => {
     return false
   }
 })
+
+async function handleRun(): Promise<void> {
+  if (editingName.value) commitName()
+  if (hasUnsavedChanges.value) {
+    const saved = await handleSave()
+    if (!saved) return
+  }
+  goRun()
+}
 
 function goRun(): void {
   void router.push({ path: '/console', query: { tab: 'auto', script: id.value } })
@@ -408,7 +489,7 @@ async function handleValidate(): Promise<void> {
 function jumpToPath(path: string): void {
   const data = draft.value
   if (!data) return
-  const match = path.match(/^steps(?:\[|\.)(\d+)/)
+  const match = path.match(/^(?:script\.)?steps(?:\[|\.)(\d+)/)
   if (match) {
     const node = data.steps[Number(match[1])]
     if (node) {
@@ -445,17 +526,61 @@ function jumpToPath(path: string): void {
   <div v-else class="page-fill script-editor-page">
     <PageHead :title="draft.name || '脚本编辑器'" :subtitle="subtitle" @back="router.push('/scripts')">
       <template #back><el-icon><ArrowLeft /></el-icon></template>
+      <template #title>
+        <div class="script-title">
+          <el-input
+            v-if="editingName"
+            ref="nameInputRef"
+            v-model="nameDraft"
+            class="script-name-input"
+            size="small"
+            maxlength="200"
+            @keydown.enter.prevent="commitName"
+            @keydown.esc.prevent="cancelName"
+            @blur="commitName"
+          />
+          <template v-else>
+            <h1 :title="draft.name || '脚本编辑器'" @dblclick="startEditName">
+              {{ draft.name || '脚本编辑器' }}
+            </h1>
+            <button type="button" class="icon-btn name-edit" title="重命名脚本" @click="startEditName">
+              <el-icon><EditPen /></el-icon>
+            </button>
+          </template>
+        </div>
+      </template>
       <template #title-extra>
         <StatusTag v-if="script" :tone="source.tone">{{ source.label }}</StatusTag>
         <StatusTag :tone="hasUnsavedChanges ? 'amber' : 'green'">
           {{ hasUnsavedChanges ? '未保存' : '已保存' }}
         </StatusTag>
+        <button
+          v-if="script?.last_run"
+          type="button"
+          class="last-run-chip"
+          :title="`运行 #${script.last_run.id} · ${script.last_run.device_serial || '未知设备'}`"
+          @click="openLastRun"
+        >
+          <StatusTag :tone="runStatusMeta(script.last_run.status).tone">
+            {{ runStatusMeta(script.last_run.status).label }}
+          </StatusTag>
+          <span class="hint">
+            {{ formatRelative(script.last_run.started_at ?? script.last_run.created_at) }}
+          </span>
+        </button>
+        <StatusTag v-else tone="gray">未运行</StatusTag>
       </template>
       <template #actions>
         <el-button :icon="Check" :loading="validateMutation.isPending.value" @click="handleValidate">校验</el-button>
         <el-button :icon="Setting" @click="settingsDrawerOpen = true">设置</el-button>
         <el-button :icon="Document" @click="jsonOpen = true">JSON</el-button>
-        <el-button :icon="VideoPlay" :disabled="stepCount === 0" @click="goRun">运行</el-button>
+        <el-button
+          :icon="VideoPlay"
+          :disabled="stepCount === 0 || updateMutation.isPending.value"
+          @click="handleRun"
+        >
+          {{ hasUnsavedChanges ? '保存并运行' : '运行' }}
+        </el-button>
         <el-button
           type="primary"
           :icon="Refresh"
@@ -522,6 +647,7 @@ function jumpToPath(path: string): void {
         ref="nodeListRef"
         :steps="draft.steps"
         :selected-id="selectedId"
+        :issues="stepIssues"
         @select="selectedId = $event"
         @add="addNode"
         @reorder="reorderNode"
@@ -562,6 +688,13 @@ function jumpToPath(path: string): void {
         <div><span>脚本 ID</span><code class="code-text">{{ id }}</code></div>
         <div><span>来源</span><StatusTag :tone="source.tone">{{ source.label }}</StatusTag></div>
         <template v-if="script">
+          <div v-if="script.origin_recording_id">
+            <span>来源录制</span>
+            <button type="button" class="cell-link code-text" @click="openOriginRecording">
+              {{ script.origin_recording_id }}
+            </button>
+          </div>
+          <div><span>Schema</span><span>v{{ script.schema_version }}</span></div>
           <div><span>创建</span><span>{{ formatShortDateTime(script.created_at) }}</span></div>
           <div><span>更新</span><span>{{ formatShortDateTime(script.updated_at) }}</span></div>
         </template>

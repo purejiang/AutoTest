@@ -229,6 +229,10 @@ POST /api/scripts/{id}/duplicate；POST /api/scripts/validate {data}；
 GET /api/scripts/{id}/export（json 附件）；POST /api/scripts/import（multipart 或 {data}）；
 POST /api/scripts/{id}/run {serial,...}（快捷=POST /api/runs）。
 - 脚本资源带 `source`（四值，见 §2.1）与 `origin_recording_id`（nullable）。
+- 脚本资源新增 **additive** 字段 `last_run`：当前脚本最新一条 Run 的摘要
+  `{id,status,started_at,ended_at,created_at,device_serial,error,summary}` 或 `null`；
+  list/get/update 返回（新建/复制/导入为 `null`）。列表按当前页 script_ids 用一次窗口查询
+  取各脚本最新 run，禁止 N+1；不新增表/迁移。
 - `DELETE /api/scripts/{id}` 同时清空 `recordings.script_id`（软关联），不删除录制/事件。
 - `POST /api/scripts/bulk-delete {ids: [str]}（≤200）` → `{deleted, failed:[{id,code,message}]}`；
   ids 去重，空列表 400 INVALID_ARGUMENT；单条失败不影响其他条。不存在 → failed NOT_FOUND；

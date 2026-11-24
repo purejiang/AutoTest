@@ -26,11 +26,8 @@ function toggleRetry(checked: boolean): void {
 
 <template>
   <el-form label-position="top" size="small" @submit.prevent>
-    <div class="section-label">基础信息</div>
+    <div class="section-label">备注与变量</div>
     <div class="form-grid">
-      <el-form-item label="脚本名称" class="full">
-        <el-input :model-value="data.name" @update:model-value="patchData({ name: $event })" />
-      </el-form-item>
       <el-form-item label="备注 notes" class="full">
         <el-input
           :model-value="data.notes"

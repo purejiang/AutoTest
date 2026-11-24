@@ -14,7 +14,9 @@ defineEmits<{ back: [] }>()
       <button v-if="$slots.back" class="icon-btn" type="button" @click="$emit('back')">
         <slot name="back" />
       </button>
-      <h1>{{ title }}</h1>
+      <slot name="title">
+        <h1>{{ title }}</h1>
+      </slot>
       <span v-if="count !== undefined" class="count-pill">{{ count }}</span>
       <span v-if="subtitle" class="page-sub">{{ subtitle }}</span>
       <slot name="title-extra" />

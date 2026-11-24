@@ -1819,6 +1819,54 @@ pre,
   white-space: nowrap;
 }
 
+.script-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.script-title .name-edit {
+  width: 24px;
+  height: 24px;
+  color: var(--muted-2);
+}
+
+.script-title .name-edit:hover {
+  color: var(--ink);
+}
+
+.script-name-input {
+  width: min(340px, 36vw);
+}
+
+.script-name-input .el-input__wrapper {
+  padding: 0 6px;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.script-name-input .el-input__inner {
+  font-weight: 650;
+}
+
+.last-run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.last-run-chip:hover .hint {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* 节点编辑区：卡片自身滚动，操作头吸顶，长表单不会把工具条顶走 */
 .editor-card.node-card {
   display: flex;
@@ -1862,6 +1910,37 @@ pre,
   min-width: 0;
   color: var(--muted);
   font-size: 11.5px;
+}
+
+.node-head-sub {
+  color: var(--muted-2);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+/* 节点名做成“标题输入框”：平时像标题，悬停/聚焦才出现输入框边界 */
+.node-name-input {
+  width: min(280px, 28vw);
+}
+
+.node-name-input .el-input__wrapper {
+  padding: 0 4px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.node-name-input .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--line) inset;
+}
+
+.node-name-input .el-input__wrapper.is-focus {
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.node-name-input .el-input__inner {
+  color: var(--ink);
+  font-weight: 650;
 }
 
 .node-head-actions {
@@ -1961,6 +2040,14 @@ pre,
 .script-meta code {
   color: var(--ink);
   overflow-wrap: anywhere;
+}
+
+.script-meta .cell-link {
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .form-grid {
@@ -2732,6 +2819,9 @@ pre,
   .editor-grid {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 220px minmax(0, 1fr);
+  }
+  .node-name-input {
+    width: 100%;
   }
   .top-build {
     display: none;

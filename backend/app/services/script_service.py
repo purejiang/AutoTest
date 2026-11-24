@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from .. import schemas
 from ..errors import ApiError, not_found
 from ..logs import logger
-from ..models import Recording, Script, now_iso
+from ..models import Recording, Run, Script, now_iso
 
 MAX_LIMIT = 500
 
@@ -54,7 +54,7 @@ def _ensure_valid(session: Session, data: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _row_to_dict(row: Script) -> dict[str, Any]:
+def _row_to_dict(row: Script, last_run: dict[str, Any] | None = None) -> dict[str, Any]:
     data = row.data or {}
     return {
         "id": row.id,
@@ -67,7 +67,53 @@ def _row_to_dict(row: Script) -> dict[str, Any]:
         "step_count": step_count(data),
         "created_at": row.created_at,
         "updated_at": row.updated_at,
+        "last_run": last_run,
     }
+
+
+def _last_run_payload(row: Any) -> dict[str, Any]:
+    """脚本列表/详情里的“最近一次运行”摘要（不含 steps/events）。"""
+    return {
+        "id": int(row.id),
+        "status": row.status,
+        "started_at": row.started_at,
+        "ended_at": row.ended_at,
+        "created_at": row.created_at,
+        "device_serial": row.device_serial or "",
+        "error": row.error,
+        "summary": row.summary or None,
+    }
+
+
+def _last_runs(session: Session, script_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """一次查询取多个脚本的最新 Run，避免列表 N+1。
+
+    SQLite 3.25+ 支持窗口函数；按 script_id 分组、id 倒序取第一条。
+    只查当前页的 script_ids，不会扫描全部运行记录。
+    """
+    ids = [str(script_id) for script_id in script_ids if script_id]
+    if not ids:
+        return {}
+    ranked = (
+        select(
+            Run.id,
+            Run.script_id,
+            Run.status,
+            Run.started_at,
+            Run.ended_at,
+            Run.created_at,
+            Run.device_serial,
+            Run.error,
+            Run.summary,
+            func.row_number()
+            .over(partition_by=Run.script_id, order_by=Run.id.desc())
+            .label("rn"),
+        )
+        .where(Run.script_id.in_(ids))
+        .subquery()
+    )
+    rows = session.execute(select(ranked).where(ranked.c.rn == 1)).all()
+    return {str(row.script_id): _last_run_payload(row) for row in rows}
 
 
 def _normalize_payload(data: Any, *, name: str, notes: str | None = None) -> dict[str, Any]:
@@ -126,11 +172,16 @@ def list_scripts(
         .scalars()
         .all()
     )
-    return {"items": [_row_to_dict(row) for row in rows], "total": total}
+    last_runs = _last_runs(session, [str(row.id) for row in rows])
+    return {
+        "items": [_row_to_dict(row, last_runs.get(str(row.id))) for row in rows],
+        "total": total,
+    }
 
 
 def get_script(session: Session, script_id: str) -> dict[str, Any]:
-    return _row_to_dict(get_row(session, script_id))
+    row = get_row(session, script_id)
+    return _row_to_dict(row, _last_runs(session, [str(row.id)]).get(str(row.id)))
 
 
 def export_script(session: Session, script_id: str) -> dict[str, Any]:
@@ -190,7 +241,7 @@ def update_script(
     row.data = payload
     row.updated_at = now_iso()
     session.flush()
-    return _row_to_dict(row)
+    return _row_to_dict(row, _last_runs(session, [str(row.id)]).get(str(row.id)))
 
 
 def delete_script(session: Session, script_id: str) -> None:

@@ -43,11 +43,66 @@ def test_create_defaults_to_empty_script(core_client) -> None:
     assert script["schema_version"] == 1
     assert script["step_count"] == 1
     assert script["data"]["name"] == "登录流程"
+    assert script["last_run"] is None
     assert script["created_at"] and script["updated_at"]
 
     fetched = core_client.get(f"/api/scripts/{script['id']}")
     assert fetched.status_code == 200
     assert fetched.json()["id"] == script["id"]
+
+
+def _insert_run(
+    run_id: int,
+    script_id: str,
+    status: str = "succeeded",
+    *,
+    duration_ms: int = 1000,
+) -> None:
+    stamp = models.now_iso()
+    with db.session_scope() as session:
+        session.add(
+            models.Run(
+                id=run_id,
+                script_id=script_id,
+                script_name="run",
+                device_serial="fake-1",
+                status=status,
+                started_at=stamp,
+                ended_at=stamp,
+                step_index=3,
+                total_steps=3,
+                summary={"duration_ms": duration_ms, "passed_steps": 3},
+            )
+        )
+
+
+def test_list_scripts_includes_latest_run(core_client) -> None:
+    first = _create(core_client, "有运行")
+    second = _create(core_client, "无运行")
+    _insert_run(101, first["id"], "failed", duration_ms=500)
+    _insert_run(102, first["id"], "succeeded", duration_ms=1200)
+
+    body = core_client.get("/api/scripts").json()
+    items = {item["id"]: item for item in body["items"]}
+    latest = items[first["id"]]["last_run"]
+    assert latest["id"] == 102
+    assert latest["status"] == "succeeded"
+    assert latest["summary"]["duration_ms"] == 1200
+    assert latest["device_serial"] == "fake-1"
+    assert items[second["id"]]["last_run"] is None
+
+    detail = core_client.get(f"/api/scripts/{first['id']}").json()
+    assert detail["last_run"]["id"] == 102
+
+    updated = core_client.put(f"/api/scripts/{first['id']}", json={"name": "改名后"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["last_run"]["id"] == 102
+
+    deleted = core_client.delete("/api/runs/102")
+    assert deleted.status_code == 200, deleted.text
+    fallback = core_client.get(f"/api/scripts/{first['id']}").json()
+    assert fallback["last_run"]["id"] == 101
+    assert fallback["last_run"]["status"] == "failed"
 
 
 def test_list_query_and_pagination(core_client) -> None:

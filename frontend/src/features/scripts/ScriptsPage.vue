@@ -3,6 +3,7 @@ import {
   CopyDocument,
   Delete,
   Download,
+  Link as LinkIcon,
   MoreFilled,
   Plus,
   Refresh,
@@ -26,7 +27,15 @@ import {
   useImportScript,
   useScripts,
 } from '@/api/scripts'
-import { formatShortDateTime, safeParseJson, sourceMeta } from '@/lib/format'
+import {
+  formatDateTime,
+  formatDuration,
+  formatRelative,
+  runDurationMs,
+  runStatusMeta,
+  safeParseJson,
+  sourceMeta,
+} from '@/lib/format'
 import { notifyBulkDeleteResult } from '@/lib/bulk'
 import type { Recording, Script } from '@/types/api'
 import StatusTag from '@/components/StatusTag.vue'
@@ -157,6 +166,25 @@ function runInConsole(script: Script): void {
   void router.push({ path: '/console', query: { tab: 'auto', script: script.id } })
 }
 
+function openRun(runId: number): void {
+  void router.push(`/runs/${runId}`)
+}
+
+function lastRunTitle(run: NonNullable<Script['last_run']>): string {
+  const parts = [`运行 #${run.id}`, run.device_serial || '未知设备']
+  if (run.error?.message) parts.push(run.error.message)
+  return parts.join(' · ')
+}
+
+async function copyScriptId(scriptId: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(scriptId)
+    ElMessage.success('脚本 ID 已复制')
+  } catch {
+    ElMessage.error('复制失败，请检查浏览器剪贴板权限')
+  }
+}
+
 function openMirrorRecord(): void {
   void router.push({ path: '/console', query: { tab: 'manual', manual: 'record' } })
 }
@@ -208,6 +236,10 @@ async function handleRowCommand(command: string, script: Script): Promise<void> 
   }
   if (command === 'export') {
     exportScript(script.id, script.name)
+    return
+  }
+  if (command === 'copy-id') {
+    await copyScriptId(script.id)
     return
   }
   if (command === 'delete') {
@@ -332,9 +364,6 @@ async function handleImportFile(event: Event): Promise<void> {
       </el-alert>
 
       <div class="card table-card">
-        <div class="library-toolbar">
-          <span class="hint">脚本是可编辑的编排定义；运行记录是脚本在设备上的一次执行。</span>
-        </div>
         <div v-if="selectedScripts.length > 0" class="batch-bar">
           <strong>已选 {{ selectedScripts.length }} 个</strong>
           <span class="small">删除脚本不会删除历史运行记录</span>
@@ -359,37 +388,69 @@ async function handleImportFile(event: Event): Promise<void> {
           @row-click="onRowClick"
         >
           <el-table-column type="selection" width="36" />
-          <el-table-column label="名称 / ID" min-width="260">
+          <el-table-column label="脚本 / 备注" min-width="300">
             <template #default="{ row }">
               <button type="button" class="cell-link" @click.stop="router.push(`/scripts/${row.id}`)">
                 {{ row.name || row.id }}
               </button>
-              <div class="cell-sub">{{ row.id }}</div>
+              <div v-if="row.notes" class="cell-sub cell-notes" :title="row.notes">{{ row.notes }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="节点" width="76">
-            <template #default="{ row }">{{ scriptStepCount(row) }}</template>
+          <el-table-column label="节点" width="64" align="right">
+            <template #default="{ row }"><span class="small">{{ scriptStepCount(row) }}</span></template>
           </el-table-column>
-          <el-table-column label="来源" width="104">
+          <el-table-column label="来源" width="112">
             <template #default="{ row }">
-              <StatusTag :tone="sourceMeta(row.source).tone">{{ sourceMeta(row.source).label }}</StatusTag>
+              <div class="source-cell">
+                <StatusTag :tone="sourceMeta(row.source).tone">{{ sourceMeta(row.source).label }}</StatusTag>
+                <el-tooltip
+                  v-if="row.origin_recording_id"
+                  :content="`查看来源录制 ${row.origin_recording_id}`"
+                  placement="top"
+                >
+                  <button
+                    type="button"
+                    class="origin-link"
+                    aria-label="查看来源录制"
+                    @click.stop="router.push(`/recorder/${row.origin_recording_id}`)"
+                  >
+                    <el-icon><LinkIcon /></el-icon>
+                  </button>
+                </el-tooltip>
+              </div>
             </template>
           </el-table-column>
-          <el-table-column label="来源录制" width="150">
+          <el-table-column label="最近运行" width="214">
             <template #default="{ row }">
               <button
-                v-if="row.origin_recording_id"
+                v-if="row.last_run"
                 type="button"
-                class="cell-link code-text"
-                @click.stop="router.push(`/recorder/${row.origin_recording_id}`)"
+                class="last-run"
+                :title="lastRunTitle(row.last_run)"
+                @click.stop="openRun(row.last_run.id)"
               >
-                {{ row.origin_recording_id }}
+                <span class="last-run-main">
+                  <StatusTag :tone="runStatusMeta(row.last_run.status).tone">
+                    {{ runStatusMeta(row.last_run.status).label }}
+                  </StatusTag>
+                  <span class="small muted">
+                    {{ formatRelative(row.last_run.started_at ?? row.last_run.created_at) }}
+                  </span>
+                  <span v-if="runDurationMs(row.last_run) !== null" class="small muted">
+                    · {{ formatDuration(runDurationMs(row.last_run)) }}
+                  </span>
+                </span>
+                <span class="last-run-sub">{{ row.last_run.device_serial || '未知设备' }}</span>
               </button>
-              <span v-else class="muted">—</span>
+              <span v-else class="muted small">从未运行</span>
             </template>
           </el-table-column>
-          <el-table-column label="更新时间" width="150">
-            <template #default="{ row }"><span class="small muted">{{ formatShortDateTime(row.updated_at) }}</span></template>
+          <el-table-column label="更新" width="112">
+            <template #default="{ row }">
+              <span class="small muted" :title="formatDateTime(row.updated_at)">
+                {{ formatRelative(row.updated_at) }}
+              </span>
+            </template>
           </el-table-column>
           <el-table-column label="操作" width="176" align="right">
             <template #default="{ row }">
@@ -402,6 +463,7 @@ async function handleImportFile(event: Event): Promise<void> {
                     <el-dropdown-menu>
                       <el-dropdown-item command="duplicate" :icon="CopyDocument">复制</el-dropdown-item>
                       <el-dropdown-item command="export" :icon="Download">导出</el-dropdown-item>
+                      <el-dropdown-item command="copy-id" :icon="CopyDocument">复制脚本 ID</el-dropdown-item>
                       <el-dropdown-item command="delete" :icon="Delete" divided>删除</el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
@@ -527,12 +589,74 @@ async function handleImportFile(event: Event): Promise<void> {
   color: var(--accent);
 }
 
-.library-toolbar {
+.cell-notes {
+  max-width: 420px;
+  overflow: hidden;
+  font-family: var(--font);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
+  gap: 5px;
+  min-width: 0;
+}
+
+.origin-link {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-2);
+  cursor: pointer;
+}
+
+.origin-link:hover {
+  background: var(--surface-3);
+  color: var(--accent);
+}
+
+.last-run {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.last-run:hover .last-run-main {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.last-run-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.last-run-sub {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

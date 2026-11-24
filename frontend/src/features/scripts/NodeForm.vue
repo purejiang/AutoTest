@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowDown, ArrowUp, CopyDocument, Delete } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, CopyDocument, Delete, MoreFilled } from '@element-plus/icons-vue'
 
 import type { OnFail, Retry, StepNode } from '@/types/api'
 import { numberOrNull } from '@/lib/format'
@@ -66,6 +66,13 @@ function setOnFail(value: string): void {
 function setWhen(value: StepNode['when']): void {
   patch({ when: value })
 }
+
+function onNodeCommand(command: string): void {
+  if (command === 'duplicate') emit('duplicate')
+  else if (command === 'up') emit('move', -1)
+  else if (command === 'down') emit('move', 1)
+  else if (command === 'delete') emit('delete')
+}
 </script>
 
 <template>
@@ -73,8 +80,16 @@ function setWhen(value: StepNode['when']): void {
     <div class="node-editor-head">
       <div class="node-editor-meta">
         <StatusTag :tone="meta.tone">{{ meta.icon }} {{ meta.label }}</StatusTag>
-        <span>第 {{ index + 1 }} / {{ total }} 个节点</span>
-        <span class="code-text">id = {{ node.id }}</span>
+        <el-input
+          class="node-name-input"
+          :model-value="node.name"
+          size="small"
+          placeholder="节点名称"
+          aria-label="节点名称"
+          @update:model-value="patch({ name: $event })"
+        />
+        <span class="node-head-sub">第 {{ index + 1 }} / {{ total }}</span>
+        <span class="node-head-sub code-text">id = {{ node.id }}</span>
         <StatusTag v-if="!node.enabled" tone="gray">已禁用</StatusTag>
         <StatusTag v-if="node.when" tone="cyan">带条件</StatusTag>
       </div>
@@ -87,29 +102,32 @@ function setWhen(value: StepNode['when']): void {
           @update:model-value="patch({ enabled: Boolean($event) })"
         />
         <span class="node-head-divider" />
-        <el-button text :icon="CopyDocument" title="复制节点" @click="emit('duplicate')" />
-        <el-button text :icon="ArrowUp" title="上移" :disabled="index <= 0" @click="emit('move', -1)" />
-        <el-button text :icon="ArrowDown" title="下移" :disabled="index >= total - 1" @click="emit('move', 1)" />
-        <el-button
-          text
-          type="danger"
-          :icon="Delete"
-          title="删除节点"
-          :disabled="total <= 1"
-          @click="emit('delete')"
-        />
+        <el-dropdown trigger="click" @command="onNodeCommand">
+          <el-button text :icon="MoreFilled" title="更多节点操作" />
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="duplicate" :icon="CopyDocument">复制节点</el-dropdown-item>
+              <el-dropdown-item command="up" :icon="ArrowUp" :disabled="index <= 0">上移</el-dropdown-item>
+              <el-dropdown-item command="down" :icon="ArrowDown" :disabled="index >= total - 1">
+                下移
+              </el-dropdown-item>
+              <el-dropdown-item command="delete" :icon="Delete" divided :disabled="total <= 1">
+                删除节点
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
     <el-form class="node-editor-form" label-position="top" size="small" @submit.prevent>
-      <div class="form-grid">
-        <el-form-item label="节点名称" class="full">
-          <el-input
-            :model-value="node.name"
-            placeholder="例如：点击登录按钮"
-            @update:model-value="patch({ name: $event })"
-          />
-        </el-form-item>
+      <div class="section-label">
+        动作参数
+        <span class="hint">{{ meta.label }} 的主配置</span>
+      </div>
+      <ParamsEditor :type="node.type" :params="node.params" @change="patch({ params: $event })" />
+
+      <div class="form-grid" style="margin-top: 6px">
         <el-form-item label="描述" class="full">
           <el-input
             :model-value="node.description"
@@ -118,44 +136,6 @@ function setWhen(value: StepNode['when']): void {
             autosize
             placeholder="这一步做什么（可留空）"
             @update:model-value="patch({ description: $event })"
-          />
-        </el-form-item>
-        <el-form-item label="节点超时 (ms)" class="hint">
-          <el-input-number
-            :model-value="node.timeout_ms ?? undefined"
-            :min="100"
-            :max="600000"
-            :placeholder="`继承脚本默认（${defaultTimeoutMs} ms）`"
-            controls-position="right"
-            style="width: 100%"
-            @update:model-value="patch({ timeout_ms: numberOrNull($event) })"
-          />
-        </el-form-item>
-        <el-form-item label="重跑安全性">
-          <el-select
-            :model-value="node.rerun_safety"
-            style="width: 100%"
-            @update:model-value="patch({ rerun_safety: $event })"
-          >
-            <el-option
-              v-for="option in RERUN_SAFETY_OPTIONS"
-              :key="option.value"
-              :value="option.value"
-              :label="option.label"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="标签" class="full">
-          <el-select
-            :model-value="node.tags"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            :reserve-keyword="false"
-            placeholder="回车添加标签"
-            style="width: 100%"
-            @update:model-value="patch({ tags: $event as string[] })"
           />
         </el-form-item>
       </div>
@@ -167,9 +147,27 @@ function setWhen(value: StepNode['when']): void {
       </div>
       <WhenEditor :model-value="node.when" @update:model-value="setWhen" />
 
-      <div class="section-label">失败与重试</div>
+      <div class="section-label">执行与容错</div>
       <div class="form-grid">
-        <el-form-item label="重试">
+        <el-form-item label="节点超时 (ms)" class="hint">
+          <el-input-number
+            :model-value="node.timeout_ms ?? undefined"
+            :min="100"
+            :max="600000"
+            :placeholder="`继承脚本默认（${defaultTimeoutMs} ms）`"
+            controls-position="right"
+            style="width: 100%"
+            @update:model-value="patch({ timeout_ms: numberOrNull($event) })"
+          />
+        </el-form-item>
+        <el-form-item label="失败截图">
+          <el-switch
+            :model-value="node.screenshot_on_fail"
+            size="small"
+            @update:model-value="patch({ screenshot_on_fail: Boolean($event) })"
+          />
+        </el-form-item>
+        <el-form-item label="重试" class="full">
           <div class="row wrap">
             <el-switch
               :model-value="node.retry !== null"
@@ -205,7 +203,7 @@ function setWhen(value: StepNode['when']): void {
             </span>
           </div>
         </el-form-item>
-        <el-form-item label="失败策略 on_fail">
+        <el-form-item label="失败策略 on_fail" class="full">
           <div class="row wrap">
             <el-select :model-value="onFailAction" style="width: 160px" @update:model-value="setOnFail($event)">
               <el-option v-for="option in ON_FAIL_OPTIONS" :key="option.value" :value="option.value" :label="option.label" />
@@ -229,26 +227,43 @@ function setWhen(value: StepNode['when']): void {
             继承脚本默认：{{ defaultOnFail === 'abort' ? '中止运行' : '继续下一步' }}
           </div>
         </el-form-item>
-        <el-form-item label="失败截图">
-          <el-switch
-            :model-value="node.screenshot_on_fail"
-            size="small"
-            @update:model-value="patch({ screenshot_on_fail: Boolean($event) })"
-          />
-        </el-form-item>
       </div>
-
-      <div class="section-label">参数 params</div>
-      <ParamsEditor :type="node.type" :params="node.params" @change="patch({ params: $event })" />
 
       <el-collapse v-model="advancedOpen" style="margin-top: 8px">
         <el-collapse-item name="advanced">
           <template #title>
-            高级 / 节奏
-            <span class="hint" style="margin-left: 6px">停顿只影响节奏，不产生步骤</span>
+            高级 / 元数据
+            <span class="hint" style="margin-left: 6px">重跑安全性、标签、执行节奏</span>
           </template>
           <div class="form-grid">
-            <el-form-item label="执行前停顿（ms，仅节奏，不产生步骤）">
+            <el-form-item label="重跑安全性">
+              <el-select
+                :model-value="node.rerun_safety"
+                style="width: 100%"
+                @update:model-value="patch({ rerun_safety: $event })"
+              >
+                <el-option
+                  v-for="option in RERUN_SAFETY_OPTIONS"
+                  :key="option.value"
+                  :value="option.value"
+                  :label="option.label"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="标签">
+              <el-select
+                :model-value="node.tags"
+                multiple
+                filterable
+                allow-create
+                default-first-option
+                :reserve-keyword="false"
+                placeholder="回车添加标签"
+                style="width: 100%"
+                @update:model-value="patch({ tags: $event as string[] })"
+              />
+            </el-form-item>
+            <el-form-item label="执行前停顿（ms）">
               <el-input-number
                 :model-value="node.delay_before_ms"
                 :min="0"
@@ -258,7 +273,7 @@ function setWhen(value: StepNode['when']): void {
                 @update:model-value="patch({ delay_before_ms: numberOrNull($event) ?? 0 })"
               />
             </el-form-item>
-            <el-form-item label="执行后停顿（ms，仅节奏，不产生步骤）">
+            <el-form-item label="执行后停顿（ms）">
               <el-input-number
                 :model-value="node.delay_after_ms"
                 :min="0"
@@ -270,7 +285,7 @@ function setWhen(value: StepNode['when']): void {
             </el-form-item>
           </div>
           <div class="hint">
-            停顿位于节点动作之外，仅用于节奏控制；真正需要等待界面变化时请使用 wait 节点或执行条件。
+            停顿位于节点动作之外，只影响节奏；真正等待界面变化时使用 wait 节点或执行条件。
           </div>
         </el-collapse-item>
       </el-collapse>
