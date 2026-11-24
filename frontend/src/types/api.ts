@@ -456,6 +456,8 @@ export interface SettingEntry {
   max?: number
   /** type='enum' 时的可选项 */
   options?: Array<{ label: string; value: string }>
+  /** 代码默认值（GET /api/settings 的 additive 字段） */
+  default?: unknown
 }
 
 export interface SettingsResponse {

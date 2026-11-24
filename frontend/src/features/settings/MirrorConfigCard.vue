@@ -140,6 +140,22 @@ function sourceTitle(key: string): string {
   if (source === 'env') return '来自环境变量，优先级最高；需取消环境变量并重启进程'
   return '当前使用代码默认值'
 }
+
+function hasDefault(key: string): boolean {
+  return props.schema[key]?.default !== undefined
+}
+
+function defaultLabel(key: string): string {
+  const value = props.schema[key]?.default
+  if (key === 'scrcpy.video_bit_rate') {
+    const bps = Number(value)
+    return Number.isFinite(bps) ? `${Math.round((bps / 1_000_000) * 10) / 10} Mbps` : '—'
+  }
+  if (value === undefined || value === null || value === '') {
+    return key === 'scrcpy.crop' ? '不裁剪' : '—'
+  }
+  return String(value)
+}
 </script>
 
 <template>
@@ -184,7 +200,6 @@ function sourceTitle(key: string): string {
         >
           恢复默认画质
         </el-button>
-        <span> · 默认 {{ DEFAULT_PRESET.detail }}</span>
       </div>
 
       <div class="field-grid">
@@ -218,6 +233,9 @@ function sourceTitle(key: string): string {
             :disabled="disabled"
             @update:model-value="updateNumber('scrcpy.max_size', $event)"
           />
+          <div v-if="hasDefault('scrcpy.max_size')" class="field-default">
+            默认：{{ defaultLabel('scrcpy.max_size') }}
+          </div>
         </div>
 
         <div class="field">
@@ -250,6 +268,9 @@ function sourceTitle(key: string): string {
             :disabled="disabled"
             @update:model-value="updateNumber('scrcpy.max_fps', $event)"
           />
+          <div v-if="hasDefault('scrcpy.max_fps')" class="field-default">
+            默认：{{ defaultLabel('scrcpy.max_fps') }}
+          </div>
         </div>
 
         <div class="field">
@@ -282,6 +303,9 @@ function sourceTitle(key: string): string {
             :disabled="disabled"
             @update:model-value="updateBitrate"
           />
+          <div v-if="hasDefault('scrcpy.video_bit_rate')" class="field-default">
+            默认：{{ defaultLabel('scrcpy.video_bit_rate') }}
+          </div>
         </div>
 
         <div class="field">
@@ -312,6 +336,9 @@ function sourceTitle(key: string): string {
             :disabled="disabled"
             @update:model-value="emit('change', 'scrcpy.crop', $event)"
           />
+          <div v-if="hasDefault('scrcpy.crop')" class="field-default">
+            默认：{{ defaultLabel('scrcpy.crop') }}
+          </div>
         </div>
       </div>
 
@@ -403,6 +430,13 @@ function sourceTitle(key: string): string {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+.field-default {
+  color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
 }
 
 .field-label {

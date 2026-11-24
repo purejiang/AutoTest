@@ -26,6 +26,30 @@ function sourceTitle(source: 'default' | 'file' | 'db' | 'env'): string {
   if (source === 'env') return '来自环境变量，优先级最高；需取消环境变量并重启进程'
   return '当前使用代码默认值'
 }
+
+const EMPTY_DEFAULT_LABELS: Record<string, string> = {
+  'adb.path': '留空（自动探测）',
+  'runtime.data_dir': '留空（默认数据目录）',
+  'runtime.frontend_dir': '留空（默认前端目录）',
+  'runtime.artifacts_dir': '留空（默认产物目录）',
+  'scrcpy.crop': '不裁剪',
+  'scrcpy.jar': '留空（内置版本）',
+  'security.token': '留空（不校验）',
+}
+
+function defaultLabel(entry: SettingEntry): string | null {
+  if (entry.default === undefined) return null
+  const value = entry.default
+  if (entry.type === 'bool') return value ? '开启' : '关闭'
+  if (entry.type === 'enum') {
+    const option = entry.options?.find((item) => item.value === value)
+    return option ? option.label.split('（')[0] : String(value)
+  }
+  if (value === '' || value === null) {
+    return EMPTY_DEFAULT_LABELS[entry.key] ?? '留空'
+  }
+  return String(value)
+}
 </script>
 
 <template>
@@ -84,6 +108,9 @@ function sourceTitle(source: 'default' | 'file' | 'db' | 'env'): string {
       class="code-text"
       @update:model-value="update($event)"
     />
+    <div v-if="defaultLabel(entry) !== null" class="setting-default">
+      默认：{{ defaultLabel(entry) }}
+    </div>
     <div v-if="entry.desc" class="unit">{{ entry.desc }}</div>
   </div>
 </template>

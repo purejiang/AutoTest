@@ -276,7 +276,8 @@ GET /api/reports/{id}/download（zip，支持 Range）；DELETE /api/reports/{id
 GET /api/maintenance/stats；POST /api/maintenance/cleanup {retention_days?,dry_run?}。
 
 ### 7.6 设置（be-core）
-GET /api/settings → {effective, sources}；PUT /api/settings {values}（null=删该层覆盖）；
+GET /api/settings → {effective, sources, schema}（schema 每项含 additive `default` 代码默认值）；
+PUT /api/settings {values}（null=删该层覆盖）；
 DELETE /api/settings/{key}；POST /api/settings/reset；
 GET /api/settings/scrcpy/options（白名单+校验，渲染表单用）；
 GET /api/health → {status,version,db,adb:{path,version,devices},data_dir}。

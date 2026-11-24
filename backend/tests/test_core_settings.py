@@ -17,7 +17,10 @@ def test_default_response_shape(core_client) -> None:
     assert body["sources"]["engine.default_timeout_ms"] == "default"
     assert body["effective"]["engine.default_timeout_ms"] == 8000
     assert body["sources"]["runtime.data_dir"] == "file"
-    keys = {item["key"] for item in body["schema"]}
+    schema = {item["key"]: item for item in body["schema"]}
+    assert schema["engine.default_timeout_ms"]["default"] == 8000
+    assert schema["security.token"]["default"] == ""
+    keys = set(schema)
     assert {"adb.path", "engine.poll_interval_ms", "scrcpy.max_size"} <= keys
     assert {"adb.connect_timeout_s", "scrcpy.jar"} <= keys
     assert body["effective"]["adb.connect_timeout_s"] == 20

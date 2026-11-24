@@ -111,11 +111,19 @@ def _delete_rows(session: Session, keys: list[str]) -> None:
 
 # ---------------------------------------------------------------- 对外 API
 def response() -> dict[str, Any]:
-    """GET /api/settings 响应：{effective, sources, schema}。"""
+    """GET /api/settings 响应：{effective, sources, schema}。
+
+    schema 每项额外带 `default`（代码默认值），设置页在输入框下方展示默认值；
+    这是 additive 字段，不影响已有消费方。
+    """
+    schema = [
+        {**entry, "default": config.DEFAULTS.get(entry["key"])}
+        for entry in config.SETTINGS_SCHEMA
+    ]
     return {
         "effective": config.effective(),
         "sources": config.sources(),
-        "schema": config.SETTINGS_SCHEMA,
+        "schema": schema,
     }
 
 
