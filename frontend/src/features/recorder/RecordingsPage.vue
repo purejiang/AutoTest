@@ -13,7 +13,6 @@ import {
   recordingStatusMeta,
 } from '@/lib/format'
 import { notifyBulkDeleteResult } from '@/lib/bulk'
-import PageHead from '@/components/PageHead.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import CreateRecordingDialog from './CreateRecordingDialog.vue'
 
@@ -145,19 +144,7 @@ async function remove(recording: Recording): Promise<void> {
 
 <template>
   <div class="page">
-    <PageHead
-      title="录制草稿"
-      :count="total"
-      subtitle="只收录镜像录制 / 真机录制等操作录制"
-    >
-      <template #actions>
-        <el-button :icon="Refresh" :loading="recordingsQuery.isFetching.value" @click="refreshRecordings">
-          刷新
-        </el-button>
-        <el-button type="primary" :icon="Plus" @click="createOpen = true">新建真机录制</el-button>
-      </template>
-    </PageHead>
-
+    <h1 class="visually-hidden">录制草稿</h1>
     <div class="recording-notice">
       <el-icon><InfoFilled /></el-icon>
       <span>
@@ -165,6 +152,15 @@ async function remove(recording: Recording): Promise<void> {
         <strong>视频刷新即丢失</strong>。
       </span>
       <span class="spacer" />
+      <el-button
+        size="small"
+        :icon="Refresh"
+        :loading="recordingsQuery.isFetching.value"
+        title="刷新"
+        aria-label="刷新"
+        @click="refreshRecordings"
+      />
+      <el-button size="small" type="primary" :icon="Plus" @click="createOpen = true">新建真机录制</el-button>
       <el-button size="small" :icon="VideoCamera" @click="goConsoleRecord">去控制台录制</el-button>
     </div>
 

@@ -26,7 +26,6 @@ import {
 import type { SettingEntry } from '@/types/api'
 import { formatBytes, formatDateTime, prettyJson } from '@/lib/format'
 import { useTheme, type ThemeChoice } from '@/composables/useTheme'
-import PageHead from '@/components/PageHead.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import MirrorConfigCard from './MirrorConfigCard.vue'
 import RestartHint from './RestartHint.vue'
@@ -387,36 +386,37 @@ function applyThemeChoice(choice: ThemeChoice): void {
 
 <template>
   <div class="page">
-    <PageHead title="设置" subtitle="配置优先级：默认 &lt; 文件 &lt; 数据库 &lt; 环境变量">
-      <template #actions>
-        <StatusTag v-if="showSavedTag" tone="green" dot>已保存</StatusTag>
-        <el-tooltip
-          v-if="hasOverrides"
-          :content="overrideTooltip"
-          placement="bottom-end"
-          popper-class="settings-override-tooltip"
-        >
-          <StatusTag tone="blue">{{ overrideCount }} 项使用覆盖值</StatusTag>
-        </el-tooltip>
-        <el-dropdown trigger="click" placement="bottom-end" @command="onMoreCommand">
-          <el-button
-            size="small"
-            class="page-more"
-            :icon="MoreFilled"
-            title="更多设置操作"
-            aria-label="更多设置操作"
-          />
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="reset" :icon="RefreshLeft" :disabled="resetMutation.isPending.value">
-                恢复默认
-              </el-dropdown-item>
-              <el-dropdown-item command="reload" :icon="Refresh">重新加载</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-      </template>
-    </PageHead>
+    <h1 class="visually-hidden">设置</h1>
+    <div class="settings-actions">
+      <span class="settings-priority">配置优先级：默认 &lt; 文件 &lt; 数据库 &lt; 环境变量</span>
+      <span class="spacer" />
+      <StatusTag v-if="showSavedTag" tone="green" dot>已保存</StatusTag>
+      <el-tooltip
+        v-if="hasOverrides"
+        :content="overrideTooltip"
+        placement="bottom-end"
+        popper-class="settings-override-tooltip"
+      >
+        <StatusTag tone="blue">{{ overrideCount }} 项使用覆盖值</StatusTag>
+      </el-tooltip>
+      <el-dropdown trigger="click" placement="bottom-end" @command="onMoreCommand">
+        <el-button
+          size="small"
+          class="page-more"
+          :icon="MoreFilled"
+          title="更多设置操作"
+          aria-label="更多设置操作"
+        />
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="reset" :icon="RefreshLeft" :disabled="resetMutation.isPending.value">
+              恢复默认
+            </el-dropdown-item>
+            <el-dropdown-item command="reload" :icon="Refresh">重新加载</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
 
     <div v-if="settingsQuery.isLoading.value" class="card">
       <div class="card-body"><el-skeleton :rows="8" animated /></div>
@@ -936,6 +936,24 @@ function applyThemeChoice(choice: ThemeChoice): void {
   margin-left: 2px;
 }
 
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 30px;
+}
+
+.settings-actions .spacer {
+  flex: 1;
+}
+
+.settings-priority {
+  color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .settings-layout {
   display: grid;
   grid-template-columns: 184px minmax(0, 1fr);
@@ -1251,6 +1269,9 @@ function applyThemeChoice(choice: ThemeChoice): void {
 }
 
 @media (max-width: 640px) {
+  .settings-priority {
+    display: none;
+  }
   .theme-choices,
   .field-row,
   .kv-grid {
