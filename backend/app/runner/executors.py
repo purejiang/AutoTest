@@ -27,6 +27,7 @@ from .context import (
     RunFailed,
     RunSnapshot,
     RunStopped,
+    StepTimeout,
 )
 
 # ---------------------------------------------------------------- 选择器缝合线
@@ -255,6 +256,7 @@ def _node_text(node: Any) -> str:
 # ---------------------------------------------------------------- 12 类执行器
 def execute_click(ctx: RunContext, step: Any) -> dict[str, Any]:
     resolved = _resolve(ctx, step.params.target)
+    ctx.ensure_actionable()  # 超时/stop 强切后不再产生迟到的点击
     ctx.driver.click(resolved.x, resolved.y)
     return _resolved_output(resolved)
 
@@ -262,6 +264,7 @@ def execute_click(ctx: RunContext, step: Any) -> dict[str, Any]:
 def execute_long_click(ctx: RunContext, step: Any) -> dict[str, Any]:
     resolved = _resolve(ctx, step.params.target)
     duration = int(getattr(step.params, "duration_ms", 800) or 800)
+    ctx.ensure_actionable()
     ctx.driver.long_press(resolved.x, resolved.y, duration_ms=duration)
     return {**_resolved_output(resolved), "duration_ms": duration}
 
@@ -306,18 +309,28 @@ def _try_scrcpy_path(
     duration_ms: int,
     output: dict[str, Any],
 ) -> bool:
-    """有活跃镜像时用 scrcpy control 通道回放轨迹（含变速/停顿），最贴近录制。"""
+    """有活跃镜像时用 scrcpy control 通道回放轨迹（含变速/停顿），最贴近录制。
+
+    回放可被 stop / 节点超时打断：中止时注入器会补 UP 并抛 ``InjectionAborted``，
+    这里必须把中断原样抛回引擎，**不能**再回落到 u2 两点 swipe（否则 stop 后还会产生新手势）。
+    """
     serial = getattr(ctx.driver, "serial", None)
     if not serial or len(samples) < 2:
         return False
+    from ..android.scrcpy import InjectionAborted  # 局部导入：避免 runner 模块启动即依赖媒体层
+
     try:
         from ..mirror import get_session
 
         session = get_session(str(serial))
         if session is None or not getattr(session, "active", False):
             return False
-        if not session.inject_path(samples, duration_ms):
+        if not session.inject_path(samples, duration_ms, should_abort=ctx.abort_requested):
             return False
+    except InjectionAborted:
+        if ctx.should_stop():
+            raise RunStopped("stop requested during gesture replay") from None
+        raise StepTimeout("gesture replay aborted by step timeout") from None
     except Exception as exc:  # noqa: BLE001 - 镜像/控制通道不可用时回退 u2
         logger.warning("scrcpy path replay failed, fallback to u2: %s", exc)
         return False
@@ -337,9 +350,11 @@ def _execute_gesture(ctx: RunContext, step: Any, default_duration: int) -> dict[
         "duration_ms": duration,
     }
     samples = _recorded_path_samples(getattr(step.params, "path", None))
+    ctx.ensure_actionable()
     if samples and _try_scrcpy_path(ctx, samples, duration, output):
         return output
     # 没有镜像控制通道时退化为两点头滑动；u2 的 swipePoints 在部分游戏/设备上会卡死。
+    ctx.ensure_actionable()
     ctx.driver.swipe(start.x, start.y, end.x, end.y, duration_ms=duration)
     return output
 
@@ -364,15 +379,18 @@ def execute_drag(ctx: RunContext, step: Any) -> dict[str, Any]:
         "duration_ms": duration,
     }
     samples = _recorded_path_samples(getattr(step.params, "path", None))
+    ctx.ensure_actionable()
     if samples and _try_scrcpy_path(ctx, samples, duration, output):
         return output
 
     # 录制出来的“慢滑动”如果拿不到镜像通道，走两点 swipe 比 native drag 更稳：
     # 真机上 native drag 在 Unity 等界面会长时间不返回，直接把节点卡到超时。
     if samples:
+        ctx.ensure_actionable()
         ctx.driver.swipe(start.x, start.y, end.x, end.y, duration_ms=duration)
         return output
 
+    ctx.ensure_actionable()
     drag_fn = getattr(ctx.driver, "drag", None)
     if callable(drag_fn):
         drag_fn(start.x, start.y, end.x, end.y, duration_ms=duration)
@@ -388,11 +406,14 @@ def execute_input(ctx: RunContext, step: Any) -> dict[str, Any]:
     target = getattr(params, "target", None)
     if target is not None:
         resolved = _resolve(ctx, target)
+        ctx.ensure_actionable()
         ctx.driver.click(resolved.x, resolved.y)
         output["point"] = _resolved_output(resolved)
     if getattr(params, "clear_first", False):
+        ctx.ensure_actionable()
         ctx.driver.clear_text()
         output["cleared"] = True
+    ctx.ensure_actionable()
     ctx.driver.input_text(str(text))
     return output
 
@@ -400,6 +421,7 @@ def execute_input(ctx: RunContext, step: Any) -> dict[str, Any]:
 def execute_key(ctx: RunContext, step: Any) -> dict[str, Any]:
     params = step.params
     key = params.key if getattr(params, "key", None) is not None else params.keycode
+    ctx.ensure_actionable()
     ctx.driver.key(key)
     return {"key": key}
 
@@ -436,6 +458,7 @@ def execute_app(ctx: RunContext, step: Any) -> dict[str, Any]:
         package = foreground.get("package")
     if not package:
         raise NonRetryableError("app step requires package (no foreground package available)")
+    ctx.ensure_actionable()
     if action == "launch":
         ctx.driver.app_start(package, activity)
     elif action == "stop":
@@ -445,6 +468,7 @@ def execute_app(ctx: RunContext, step: Any) -> dict[str, Any]:
     else:  # restart
         ctx.driver.app_stop(package)
         ctx.sleep_interruptible(300)
+        ctx.ensure_actionable()
         ctx.driver.app_start(package, activity)
     return {"action": action, "package": package, "activity": activity}
 
@@ -453,6 +477,7 @@ def execute_shell(ctx: RunContext, step: Any) -> dict[str, Any]:
     params = step.params
     command = str(ctx.interpolate(params.command))
     timeout_s = max(0.1, int(params.timeout_ms or 10_000) / 1000.0)
+    ctx.ensure_actionable()
     result = ctx.driver.shell(command, timeout_s=timeout_s)
     stdout = str(getattr(result, "stdout", "") or "")
     stderr = str(getattr(result, "stderr", "") or "")
@@ -510,6 +535,7 @@ def execute_assert(ctx: RunContext, step: Any) -> dict[str, Any]:
 def execute_sub_script(ctx: RunContext, step: Any) -> dict[str, Any]:
     params = step.params
     script_id = str(ctx.interpolate(params.script_id))
+    ctx.ensure_actionable()
     child_depth = ctx.depth + 1
     if child_depth > MAX_SUB_DEPTH:
         raise SubScriptDepthExceeded(

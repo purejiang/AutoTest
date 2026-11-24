@@ -356,10 +356,12 @@ export function usePointerGestures(options: PointerGesturesOptions) {
         inFlight = true
         await sendTouch('up', point)
         inFlight = false
-        void cancelled
       })()
       return
     }
+    // 浏览器取消（系统手势/焦点丢失/上下文菜单）不是一次用户输入：
+    // 流式模式上面已经补发了 up（防止设备端指针悬空），回落模式不要再补一个 tap/long_press。
+    if (cancelled) return
     if (dragState.committed) return
     void fireBuffered(dragState, point)
   }

@@ -39,6 +39,14 @@ class StepTimeout(Exception):
     """节点超出 timeout_ms。"""
 
 
+class StepAbandoned(StepTimeout):
+    """节点已超时且执行线程在短收尾窗口内仍未退出。
+
+    此时不能立即重试：旧线程还握着一个未返回的设备调用，重试会让同一节点产生
+    两个并发执行（迟到的点击/滑动）。引擎仍按 STEP_TIMEOUT 记录错误。
+    """
+
+
 class NonRetryableError(Exception):
     """不参与 retry 的错误（断言失败、脚本/配置错误）。"""
 
@@ -72,6 +80,19 @@ class BudgetExceeded(RunFailed):
 class TotalTimeout(RunFailed):
     def __init__(self, max_total_ms: int) -> None:
         super().__init__("TOTAL_TIMEOUT", f"run exceeded max total active time ({max_total_ms} ms)")
+
+
+class StepAttempt:
+    """一次节点尝试的取消令牌。
+
+    引擎在节点超时 / stop 强切时置位；执行线程在下一个检查点（定位轮询、注入前）
+    看到后立即放弃，避免超时后继续向设备注入迟到的点击/滑动。
+    """
+
+    __slots__ = ("cancelled",)
+
+    def __init__(self) -> None:
+        self.cancelled = threading.Event()
 
 
 # ---------------------------------------------------------------- 脚本快照
@@ -167,6 +188,16 @@ class RunContext:
         self.current_step_id: str | None = None
         self.step_timeout_ms: int | None = None
         self._step_deadline: float | None = None
+        # 节点级取消：thread-local 保存"本线程正在执行的那次 attempt"，
+        # 引擎线程置位后，旧 worker 即使下一次 attempt 已开始也仍能看到自己的取消。
+        self._attempt_local = threading.local()
+        self._active_attempt: StepAttempt | None = None
+        self._step_cancel = threading.Event()
+        # sub_script 子上下文继承父上下文的当前节点取消信号：
+        # 父节点超时后，子脚本正在跑的节点/轮询也必须停止。
+        self._inherited_cancel: threading.Event | None = (
+            parent._step_cancel if parent is not None else None
+        )
 
         merged: dict[str, str] = {}
         if parent is not None:
@@ -216,16 +247,50 @@ class RunContext:
         return self._step_deadline is not None and time.monotonic() >= self._step_deadline
 
     def abort_requested(self) -> bool:
-        """传给 selectors 的 should_abort：stop 或节点超时都尽快打断轮询。"""
-        return self.should_stop() or self.step_expired()
+        """传给 selectors 的 should_abort：stop / 节点超时 / 引擎强切都尽快打断轮询。"""
+        return self.should_stop() or self.step_expired() or self.step_cancelled()
 
-    def begin_step(self, timeout_ms: int) -> None:
+    def step_cancelled(self) -> bool:
+        """本次节点尝试是否已被引擎取消（超时/stop 强切），或父上下文已取消。"""
+        token = getattr(self._attempt_local, "token", None)
+        if token is not None and token.cancelled.is_set():
+            return True
+        if self._step_cancel.is_set():
+            return True
+        return bool(self._inherited_cancel is not None and self._inherited_cancel.is_set())
+
+    def bind_attempt(self, attempt: StepAttempt) -> None:
+        """节点执行线程启动时绑定本次 attempt 的取消令牌（thread-local）。"""
+        self._attempt_local.token = attempt
+
+    def unbind_attempt(self) -> None:
+        self._attempt_local.token = None
+
+    def begin_step(self, timeout_ms: int, attempt: StepAttempt | None = None) -> StepAttempt:
+        self._step_cancel.clear()
         self.step_timeout_ms = int(timeout_ms)
         self._step_deadline = time.monotonic() + max(0, int(timeout_ms)) / 1000.0
+        self._active_attempt = attempt or StepAttempt()
+        return self._active_attempt
+
+    def cancel_step(self) -> None:
+        """引擎线程调用：取消当前节点执行（不改变 run 状态）。"""
+        self._step_cancel.set()
+        attempt = self._active_attempt
+        if attempt is not None:
+            attempt.cancelled.set()
 
     def end_step(self) -> None:
         self.step_timeout_ms = None
         self._step_deadline = None
+        self._active_attempt = None
+
+    def ensure_actionable(self) -> None:
+        """注入设备前的最后一道检查：stop / 超时 / 引擎强切后不再产生新动作。"""
+        if self.should_stop():
+            raise RunStopped("stop requested")
+        if self.step_cancelled() or self.step_expired():
+            raise StepTimeout("step cancelled before action")
 
     def wait_if_paused(self) -> None:
         """暂停在引擎循环内阻塞（250ms 轮询以响应 stop）；由第一个观察者宣布进入/离开。"""

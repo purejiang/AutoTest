@@ -578,3 +578,41 @@ def test_scrcpy_inject_path_keeps_move_timings(monkeypatch) -> None:
     # 100ms、200ms 两段移动 + 最后停到 500ms（last dt=300ms）
     assert len(sleeps) == 3
     assert sum(sleeps) == pytest.approx(0.5, abs=0.05)
+
+
+def test_scrcpy_inject_path_abort_sends_up(monkeypatch) -> None:
+    """stop/超时打断轨迹回放：必须补一个 UP，并抛 InjectionAborted 让调用方不要回退。"""
+    server = object.__new__(scrcpy.ScrcpyServer)
+    sent: list[bytes] = []
+    clock = [0.0]
+
+    monkeypatch.setattr(server, "send_control", lambda payload: sent.append(payload) or True)
+    monkeypatch.setattr(scrcpy.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(scrcpy.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+
+    # DOWN 之后、下一段 MOVE 之前取消（模拟 stop）
+    def should_abort() -> bool:
+        return len(sent) >= 1
+
+    with pytest.raises(scrcpy.InjectionAborted):
+        server.inject_path(
+            [(0, 10, 20), (1000, 50, 60)],
+            1000,
+            1080,
+            1920,
+            should_abort=should_abort,
+        )
+
+    actions = [payload[1] for payload in sent]
+    assert actions[0] == scrcpy.MOTION_DOWN
+    assert actions[-1] == scrcpy.MOTION_UP
+
+
+def test_scrcpy_inject_path_abort_before_down_sends_nothing(monkeypatch) -> None:
+    server = object.__new__(scrcpy.ScrcpyServer)
+    sent: list[bytes] = []
+    monkeypatch.setattr(server, "send_control", lambda payload: sent.append(payload) or True)
+
+    with pytest.raises(scrcpy.InjectionAborted):
+        server.inject_path([(0, 10, 20), (100, 50, 60)], 100, 1080, 1920, should_abort=lambda: True)
+    assert sent == []

@@ -209,6 +209,7 @@ function openConnect(): void {
           <el-icon :size="34" class="empty-ico"><Monitor /></el-icon>
           <h2>还没有可用的设备</h2>
           <p>用 USB 连接并授权调试，或连接一台网络设备后开始镜像与手动控制。</p>
+          <p>手机已连接但仍看不到设备？请在「设置 → 工具链」检查 adb 路径与版本。</p>
           <div class="empty-actions">
             <el-button type="primary" :icon="Link" @click="openConnect">连接设备</el-button>
             <el-button :icon="Refresh" :loading="devicesQuery.isFetching.value" @click="refreshDevices">

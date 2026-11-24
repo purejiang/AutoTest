@@ -154,7 +154,7 @@
 
 | 环节 | 旧实现 | 现在 |
 |---|---|---|
-| 滑动轨迹 | 只记起点/终点，回放用 u2 两点直线 swipe | **录完整轨迹**（down/move…/up 的每个采样点，含相对时间），脚本节点 `params.path=[{x,y,dt_ms}…]`；回放用 `driver.swipe_path`（u2 `swipe_points`）按原轨迹重演 |
+| 滑动轨迹 | 只记起点/终点，回放用 u2 两点直线 swipe | **录完整轨迹**（down/move…/up 的每个采样点，含相对时间），脚本节点 `params.path=[{x,y,dt_ms}…]`；有活跃镜像时回放用 scrcpy control 通道逐点注入（保留轨迹/变速/末端停顿），无镜像时退化为两点 u2 swipe（u2 `swipe_points` 因 Unity/游戏设备兼容性弃用） |
 | 操作间隔 | 截断到最多 3s | 上限 15s（加载/思考的等待不会被压掉），首节点 800ms |
 | 瞬时动作 | tap 时长丢失 | tap/long_press 都带录制时的 `duration_ms` |
 

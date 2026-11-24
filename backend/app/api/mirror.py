@@ -157,6 +157,11 @@ def serial_of(session: Any) -> str:
     return str(getattr(session, "serial", "") or "")
 
 
+def _touch_owner(sub: Any) -> str:
+    """流式手势归属：每个 WS 订阅者一个 owner，断线时只释放自己的手势。"""
+    return f"ws:{int(getattr(sub, 'id', 0) or 0)}"
+
+
 async def _receive_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
     """处理 client→server 控制消息（ping / request_keyframe），回复走订阅队列保证发送串行。"""
     while True:
@@ -195,8 +200,15 @@ async def _receive_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
                 from .devices import apply_stream_touch  # 局部导入避免循环依赖
 
                 # WS 通道不阻塞画面：设备被运行占用时静默忽略（REST 端点才抛 409）
-                await asyncio.to_thread(apply_stream_touch, serial_of(session), action, nx, ny,
-                                        raise_on_busy=False)
+                await asyncio.to_thread(
+                    apply_stream_touch,
+                    serial_of(session),
+                    action,
+                    nx,
+                    ny,
+                    raise_on_busy=False,
+                    owner=_touch_owner(sub),
+                )
             except Exception:  # noqa: BLE001 - 单条触摸失败不能打断镜像
                 logger.debug("mirror ws touch failed", exc_info=True)
         else:
@@ -273,3 +285,10 @@ async def mirror_ws(websocket: WebSocket, serial: str, token: str | None = Query
         except (asyncio.CancelledError, RuntimeError):
             pass
         session.unsubscribe(sub)
+        # 浏览器断线可能发生在 pointerup 之前：补一个 UP，避免设备端指针永久悬空。
+        try:
+            from .devices import release_stream_touch  # 局部导入避免循环依赖
+
+            release_stream_touch(serial_of(session), _touch_owner(sub))
+        except Exception:  # noqa: BLE001 - 释放失败不能影响 WS 清理
+            logger.debug("release stream touch on ws close failed", exc_info=True)

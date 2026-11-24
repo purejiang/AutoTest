@@ -105,9 +105,19 @@ def _fake_mirror_session(monkeypatch):
 
         def __init__(self) -> None:
             self.calls: list[tuple[list[tuple[int, int, int]], int]] = []
+            self.aborted = False
 
-        def inject_path(self, samples: list[tuple[int, int, int]], duration_ms: int) -> bool:
+        def inject_path(
+            self,
+            samples: list[tuple[int, int, int]],
+            duration_ms: int,
+            should_abort=None,
+        ) -> bool:
             self.calls.append((list(samples), duration_ms))
+            if self.aborted:
+                from app.android.scrcpy import InjectionAborted
+
+                raise InjectionAborted("aborted in test")
             return True
 
     fake = FakeSession()
@@ -151,6 +161,31 @@ def test_swipe_with_recorded_path_uses_scrcpy_injection(runner_env, monkeypatch)
     assert output["duration_ms"] == 450
     assert runner_env.driver.calls_of("swipe") == []
     assert runner_env.driver.calls_of("swipe_path") == []
+
+
+def test_swipe_path_abort_does_not_fall_back_to_u2(runner_env, monkeypatch):
+    """轨迹回放被 stop/超时打断时，不能再退化成两点 u2 swipe（会凭空产生第二次手势）。"""
+    install_selectors(monkeypatch)
+    fake = _fake_mirror_session(monkeypatch)
+    fake.aborted = True
+    script = make_script(
+        [
+            make_step(
+                "s1",
+                "swipe",
+                {
+                    "from": {"by": "point", "x": 100, "y": 200},
+                    "to": {"by": "point", "x": 300, "y": 400},
+                    "duration_ms": 450,
+                    "path": SWIPE_PATH,
+                },
+            )
+        ]
+    )
+    ctx = make_ctx(runner_env, script)
+    with pytest.raises(executors.StepTimeout):
+        executors.execute_swipe(ctx, parsed_step(script))
+    assert runner_env.driver.calls_of("swipe") == []
 
 
 def test_swipe_without_mirror_falls_back_to_two_point_swipe(runner_env, monkeypatch):

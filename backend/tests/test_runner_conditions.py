@@ -187,6 +187,18 @@ def test_target_visible_and_gone(runner_env) -> None:
     assert conditions.evaluate_condition(when({**TARGET_VISIBLE, "state": "gone"}).condition, ctx) is False
 
 
+def test_target_dump_failure_is_unknown_not_gone(runner_env, monkeypatch) -> None:
+    """层级抓取失败时 target(gone) 不能算满足；下一轮抓取成功后再按真实结果判断。"""
+
+    def boom() -> None:
+        raise RuntimeError("dump failed")
+
+    monkeypatch.setattr(runner_env.driver, "dump_hierarchy", boom)
+    ctx = make_condition_ctx(runner_env)
+    assert conditions.evaluate_condition(when({**TARGET_MISSING, "state": "gone"}).condition, ctx) is False
+    assert conditions.evaluate_condition(when(TARGET_VISIBLE).condition, ctx) is False
+
+
 def test_group_target_leaves_share_one_snapshot_per_round(runner_env, monkeypatch) -> None:
     inner = runner_env.driver
     original = inner.dump_hierarchy

@@ -313,6 +313,12 @@ v0.2.5 手势回放补充：
 - 步骤总预算 engine.max_steps（默认 2000，含 retry/goto 重跳）；
 - goto 重入重置目标节点及其后的 retry 计数；重跑当前节点清零；
 - stop 优先级最高：正在执行的动作最多等 5s 后强切（节点 failed，error.code=STOPPED）；
+- 节点级取消令牌：节点超时/stop 强切时置位，执行线程在定位轮询与每次注入前检查；
+  scrcpy 轨迹回放中止时补一个 UP 并抛错，**不**回落到 u2 两点 swipe；
+- 节点超时后若执行线程在 200ms 收尾窗口内仍未退出（卡在设备调用里），本轮**不重试**
+  （错误码仍为 STEP_TIMEOUT），避免同一节点产生两个并发执行；
+- 镜像流式触摸按 WS 订阅者 owner 隔离（一个 serial 同时只有一个 owner 的手势）；
+  WS 断开时为该 owner 补 UP，超过 30s 的陈旧手势在下一次 down 前释放；
 - pause/resume/step/run_from 由 controls 状态机管，run 从线程池执行（asyncio.to_thread 包同步引擎）。
 
 ## 10. scrcpy 镜像（be-media 必做）
@@ -369,8 +375,9 @@ v0.2.5 路由与导航：
   （默认仅绑 127.0.0.1）。REST 鉴权与 CORS 收紧闭源进 v1.1。
 - **data_dir 生效时机**：`runtime.data_dir` / `runtime.artifacts_dir` 修改后**重启进程生效**（DB 引擎在 lifespan
   早期打开，不热切换）。设置页需给出提示文案。
-- **fake 设备**：`GET /api/devices` 仅在「无真实在线设备」或「环境变量 `AUTOTEST_FAKE_DEVICE=1`」时包含 `fake-1`
-  （列表项带 `"fake": true`）；`get_driver("fake-*")` 显式传参始终可用，供联调/测试。
+- **fake 设备**：`GET /api/devices` **只在环境变量 `AUTOTEST_FAKE_DEVICE=1` 时**包含 `fake-1`
+  （列表项带 `"fake": true`）；默认无真机返回空列表，不把“未连接/adb 不可用”伪装成可用设备。
+  `get_driver("fake-*")` 显式传参始终可用，供联调/测试。
 - **环境变量层**（优先级最高）：`AUTOTEST_DATA_DIR` / `AUTOTEST_ARTIFACTS_DIR` / `AUTOTEST_ADB` /
   `AUTOTEST_HOST` / `AUTOTEST_PORT` / `AUTOTEST_TOKEN` / `AUTOTEST_SCRCPY_JAR` / `AUTOTEST_CONFIG`。
   优先级：默认 < 配置文件 < DB settings < 环境变量。

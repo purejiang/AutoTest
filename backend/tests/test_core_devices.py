@@ -15,13 +15,23 @@ core_client = support.core_client
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
-def test_list_devices_includes_fake_when_no_real_device(core_client, monkeypatch) -> None:
+def test_list_devices_empty_without_fake_flag(core_client, monkeypatch) -> None:
+    """默认无真机时返回空列表：不能把“没设备/adb 不可用”伪装成可用 fake 设备。"""
     monkeypatch.delenv("AUTOTEST_FAKE_DEVICE", raising=False)
     monkeypatch.setattr(device_registry, "_real_devices", lambda: [])
     response = core_client.get("/api/devices")
     assert response.status_code == 200
     body = response.json()
-    assert body["total"] >= 1
+    assert body["items"] == []
+    assert body["total"] == 0
+    # 显式 serial 仍可用（测试/联调入口不受列表开关影响）
+    assert core_client.get("/api/devices/fake-1/info").status_code == 200
+
+
+def test_fake_listed_with_env_flag(core_client, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOTEST_FAKE_DEVICE", "1")
+    monkeypatch.setattr(device_registry, "_real_devices", lambda: [])
+    body = core_client.get("/api/devices").json()
     fake = next(item for item in body["items"] if item["serial"] == "fake-1")
     assert fake["state"] == "device"
     assert fake["fake"] is True
@@ -51,6 +61,7 @@ def test_fake_forced_by_env_even_with_real_device(core_client, monkeypatch) -> N
 
 
 def test_list_devices_refresh(core_client, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOTEST_FAKE_DEVICE", "1")
     monkeypatch.setattr(device_registry, "_real_devices", lambda: [])
     response = core_client.get("/api/devices", params={"refresh": "true"})
     assert response.status_code == 200
@@ -235,6 +246,29 @@ def test_paused_run_allows_manual_with_note(core_client) -> None:
         device_registry.release("fake-1", "run", "2")
 
 
+def test_paused_run_blocks_manual_until_engine_parks(core_client) -> None:
+    """pause 请求后、引擎还没停到安全点前，手动注入必须仍然 409（避免与在途手势交错）。"""
+    from app.runner import controls
+
+    support.insert_run(31, status="paused")
+    device_registry.acquire("fake-1", "run", "31")
+    control = controls.create_control(31)
+    controls.request_pause(31)
+    try:
+        blocked = core_client.post("/api/devices/fake-1/tap", json={"x": 3, "y": 4})
+        assert blocked.status_code == 409
+        assert blocked.json()["error"]["code"] == "DEVICE_BUSY"
+        assert blocked.json()["error"]["details"]["reason"] == "pause_pending"
+
+        # 模拟引擎/节点线程已停在 wait_if_paused：此时手动控制才放行
+        assert controls.begin_pause_wait(control) is True
+        allowed = core_client.post("/api/devices/fake-1/tap", json={"x": 3, "y": 4})
+        assert allowed.status_code == 200, allowed.text
+    finally:
+        controls.cleanup(31)
+        device_registry.release("fake-1", "run", "31")
+
+
 def _manual_intervention_events(run_id: int) -> list[models.RunEvent]:
     with db.session_scope() as session:
         return list(
@@ -336,6 +370,7 @@ def test_recording_and_mirror_occupancy_do_not_block(core_client) -> None:
 
 
 def test_busy_flag_in_device_list(core_client, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOTEST_FAKE_DEVICE", "1")
     monkeypatch.setattr(device_registry, "_real_devices", lambda: [])
     device_registry.acquire("fake-1", "run", "5")
     try:

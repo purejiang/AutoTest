@@ -85,6 +85,7 @@ if ($inUse) { Die "端口 $Port 已被占用，换个端口：-Port 8788" }
 
 $url = "http://${BindHost}:${Port}"
 Say "启动 AutoTest -> $url （API 文档 $url/docs，Ctrl+C 退出）"
+Say "另开终端停止：powershell -ExecutionPolicy Bypass -File scripts\stop.ps1 $(if ($Port -ne 8787) { "-Port $Port" })"
 if ($Open) { Start-Process $url }
 
 Push-Location backend

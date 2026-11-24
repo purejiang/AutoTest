@@ -285,7 +285,8 @@ def resolve_target(
 def check_condition(driver: Any, target: Target, state: str = "visible") -> bool:
     """单次检查目标是否满足 ``state``（visible/gone）；不抛 TargetNotFound。
 
-    - 瞬时 dump 失败按"未看到"处理（visible=False），由 wait_for 的 timeout 兜底；
+    - 瞬时 dump 失败 = **观测未知**：visible 与 gone 都返回 False（交给 wait_for 下一轮再试），
+      绝不能把「拿不到层级」当成「元素已消失」，否则 wait(gone)/not_exists 会在设备抖动时误通过；
     - ``point`` 无法判断可见性：visible 恒 True / gone 恒 False。
     """
     if state not in ("visible", "gone"):
@@ -295,12 +296,11 @@ def check_condition(driver: Any, target: Target, state: str = "visible") -> bool
     else:
         root = _dump_tree(driver)
         if root is None:
+            return False
+        try:
+            visible = select_node(root, target) is not None
+        except TargetNotFound:
             visible = False
-        else:
-            try:
-                visible = select_node(root, target) is not None
-            except TargetNotFound:
-                visible = False
     return visible if state == "visible" else not visible
 
 

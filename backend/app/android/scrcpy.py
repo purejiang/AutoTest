@@ -42,7 +42,7 @@ import struct
 import subprocess
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -106,6 +106,14 @@ MOTION_MOVE = 2
 
 POINTER_ID_GENERIC_FINGER = 0xFFFFFFFFFFFFFFFE  # -2，见 control_msg.h SC_POINTER_ID_GENERIC_FINGER
 _INJECT_TEXT_MAX = 300  # SC_CONTROL_MSG_INJECT_TEXT_MAX_LENGTH
+
+
+class InjectionAborted(Exception):
+    """手势注入被调用方中断（stop / 节点超时）。
+
+    调用方**不得**再回落到 u2 等其它注入器：DOWN 已经发出（或即将发出）时，
+    换注入器会产生第二条手势，反而覆盖掉设备端当前按压状态。
+    """
 
 
 def build_inject_touch(
@@ -1253,11 +1261,14 @@ class ScrcpyServer:
         duration_ms: int,
         video_w: int | None = None,
         video_h: int | None = None,
+        should_abort: Callable[[], bool] | None = None,
     ) -> bool:
         """按录制轨迹与时间戳注入 DOWN/MOVE/UP（scrcpy 控制通道，保留路径与变速）。
 
         samples: [(dt_ms, x, y)]，坐标为视频帧坐标；dt_ms 相对按下时刻。
         录制路径最后一点可能早于抬手（手指停顿），这里会等到 duration_ms 再 UP。
+        ``should_abort`` 为真时立即补一个 UP 并抛 ``InjectionAborted``，避免 stop 之后
+        还在继续注入 MOVE；调用方不能回落到其它注入器。
         """
         if not samples:
             return False
@@ -1267,26 +1278,60 @@ class ScrcpyServer:
         ordered = sorted(
             (int(max(0, dt)), int(x), int(y)) for dt, x, y in samples
         )
+
+        def aborted() -> bool:
+            return bool(should_abort is not None and should_abort())
+
+        def wait(seconds: float) -> bool:
+            """可被 should_abort 打断的等待；无 should_abort 时保持原来的整段 sleep。"""
+            if seconds <= 0:
+                return True
+            if should_abort is None:
+                time.sleep(min(10.0, seconds))
+                return True
+            deadline = time.monotonic() + min(10.0, seconds)
+            while True:
+                if aborted():
+                    return False
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return True
+                time.sleep(min(0.02, remaining))
+
+        if aborted():
+            raise InjectionAborted("gesture replay aborted before down")
         first_dt, first_x, first_y = ordered[0]
         if first_dt > 0:
-            time.sleep(min(10.0, first_dt / 1000.0))
+            if not wait(first_dt / 1000.0):
+                raise InjectionAborted("gesture replay aborted before down")
+            if aborted():
+                raise InjectionAborted("gesture replay aborted before down")
         if not self.send_control(build_inject_touch(MOTION_DOWN, first_x, first_y, w, h)):
             return False
         started = time.monotonic()
         last_x, last_y = first_x, first_y
-        for dt, x, y in ordered[1:]:
-            delay = dt / 1000.0 - (time.monotonic() - started)
-            if delay > 0:
-                time.sleep(min(10.0, delay))
-            if not self.send_control(build_inject_touch(MOTION_MOVE, x, y, w, h)):
-                self.send_control(build_inject_touch(MOTION_UP, last_x, last_y, w, h))
-                return False
-            last_x, last_y = x, y
-        total = max(int(duration_ms or 0), ordered[-1][0])
-        delay = total / 1000.0 - (time.monotonic() - started)
-        if delay > 0:
-            time.sleep(min(10.0, delay))
-        return self.send_control(build_inject_touch(MOTION_UP, last_x, last_y, w, h))
+        try:
+            for dt, x, y in ordered[1:]:
+                delay = dt / 1000.0 - (time.monotonic() - started)
+                if delay > 0 and not wait(delay):
+                    raise InjectionAborted("gesture replay aborted")
+                if aborted():
+                    raise InjectionAborted("gesture replay aborted")
+                if not self.send_control(build_inject_touch(MOTION_MOVE, x, y, w, h)):
+                    self.send_control(build_inject_touch(MOTION_UP, last_x, last_y, w, h))
+                    return False
+                last_x, last_y = x, y
+            total = max(int(duration_ms or 0), ordered[-1][0])
+            delay = total / 1000.0 - (time.monotonic() - started)
+            if delay > 0 and not wait(delay):
+                raise InjectionAborted("gesture replay aborted")
+            if aborted():
+                raise InjectionAborted("gesture replay aborted")
+            return self.send_control(build_inject_touch(MOTION_UP, last_x, last_y, w, h))
+        except InjectionAborted:
+            # 已按下：必须补 UP，否则设备端会保持按压/拖拽状态
+            self.send_control(build_inject_touch(MOTION_UP, last_x, last_y, w, h))
+            raise
 
     def inject_key(self, keycode: int) -> bool:
         if not self.send_control(build_inject_keycode(int(keycode), MOTION_DOWN)):

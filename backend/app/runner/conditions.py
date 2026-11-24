@@ -58,7 +58,7 @@ class ConditionSnapshot:
         if self._tree is _UNSET:
             try:
                 self._tree = self.driver.dump_hierarchy()
-            except Exception:  # 层级抓取失败：本轮按"看不到"处理，下一轮再试
+            except Exception:  # 层级抓取失败：本轮按“未知”处理，下一轮再试
                 self._tree = None
         return self._tree
 
@@ -94,14 +94,15 @@ def _target_visible(
     condition: Any,
     snapshot: ConditionSnapshot,
     ctx: Any = None,
-) -> bool:
+) -> bool | None:
+    """True/False = 已观测；None = 本轮层级抓取失败（未知，visible/gone 都不成立）。"""
     target = _field(condition, "target")
     if ctx is not None:
         # 与旧 when 一致：条件目标也支持 {{var}} 插值
         target = ctx.interpolate_target(target)
     tree = snapshot.tree()
     if tree is None:
-        return False
+        return None
     try:
         return select_node(tree, target) is not None
     except TargetNotFound:
@@ -178,6 +179,9 @@ def evaluate_condition(
 
     if kind == "target":
         visible = _target_visible(condition, _snapshot_for(ctx, snapshot), ctx)
+        if visible is None:
+            # 层级抓取失败 = 观测未知：visible 与 gone 都不能算满足
+            return False
         state = str(_field(condition, "state", "visible") or "visible")
         return visible if state == "visible" else not visible
     if kind == "app":

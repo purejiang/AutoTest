@@ -32,6 +32,8 @@ from .context import (
     RunFailed,
     RunSnapshot,
     RunStopped,
+    StepAbandoned,
+    StepAttempt,
     StepTimeout,
     TotalTimeout,
     default_limits,
@@ -402,6 +404,10 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                         when_info=when_info,
                     )
                     outcomes[step.id] = "failed"
+                    # when 不满足也会走 on_fail（含 goto）：必须计入步骤预算，
+                    # 否则 goto 指回同一个 when 失败的节点会空转到 max_total_ms（30min），
+                    # 期间只写 StepResult 不执行任何动作。
+                    ctx.check_step_budget()
                     failed_index = index
                     index = _handle_on_fail(ctx, step, index, index_by_id, steps, retry_used, summary)
                     if index is not None:
@@ -460,9 +466,9 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                 started_iso = now_iso()
                 started_active = ctx.active_elapsed_ms()
                 timeout_ms = _step_timeout(ctx, step)
-                ctx.begin_step(timeout_ms)
+                attempt = ctx.begin_step(timeout_ms)
                 try:
-                    output = _execute_step_with_timeout(ctx, step, timeout_ms)
+                    output = _execute_step_with_timeout(ctx, step, timeout_ms, attempt)
                 except RunStopped:
                     step_duration = max(0, ctx.active_elapsed_ms() - started_active)
                     stop_error = {"code": "STOPPED", "message": "run stopped"}
@@ -484,7 +490,7 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                     step_error = _error_from_exception(exc)
                     fail_output = _output_from_exception(exc)
                     retryable = not isinstance(
-                        exc, (NonRetryableError, RunFailed, RunStopped)
+                        exc, (NonRetryableError, RunFailed, RunStopped, StepAbandoned)
                     )
                     if retryable and retry_used.get(step.id, 0) < retry_count:
                         retry_used[step.id] = retry_used.get(step.id, 0) + 1
@@ -675,17 +681,30 @@ def _step_timeout(ctx: RunContext, step: Any) -> int:
     return max(low, min(int(raw), high))
 
 
-def _execute_step_with_timeout(ctx: RunContext, step: Any, timeout_ms: int) -> dict[str, Any]:
-    """在 daemon 线程里执行节点；主循环轮询节点超时与 stop 强切。"""
+def _execute_step_with_timeout(
+    ctx: RunContext,
+    step: Any,
+    timeout_ms: int,
+    attempt: StepAttempt | None = None,
+) -> dict[str, Any]:
+    """在 daemon 线程里执行节点；主循环轮询节点超时与 stop 强切。
+
+    超时/强切会先置位本次 attempt 的取消令牌，再给执行线程一个很短的收尾窗口：
+    定位轮询/注入前检查会立刻放弃，避免"节点已判超时，迟到的点击才落到设备上"。
+    in-flight 的系统调用（如 u2 click）无法从 Python 侧 kill，只能等它自然返回。
+    """
     box: dict[str, Any] = {}
     done = threading.Event()
+    token = attempt or StepAttempt()
 
     def _target() -> None:
+        ctx.bind_attempt(token)
         try:
             box["result"] = executors.execute_step(ctx, step)
         except BaseException as exc:  # noqa: BLE001 - 原样交给主循环判定
             box["error"] = exc
         finally:
+            ctx.unbind_attempt()
             done.set()
 
     worker = threading.Thread(
@@ -715,11 +734,20 @@ def _execute_step_with_timeout(ctx: RunContext, step: Any, timeout_ms: int) -> d
             if stop_since is None:
                 stop_since = now
             elif now - stop_since >= grace:
+                ctx.cancel_step()
+                done.wait(0.2)  # 给执行线程一个放弃轮询/注入的窗口
                 raise RunStopped("stop requested; step force-cut")
         active = now - started - paused_total
         if paused_since is not None:
             active -= now - paused_since
         if active * 1000.0 >= timeout_ms:
+            ctx.cancel_step()
+            if not done.wait(0.2):
+                # 执行线程还卡在设备调用里：拒绝重试，避免同一节点两个并发执行
+                raise StepAbandoned(
+                    f"step {getattr(step, 'id', '?')} timed out after {timeout_ms} ms "
+                    "(worker still running; retry suppressed)"
+                )
             raise StepTimeout(f"step {getattr(step, 'id', '?')} timed out after {timeout_ms} ms")
     error = box.get("error")
     if error is not None:

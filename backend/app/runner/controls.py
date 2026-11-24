@@ -86,6 +86,21 @@ def is_paused(run_id: int) -> bool:
     return not control.pause_event.is_set()
 
 
+def is_pause_ready(run_id: int) -> bool:
+    """暂停是否已在安全点生效：引擎/节点线程已停在 ``wait_if_paused``。
+
+    API 收到 pause 会立刻把 run.status 写成 paused（UI 即时反馈），但此时当前节点
+    可能还在注入手势（长按/长滑/正在解析目标）。手动控制必须等这个信号再放行，
+    否则 manual tap 会和脚本的 DOWN/MOVE/UP 交错（同一个 pointer id）。
+    没有 Control 的历史/非本进程运行保持旧行为（直接放行）。
+    """
+    control = get_control(run_id)
+    if control is None:
+        return True
+    with control.lock:
+        return not control.pause_event.is_set() and bool(control.pause_wait_active)
+
+
 def is_stopping(run_id: int) -> bool:
     control = get_control(run_id)
     return control is not None and control.stop_event.is_set()

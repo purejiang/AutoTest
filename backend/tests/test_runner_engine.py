@@ -6,6 +6,9 @@ shell、sub_script 嵌套与深度、三环保护、pause/resume、stop、debug 
 
 from __future__ import annotations
 
+import time
+from types import SimpleNamespace
+
 from app.android.driver import CommandResult
 from app.runner import controls, engine, executors
 from app.runner.context import RunSnapshot
@@ -390,6 +393,29 @@ def test_max_steps_budget_truncates_run(runner_env, monkeypatch):
     assert run["summary"]["failed_steps"] == 1
 
 
+def test_when_goto_loop_consumes_step_budget(runner_env, monkeypatch):
+    """when require 失败 + on_fail=goto 指回自身：不能绕过步骤预算空转到总超时。"""
+    install_selectors(monkeypatch)
+    runner_env.configure({"engine.max_steps": 5})
+    script = make_script(
+        [
+            click_step(
+                "s1",
+                when=_when({"type": "target", "target": {"by": "text", "value": "不存在"}}),
+                on_fail={"action": "goto", "target_id": "s1"},
+            )
+        ]
+    )
+
+    run_id, run = run_script(script)
+
+    assert run["status"] == "failed"
+    assert run["error"]["code"] == "MAX_STEPS_EXCEEDED"
+    steps = get_steps(run_id)
+    assert 1 <= len(steps) <= 6
+    assert all(step["status"] == "failed" for step in steps)
+
+
 def test_total_timeout_protection(runner_env, monkeypatch):
     install_selectors(monkeypatch)
     runner_env.configure({"engine.max_total_ms": 150})
@@ -413,6 +439,55 @@ def test_step_timeout_marks_step_failed(runner_env, monkeypatch):
     steps = get_steps(run_id)
     assert steps[0]["status"] == "failed"
     assert steps[0]["error"]["code"] == "STEP_TIMEOUT"
+
+
+def test_step_timeout_cancels_worker_before_late_injection(runner_env, monkeypatch):
+    """节点超时后，执行线程不能再把迟到的点击注入设备。"""
+
+    def slow_resolve(driver, target, timeout_ms=0, poll_interval_ms=350, should_abort=None):
+        time.sleep(0.25)
+        return SimpleNamespace(x=540, y=710, node=None, bounds=[100, 600, 980, 800])
+
+    monkeypatch.setattr(executors, "resolve_target", slow_resolve)
+    script = make_script([click_step("s1", timeout_ms=100)])
+
+    run_id, run = run_script(script)
+
+    assert run["status"] == "failed"
+    steps = get_steps(run_id)
+    assert steps[0]["status"] == "failed"
+    assert steps[0]["error"]["code"] == "STEP_TIMEOUT"
+    time.sleep(0.35)  # 等被放弃的 worker 走到注入前检查
+    assert runner_env.driver.calls_of("click") == []
+
+
+def test_timeout_with_stuck_worker_suppresses_retry(runner_env, monkeypatch):
+    """超时后 worker 仍未退出：不立即重试，避免同一节点两个并发执行。"""
+
+    def stuck_resolve(driver, target, timeout_ms=0, poll_interval_ms=350, should_abort=None):
+        time.sleep(0.6)
+        return SimpleNamespace(x=540, y=710, node=None, bounds=[100, 600, 980, 800])
+
+    monkeypatch.setattr(executors, "resolve_target", stuck_resolve)
+    script = make_script(
+        [
+            click_step(
+                "s1",
+                timeout_ms=100,
+                retry={"count": 2, "interval_ms": 10},
+            )
+        ]
+    )
+
+    run_id, run = run_script(script)
+
+    assert run["status"] == "failed"
+    started = [event for event in get_events(run_id) if event["type"] == "step_started"]
+    assert len(started) == 1
+    steps = get_steps(run_id)
+    assert steps[0]["attempts"] == 1
+    time.sleep(0.6)  # 等旧 worker 醒来：它必须放弃注入
+    assert runner_env.driver.calls_of("click") == []
 
 
 def test_step_timeout_covers_long_gesture_duration(runner_env) -> None:

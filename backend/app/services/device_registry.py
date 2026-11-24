@@ -2,9 +2,10 @@
 
 设计要点：
 - 真机：`app.android.adb.list_devices()` 发现，懒创建 `app.android.u2_driver.create_u2_driver()`；
-  这两个模块由 be-driver 实现，缺失时**降级**（列表照常返回 fake 设备，取驱动报 DEVICE_UNAVAILABLE）；
+  这两个模块由 be-driver 实现，缺失时**降级**（列表照常可返回空/真机，取驱动报 DEVICE_UNAVAILABLE）；
 - FakeDriver：serial 以 `fake` 开头（`FAKE_PREFIX`）时返回模块级单例，这是无真机联调入口；
-  是否出现在 `GET /api/devices` 列表由 `_fake_listing_enabled()` 决定（无真机或 AUTOTEST_FAKE_DEVICE=1）；
+  默认**不进入** `GET /api/devices` 列表；只有 `AUTOTEST_FAKE_DEVICE=1` 时才附带 fake-1，
+  避免把“没设备/adb 不可用”伪装成一台可用设备；
 - 占用表：run 与 recording 互斥，mirror 与两者兼容；同 purpose 同 ref 重复 acquire 幂等；
 - 线程安全：全部状态在 `_LOCK` 内读写（API 在线程池里跑同步驱动）。
 """
@@ -99,9 +100,15 @@ def _auto_serial() -> str:
         return serials[0]
     if not serials:
         if _adb_module() is None:
-            message = "adb module is not available yet; pass serial=\"fake-1\" for the offline fake device"
+            message = (
+                "adb is not available; install platform-tools, "
+                "or start with AUTOTEST_FAKE_DEVICE=1 to use the offline fake device"
+            )
         else:
-            message = "no online device found; pass serial=\"fake-1\" for the offline fake device"
+            message = (
+                "no online device found; connect a device with USB debugging, "
+                "or start with AUTOTEST_FAKE_DEVICE=1 to use the offline fake device"
+            )
         raise ApiError("DEVICE_UNAVAILABLE", message, {"devices": []})
     raise ApiError(
         "DEVICE_UNAVAILABLE",
@@ -267,14 +274,13 @@ _FAKE_FLAG_ENV = "AUTOTEST_FAKE_DEVICE"
 _FAKE_FLAG_TRUE = ("1", "true", "yes", "on")
 
 
-def fake_listing_enabled(online_real_count: int) -> bool:
-    """fake 设备是否进入列表：无任何真实在线设备，或显式 AUTOTEST_FAKE_DEVICE=1。
+def fake_listing_enabled() -> bool:
+    """fake 设备是否进入列表：仅显式 AUTOTEST_FAKE_DEVICE=1。
 
-    显式传 serial（如 `fake-1`）取驱动不受此开关影响，联调始终可用。
+    默认无真机时返回空列表（而不是自动附带 fake-1），避免掩盖“未连接/adb 不可用”。
+    显式传 serial（如 `fake-1`）取驱动不受此开关影响，联调/测试始终可用。
     """
-    if str(os.getenv(_FAKE_FLAG_ENV, "")).strip().lower() in _FAKE_FLAG_TRUE:
-        return True
-    return online_real_count == 0
+    return str(os.getenv(_FAKE_FLAG_ENV, "")).strip().lower() in _FAKE_FLAG_TRUE
 
 
 _LIST_TTL_S = 1.2
@@ -282,7 +288,7 @@ _LIST_CACHE: tuple[float, list[dict[str, Any]]] | None = None
 
 
 def list_devices(refresh: bool = False) -> list[dict[str, Any]]:
-    """§7.1 GET /api/devices 的 items：真机在前；无真机（或强制开关）时附带 fake 演示设备。
+    """§7.1 GET /api/devices 的 items：真机在前；仅 AUTOTEST_FAKE_DEVICE=1 时附带 fake 演示设备。
 
     结果缓存 1.2s：前端列表页 5s 轮询 + 运行详情等多处调用，避免重复 adb 往返。
     """
@@ -309,8 +315,7 @@ def _list_devices_uncached(refresh: bool) -> list[dict[str, Any]]:
             continue
         seen.add(serial)
         items.append(_real_item(device))
-    online_real = sum(1 for item in items if str(item.get("state") or "").lower() == "device")
-    if not fake_listing_enabled(online_real):
+    if not fake_listing_enabled():
         return items
     with _LOCK:
         fake_serials = dict.fromkeys([FAKE_DEFAULT_SERIAL, *_FAKE_DRIVERS.keys()])

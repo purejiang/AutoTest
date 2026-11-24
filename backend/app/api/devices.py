@@ -97,6 +97,8 @@ _TOUCH_LOCK = threading.RLock()
 _SWIPE_MIN_DIST_PX = 10
 _TAP_MAX_MS = 500
 _SWIPE_MAX_MS = 300
+# 超过这个时长仍没有 up 的手势视为客户端已失联（避免设备端指针永远悬空）
+_STALE_GESTURE_S = 30.0
 
 
 def _try_mirror(serial: str, method: str, **kwargs: Any) -> bool:
@@ -180,13 +182,31 @@ def _resolve_swipe(serial: str, payload: SwipeRequest) -> tuple[int, int, int, i
 
 # ---------------------------------------------------------------- 占用 / 录制
 def _paused_run_id(session: Session, run_ref: Any) -> int | None:
-    """run 占用且状态 paused -> run_id；否则 None。"""
+    """run 占用且状态 paused -> run_id；否则 None。
+
+    paused 只是"已请求暂停"：必须等引擎真正停在安全点（``is_pause_ready``）才放行
+    手动控制，否则脚本正在执行的长按/长滑会和手动 DOWN/MOVE/UP 交错。
+    """
     try:
         run_id = int(run_ref)
     except (TypeError, ValueError):
         return None
     row = session.get(models.Run, run_id)
     if row is not None and row.status == "paused":
+        try:
+            from ..runner import controls  # 局部导入：保持 devices API 对 runner 的可选依赖
+        except Exception:  # pragma: no cover - runner 未就绪时按旧行为放行
+            return run_id
+        if not controls.is_pause_ready(run_id):
+            raise ApiError(
+                "DEVICE_BUSY",
+                f"run {run_id} is pausing; manual control unlocks at the next safe point",
+                {
+                    "run_id": run_id,
+                    "reason": "pause_pending",
+                    "hint": "wait for the run_paused event, then retry",
+                },
+            )
         return run_id
     return None
 
@@ -445,6 +465,35 @@ def _control_response(serial: str, kind: str, **extra: Any) -> dict[str, Any]:
     return {"ok": True, "serial": serial, "kind": kind, **extra}
 
 
+def _release_touch_state(serial: str, owner: str | None) -> bool:
+    """弹出并（尽力）补 UP 一个流式手势；owner 必须匹配。调用方不加锁。"""
+    with _TOUCH_LOCK:
+        gesture = _TOUCH_GESTURES.get(serial)
+        if gesture is None or gesture.get("owner") != owner:
+            return False
+        _TOUCH_GESTURES.pop(serial, None)
+    try:
+        _try_mirror(
+            serial,
+            "inject_touch",
+            action="up",
+            nx=float(gesture.get("last_x", gesture.get("sx", 0.0))),
+            ny=float(gesture.get("last_y", gesture.get("sy", 0.0))),
+        )
+    except Exception:  # noqa: BLE001 - 释放失败不能影响后续控制
+        logger.debug("release stream touch failed for %s", serial, exc_info=True)
+    return True
+
+
+def release_stream_touch(serial: str, owner: str | None = None) -> bool:
+    """释放某个客户端未收尾的流式手势（补一个 UP）。
+
+    WS 断开时调用：浏览器可能已经关闭/断网，永远等不到 pointerup；不补 UP 的话
+    设备端会一直保持按压/拖拽。这里**不写录制事件**（这是一段被中断的输入）。
+    """
+    return _release_touch_state(serial, owner)
+
+
 def apply_stream_touch(
     serial: str,
     action: str,
@@ -453,18 +502,27 @@ def apply_stream_touch(
     *,
     raise_on_busy: bool = True,
     session: Session | None = None,
+    owner: str | None = None,
 ) -> dict[str, Any]:
     """流式触摸核心逻辑（REST 端点与镜像 WS 通道共用）。
 
     - 先注入（保证手感），再抓层级（录制归因）；
     - down 建立手势状态，up 把整段手势归并为一条录制事件；
+    - owner 标识输入来源（WS 用 sub.id，REST 为 None）：一个 serial 同时只允许
+      一个 owner 的手势，避免两个标签页/两个通道的 DOWN/MOVE/UP 交错；
     - 运行中（非暂停）拒绝注入：REST 抛 409，WS 静默忽略（返回 {"ignored": True}）。
     """
     if session is None:
         if _touch_needs_db(serial):
             with session_scope() as db_session:
                 return apply_stream_touch(
-                    serial, action, nx, ny, raise_on_busy=raise_on_busy, session=db_session
+                    serial,
+                    action,
+                    nx,
+                    ny,
+                    raise_on_busy=raise_on_busy,
+                    session=db_session,
+                    owner=owner,
                 )
         # 普通镜像拖动：不碰 SQLite（每次 pointermove 都开 session 会明显增加输入延迟）。
         manual_run_id = None
@@ -478,6 +536,22 @@ def apply_stream_touch(
     action = str(action).strip().lower()
 
     if action == "down":
+        # 新 down：同一 owner 视为上一次 up 丢了；不同 owner 未过期则拒绝，避免两路交错。
+        with _TOUCH_LOCK:
+            existing = _TOUCH_GESTURES.get(serial)
+            existing = dict(existing) if existing is not None else None
+        if existing is not None:
+            age = time.monotonic() - float(existing.get("started_at") or 0.0)
+            same_owner = existing.get("owner") == owner
+            if not same_owner and age < _STALE_GESTURE_S:
+                if not raise_on_busy:
+                    return {"ok": False, "ignored": True, "reason": "gesture_owned"}
+                raise ApiError(
+                    "CONFLICT",
+                    "another client is touching this device",
+                    {"serial": serial, "owner": existing.get("owner")},
+                )
+            _release_touch_state(serial, existing.get("owner"))
         ok = _try_mirror(serial, "inject_touch", action="down", nx=nx, ny=ny)
         if not ok:
             if not raise_on_busy:
@@ -503,8 +577,22 @@ def apply_stream_touch(
                 "path": [(0, nx, ny)],
                 "pre": pre,
                 "manual_run_id": manual_run_id,
+                "owner": owner,
             }
         return {"ok": True, "serial": serial, "action": "down"}
+
+    with _TOUCH_LOCK:
+        current = _TOUCH_GESTURES.get(serial)
+        owned = current is not None and current.get("owner") == owner
+    if not owned:
+        # 没有配对的 down（被占用忽略 / 已被释放 / 另一个客户端）：不再盲发 MOVE/UP
+        if not raise_on_busy:
+            return {"ok": False, "ignored": True, "reason": "no_active_gesture"}
+        raise ApiError(
+            "CONFLICT",
+            "no matching stream gesture for this owner",
+            {"serial": serial, "owner": owner},
+        )
 
     if action == "move":
         ok = _try_mirror(serial, "inject_touch", action="move", nx=nx, ny=ny)
@@ -530,7 +618,11 @@ def apply_stream_touch(
             return {"ok": False, "ignored": True, "reason": "mirror_unavailable"}
         raise ApiError("UNSUPPORTED", "流式触摸需要活跃镜像会话", {"serial": serial})
     with _TOUCH_LOCK:
-        gesture = _TOUCH_GESTURES.pop(serial, None)
+        gesture = _TOUCH_GESTURES.get(serial)
+        if gesture is not None and gesture.get("owner") == owner:
+            _TOUCH_GESTURES.pop(serial, None)
+        else:
+            gesture = None
     result: dict[str, Any] = {"ok": True, "serial": serial, "action": "up"}
     if gesture is None:
         return result

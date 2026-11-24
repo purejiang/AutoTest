@@ -43,7 +43,20 @@ sh scripts/start.sh            # 加 --open 自动开浏览器；--port 9000 换
 powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Open
 ```
 
-浏览器打开 **http://127.0.0.1:8787** ，终端窗口关掉即停止。v0.2 默认构建 Vue 3 主前端；需要回滚时加 `--react`。
+浏览器打开 **http://127.0.0.1:8787** ，终端窗口关掉即停止。也可以另开终端用停止命令：
+
+```bash
+# macOS / Linux
+sh scripts/stop.sh                 # 停止 8787 上的 AutoTest
+sh scripts/stop.sh --port 9000     # 指定端口
+sh scripts/stop.sh --dev           # 同时停开发前端 5173
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts\stop.ps1
+powershell -ExecutionPolicy Bypass -File scripts\stop.ps1 -Dev
+```
+
+macOS 还可以双击根目录的「停止AutoTest.command」。v0.2 默认构建 Vue 3 主前端；需要回滚时加 `--react`。
 
 首次运行脚本会自动完成：装 uv（若缺）→ Python 3.12 + 后端依赖 → 前端依赖 + 构建 → 下载 scrcpy-server → 启动。
 也可以先手动跑一次 `sh scripts/setup.sh`（Windows `scripts\setup.ps1`）做完整安装 + 环境自检。
@@ -158,6 +171,7 @@ cd frontend && npm run build       # 类型检查 + 生产构建
 cd backend && uv run pytest -q     # 后端测试（无需真机）
 cd backend && uv run python ../scripts/check_env.py   # 环境自检（adb/设备/端口/jar）
 sh scripts/build.sh --pack         # 打包成单文件可执行程序（PyInstaller → backend/dist/autotest）
+sh scripts/stop.sh                 # 停止 AutoTest（--port / --dev / --dry-run）
 ```
 
 ### 使用流程
@@ -262,7 +276,8 @@ cd frontend && npm run build                    # 类型检查 + 构建到 front
 ```
 
 无真机也能开发/联调：设备注册表会把 serial 以 `fake` 开头的设备路由到内存 `FakeDriver`（假层级树 + 动作记录），
-前端与引擎都可用它跑通全链路。
+前端与引擎都可用它跑通全链路。默认设备列表不会显示 fake 设备（避免掩盖“未连接/adb 不可用”）；
+需要离线演示时用 `AUTOTEST_FAKE_DEVICE=1 sh scripts/start.sh` 启动，列表会附带 `fake-1`。
 
 ## 常见问题
 

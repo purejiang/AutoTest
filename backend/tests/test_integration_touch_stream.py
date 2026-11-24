@@ -12,6 +12,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import mirror as mirror_mod
+from app.api import devices as devices_api
+
+
+@pytest.fixture(autouse=True)
+def _clean_touch_state():
+    """流式手势状态是模块级内存：用例之间必须隔离。"""
+    devices_api._TOUCH_GESTURES.clear()
+    yield
+    devices_api._TOUCH_GESTURES.clear()
 
 
 @pytest.fixture()
@@ -135,3 +144,59 @@ def test_touch_slow_drag_is_drag(client: TestClient, monkeypatch):
     _touch(client, "move", 0.5, 0.6)
     up = _touch(client, "up", 0.5, 0.5)
     assert up["kind"] == "drag"
+
+
+def test_stream_touch_owner_isolation_and_release(client, monkeypatch):
+    """一个 serial 同时只允许一个 owner 的手势；断线释放只补自己那一段。"""
+    calls: list[tuple[str, float, float]] = []
+
+    def fake_inject(serial: str, action: str, nx: float, ny: float) -> bool:
+        calls.append((action, nx, ny))
+        return True
+
+    monkeypatch.setattr(mirror_mod, "inject_touch", fake_inject)
+    monkeypatch.setattr(
+        mirror_mod,
+        "map_normalized_to_device",
+        lambda serial, nx, ny: (int(nx * 1200), int(ny * 2670)),
+    )
+
+    assert devices_api.apply_stream_touch("fake-1", "down", 0.5, 0.5, owner="ws:1")["ok"] is True
+    other = devices_api.apply_stream_touch(
+        "fake-1", "move", 0.6, 0.6, raise_on_busy=False, owner="ws:2"
+    )
+    assert other["ignored"] is True
+    assert calls == [("down", 0.5, 0.5)]
+
+    # 错误 owner 不能释放；正确 owner 释放会补 UP
+    assert devices_api.release_stream_touch("fake-1", "ws:2") is False
+    assert devices_api.release_stream_touch("fake-1", "ws:1") is True
+    assert calls[-1] == ("up", 0.5, 0.5)
+
+    # 手势已结束：迟到的 up 不再盲发
+    tail = devices_api.apply_stream_touch("fake-1", "up", 0.5, 0.5, raise_on_busy=False, owner="ws:1")
+    assert tail["ignored"] is True
+    assert len(calls) == 2
+
+
+def test_new_down_releases_previous_stuck_gesture(client, monkeypatch):
+    """上一次 up 丢失时，同一 owner 的新 down 必须先补 UP，避免设备端指针悬空。"""
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        mirror_mod,
+        "inject_touch",
+        lambda serial, action, nx, ny: calls.append(action) or True,
+    )
+    monkeypatch.setattr(
+        mirror_mod,
+        "map_normalized_to_device",
+        lambda serial, nx, ny: (int(nx * 1200), int(ny * 2670)),
+    )
+
+    devices_api.apply_stream_touch("fake-1", "down", 0.2, 0.2, owner="ws:1")
+    devices_api.apply_stream_touch("fake-1", "down", 0.4, 0.4, owner="ws:1")
+
+    assert calls == ["down", "up", "down"]
+    assert devices_api.release_stream_touch("fake-1", "ws:1") is True
+    assert calls[-1] == "up"

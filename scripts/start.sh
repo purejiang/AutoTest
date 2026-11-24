@@ -120,8 +120,9 @@ else
   warn "未找到 adb：请安装 platform-tools 或在「设置」里填写 adb 绝对路径（不影响先打开界面）"
 fi
 say "启动 AutoTest → $URL   （API 文档 $URL/docs，Ctrl+C 退出）"
+say "另开终端停止：sh scripts/stop.sh$([ "$PORT" != "8787" ] && printf ' --port %s' "$PORT")"
 if [ "${DEV_COUNT:-0}" = "0" ]; then
-  say "提示：插上手机并授权 USB 调试后，「设备」页即可看到真机；没有设备时可用 fake-1 演示设备体验全流程。"
+  say "提示：插上手机并授权 USB 调试后，「设备」页即可看到真机；离线演示可设 AUTOTEST_FAKE_DEVICE=1 后重启。"
 fi
 
 if [ "$OPEN_BROWSER" = "1" ]; then

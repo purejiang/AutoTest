@@ -327,3 +327,33 @@ def test_ws_accepts_valid_token(client, monkeypatch) -> None:
     finally:
         mirror_module.stop_session(serial)
         config.reset_to_defaults()
+
+
+def test_ws_close_releases_stream_touch(client, monkeypatch) -> None:
+    """WS 在 pointerup 之前断开：服务端必须为该 owner 补一个 UP。"""
+    serial = "fake-ws-touch"
+    start_fake_session(serial)
+    calls: list[tuple[str, float, float]] = []
+
+    monkeypatch.setattr(
+        mirror_module,
+        "inject_touch",
+        lambda _serial, action, nx, ny: calls.append((action, nx, ny)) or True,
+    )
+    try:
+        with client.websocket_connect(f"/ws/mirror/{serial}") as ws:
+            wait_kind(ws, "hello")
+            ws.send_json({"kind": "touch", "action": "down", "nx": 0.25, "ny": 0.75})
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and not any(item[0] == "down" for item in calls):
+                time.sleep(0.01)
+            assert any(item[0] == "down" for item in calls)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not any(item[0] == "up" for item in calls):
+            time.sleep(0.01)
+        assert any(item[0] == "up" for item in calls)
+        up = [item for item in calls if item[0] == "up"][-1]
+        assert up[1:] == (0.25, 0.75)
+    finally:
+        mirror_module.stop_session(serial)

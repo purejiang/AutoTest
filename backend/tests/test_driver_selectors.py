@@ -222,6 +222,20 @@ def test_check_condition_visible_and_gone() -> None:
         check_condition(driver, point, "bogus")
 
 
+def test_dump_failure_never_satisfies_gone(monkeypatch) -> None:
+    """层级抓取失败 = 观测未知：gone 不能被误判为满足（否则 not_exists/wait(gone) 会假通过）。"""
+    driver = FakeDriver()
+
+    def boom() -> None:
+        raise RuntimeError("u2 dump failed")
+
+    monkeypatch.setattr(driver, "dump_hierarchy", boom)
+    target = _by(by="text", value="不存在")
+    assert check_condition(driver, target, "visible") is False
+    assert check_condition(driver, target, "gone") is False
+    assert wait_for(driver, target, "gone", 80, poll_interval_ms=20) is False
+
+
 def test_wait_for_timeout_returns_false_fast() -> None:
     start = time.monotonic()
     result = wait_for(FakeDriver(), _by(by="text", value="不存在"), "visible", 150, poll_interval_ms=30)
