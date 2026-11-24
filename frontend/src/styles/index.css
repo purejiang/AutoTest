@@ -990,6 +990,18 @@ pre,
   white-space: pre-line;
 }
 
+/* 顶部健康状态 tooltip：每条信息独立一行，长路径也能换行 */
+.health-tooltip {
+  max-width: min(560px, calc(100vw - 24px));
+}
+
+.health-tooltip-line {
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+  white-space: normal;
+  word-break: break-word;
+}
+
 .el-dropdown-menu__item {
   font-size: 12px;
 }

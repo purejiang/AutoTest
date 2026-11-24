@@ -28,7 +28,7 @@ const health = computed(() => healthQuery.data.value)
 const healthOk = computed(() => Boolean(health.value) && !healthQuery.isError.value)
 const deviceCount = computed(() => Number(health.value?.adb?.devices ?? 0))
 
-const healthTooltip = computed(() => {
+const healthLines = computed<string[]>(() => {
   const data = health.value
   const frontendBuild = (() => {
     try {
@@ -38,7 +38,7 @@ const healthTooltip = computed(() => {
     }
   })()
   if (!data) {
-    return '后端未连接：请确认 127.0.0.1:8787 已启动'
+    return ['后端未连接：请确认 127.0.0.1:8787 已启动']
   }
   return [
     `状态：${data.status}`,
@@ -47,7 +47,7 @@ const healthTooltip = computed(() => {
     `数据库：${data.db}`,
     `adb：${data.adb?.path ?? '—'} ${data.adb?.version ?? ''}`,
     `数据目录：${data.data_dir}`,
-  ].join('\n')
+  ]
 })
 
 const activeNav = computed(() => {
@@ -128,7 +128,12 @@ function navigate(path: string): void {
             </button>
           </el-tooltip>
 
-          <el-tooltip :content="healthTooltip" placement="bottom-end" raw-content>
+          <el-tooltip placement="bottom-end" popper-class="health-tooltip">
+            <template #content>
+              <div v-for="(line, index) in healthLines" :key="index" class="health-tooltip-line">
+                {{ line }}
+              </div>
+            </template>
             <button type="button" class="status-chip">
               <span class="dot" :class="healthOk ? 'online' : 'offline'" />
               <span>{{ healthOk ? '正常' : '后端离线' }}</span>
