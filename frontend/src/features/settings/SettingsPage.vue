@@ -29,6 +29,7 @@ import { useTheme, type ThemeChoice } from '@/composables/useTheme'
 import PageHead from '@/components/PageHead.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import MirrorConfigCard from './MirrorConfigCard.vue'
+import RestartHint from './RestartHint.vue'
 import SettingField from './SettingField.vue'
 
 const APP_VERSION = __APP_VERSION__
@@ -587,13 +588,6 @@ function applyThemeChoice(choice: ThemeChoice): void {
             </section>
           </div>
 
-          <el-alert
-            type="info"
-            :closable="false"
-            show-icon
-            title="排障顺序：ADB → uiautomator2 → scrcpy jar/版本"
-            description="工具链状态来自后端 /api/health，缓存 5 秒；改完路径后可点「重新探测」立即刷新。"
-          />
         </div>
 
         <!-- ============================================================ 执行 -->
@@ -671,7 +665,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
             <section class="card exec-card">
               <div class="card-head">
                 <h2>访问与安全</h2>
-                <span class="card-hint" title="对外暴露服务时建议设置访问令牌；修改后需重启后端生效。">访问令牌 · 重启生效</span>
+                <RestartHint detail="访问令牌修改后需要重启后端；对外暴露服务时建议设置。" />
               </div>
               <div class="card-body">
                 <SettingField
@@ -687,13 +681,6 @@ function applyThemeChoice(choice: ThemeChoice): void {
             </section>
           </div>
 
-          <el-alert
-            type="info"
-            :closable="false"
-            show-icon
-            title="运行节奏与录制参数保存后立即用于下一次运行"
-            description="镜像参数（最大边 / 帧率 / 码率 / 裁剪）需要停止并重新启动镜像后生效；正在进行的运行不受影响。"
-          />
         </div>
 
         <!-- ============================================================ 存储 -->
@@ -701,9 +688,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
           <section class="card settings-card">
             <div class="card-head">
               <h2>存储设置</h2>
-              <span class="card-hint" title="SQLite 数据库引擎不会热切换；产物挂载会按新目录动态解析。">
-                数据/产物目录 · 修改后重启后端
-              </span>
+              <RestartHint detail="修改数据目录/前端目录后需要重启后端；SQLite 不会热切换，产物挂载按新目录动态解析。" />
             </div>
             <div class="card-body">
               <div class="settings-grid">
@@ -894,7 +879,6 @@ function applyThemeChoice(choice: ThemeChoice): void {
               <span class="savebar-dot" aria-hidden="true" />
               未保存 {{ changedKeys.length }} 项
             </div>
-            <div class="savebar-sub">保存后生效；镜像、目录与令牌类需重启</div>
           </div>
           <div class="savebar-actions">
             <el-button size="small" :disabled="updateMutation.isPending.value" @click="discardChanges">
@@ -1215,14 +1199,6 @@ function applyThemeChoice(choice: ThemeChoice): void {
   border-radius: 50%;
   background: var(--amber);
   box-shadow: 0 0 0 3px var(--amber-soft);
-}
-
-.savebar-sub {
-  margin-top: 2px;
-  padding-left: 14px;
-  color: var(--muted-2);
-  font-size: 10.5px;
-  line-height: 1.4;
 }
 
 .savebar-actions {

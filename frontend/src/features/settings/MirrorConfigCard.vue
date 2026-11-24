@@ -2,12 +2,13 @@
 // 镜像画质卡：三档预设只是「一键填三项参数」的快捷方式，保存的仍是
 // scrcpy.max_size / max_fps / video_bit_rate；不新增任何配置键。
 // 手动改动任意一项后自动显示「自定义」。
-import { InfoFilled, RefreshLeft } from '@element-plus/icons-vue'
+import { RefreshLeft } from '@element-plus/icons-vue'
 import { computed } from 'vue'
 
 import type { SettingEntry } from '@/types/api'
 import { numberOrNull, settingSourceMeta } from '@/lib/format'
 import StatusTag from '@/components/StatusTag.vue'
+import RestartHint from './RestartHint.vue'
 
 type SettingSource = 'default' | 'file' | 'db' | 'env'
 
@@ -145,15 +146,10 @@ function sourceTitle(key: string): string {
   <section class="card mirror-config-card">
     <div class="card-head">
       <h2>镜像</h2>
-      <el-tooltip
-        content="预设只修改最大边、帧率和码率；裁剪单独设置。保存后需停止并重新启动镜像；正在进行的运行不受影响。"
-        placement="top"
-      >
-        <span class="card-hint mirror-restart-hint" tabindex="0" aria-label="重启镜像生效，查看说明">
-          <el-icon><InfoFilled /></el-icon>
-          重启镜像生效
-        </span>
-      </el-tooltip>
+      <RestartHint
+        target="镜像"
+        detail="预设只修改最大边、帧率和码率；裁剪单独设置。保存后需停止并重新启动镜像；正在进行的运行不受影响。"
+      />
       <StatusTag tone="blue">scrcpy {{ serverVersion }}</StatusTag>
     </div>
     <div class="card-body">
@@ -379,17 +375,6 @@ function sourceTitle(key: string): string {
 .preset-note {
   color: var(--muted-2);
   font-size: 9.5px;
-}
-
-.mirror-restart-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.mirror-restart-hint .el-icon {
-  color: var(--accent);
-  font-size: 12px;
 }
 
 .preset-current {
