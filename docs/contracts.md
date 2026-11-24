@@ -58,7 +58,7 @@ backend/app/
     templates/report.html [be-report]
   capture/
     logcat.py          [be-report] logcat 采集（运行期 + 手动）
-    network.py         [be-report] mitmproxy 插件（可选，M8，可不做）
+    network.py         [be-report] 域名抓包（stdlib 代理，不抓正文）
 frontend/src/
   main.tsx/App.tsx/router/layout/theme   [fe-core]
   api/client.ts  api/hooks.ts            [fe-core]
@@ -214,12 +214,17 @@ client→server：`{"kind":"ping"}`→`{"kind":"pong"}`；`{"kind":"ack","last_s
 ### 7.1 设备与手动控制（be-core）
 GET /api/devices；POST /api/devices/connect {address}；POST /api/devices/{serial}/disconnect；
 GET /api/devices/{serial}/info|hierarchy?raw=|screenshot(png)|apps?keyword=&type=(all|system|third_party，`third` 为兼容别名)|logcat?lines=200；
+POST /api/devices/{serial}/logcat/start|stop；GET /api/devices/{serial}/logcat/status
+（start 可带 run_id/max_lines/package；P0 package 仅记录不生效）；
   hierarchy 响应：`{"node": HierarchyNode, "raw": str|null}`（raw=true 时尽量给原始 XML，取不到为 null 并带 `"raw_unavailable"`）；
 POST /api/devices/{serial}/tap|long_press|swipe|key|text|app|shell；
 POST /api/devices/{serial}/screenrecord/start {name,bit_rate,time_limit_s} / stop；
 GET /api/devices/{serial}/screenrecord/status → {active,pending,name,time_limit_s,elapsed_s,remaining_s,started_at,last:{name,size,url}}；
   last 为最近一次录屏产物直链（/artifacts/screenrecord/…，支持 Range 播放/拖动）；
-POST /api/devices/{serial}/network/start|stop（未启用→UNSUPPORTED）；
+POST /api/devices/{serial}/network/start|stop；GET /api/devices/{serial}/network/status
+（未启用→UNSUPPORTED）。域名模式：本机 stdlib 代理 + 设备 http_proxy + adb reverse，
+只记录 host/port/scheme，不安装 CA、不抓 Header/正文；同一时间只允许一台设备抓包；
+停止时恢复设备原 http_proxy。
 POST /api/devices/{serial}/mirror/start|stop；GET /api/devices/{serial}/mirror/status。
 > 录制挂钩：serial 有活跃录制时注入动作必须经 `app.recorder.hooks` 留痕（on_before_pointer→注入→on_action）。
 
