@@ -41,12 +41,12 @@ def net_env(tmp_path, temp_db):
     config.reset_to_defaults()
 
 
-def _enable(port: int = 0) -> None:
-    # 保留夹具设置的数据目录，只覆盖抓包开关（set_db_overrides 是整层替换）。
+def _enable(port: int = 0, mode: str = "manual") -> None:
+    # 保留夹具设置的数据目录，只覆盖抓包模式（set_db_overrides 是整层替换）。
     config.set_db_overrides(
         {
             "runtime.data_dir": str(config.data_dir()),
-            "capture.network.enabled": True,
+            "capture.network.mode": mode,
             "capture.network.port": port,
         }
     )
@@ -243,8 +243,7 @@ def test_attach_if_needed_links_run(net_env, monkeypatch) -> None:
     config.set_db_overrides(
         {
             "runtime.data_dir": str(config.data_dir()),
-            "capture.network.enabled": True,
-            "capture.network.auto_attach": True,
+            "capture.network.mode": "run",
             "capture.network.port": 0,
         }
     )
@@ -278,8 +277,7 @@ def test_attach_if_needed_skips_manual_capture(net_env, monkeypatch) -> None:
     config.set_db_overrides(
         {
             "runtime.data_dir": str(config.data_dir()),
-            "capture.network.enabled": True,
-            "capture.network.auto_attach": True,
+            "capture.network.mode": "run",
             "capture.network.port": 0,
         }
     )
@@ -521,7 +519,7 @@ def test_status_without_capture(net_env) -> None:
 
 
 def _core_net_enable() -> None:
-    config.set_db_overrides({"capture.network.enabled": True, "capture.network.port": 0})
+    config.set_db_overrides({"capture.network.mode": "manual", "capture.network.port": 0})
 
 
 @pytest.fixture()
@@ -541,7 +539,7 @@ def test_api_network_status_requires_enabled(core_client) -> None:
     assert response.status_code == 400
     error = response.json()["error"]
     assert error["code"] == "UNSUPPORTED"
-    assert error["details"]["setting"] == "capture.network.enabled"
+    assert error["details"]["setting"] == "capture.network.mode"
 
 
 def test_api_network_start_status_stop(core_net) -> None:

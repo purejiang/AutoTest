@@ -205,7 +205,7 @@ function defaultLabel(key: string): string {
       <div class="field-grid">
         <div class="field">
           <span class="field-label">
-            最大边 (px)
+            最大边（px）
             <StatusTag
               v-if="sourceOf('scrcpy.max_size') !== 'default'"
               :tone="sourceMeta('scrcpy.max_size').tone"
@@ -240,7 +240,7 @@ function defaultLabel(key: string): string {
 
         <div class="field">
           <span class="field-label">
-            帧率 (fps)
+            帧率（fps）
             <StatusTag
               v-if="sourceOf('scrcpy.max_fps') !== 'default'"
               :tone="sourceMeta('scrcpy.max_fps').tone"
@@ -275,7 +275,7 @@ function defaultLabel(key: string): string {
 
         <div class="field">
           <span class="field-label">
-            码率 (Mbps)
+            码率（Mbps）
             <StatusTag
               v-if="sourceOf('scrcpy.video_bit_rate') !== 'default'"
               :tone="sourceMeta('scrcpy.video_bit_rate').tone"
@@ -310,7 +310,7 @@ function defaultLabel(key: string): string {
 
         <div class="field">
           <span class="field-label">
-            裁剪 w:h:x:y
+            裁剪（w:h:x:y）
             <StatusTag
               v-if="sourceOf('scrcpy.crop') !== 'default'"
               :tone="sourceMeta('scrcpy.crop').tone"

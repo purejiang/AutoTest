@@ -126,12 +126,7 @@ const GROUP_KEYS: Record<KeyGroup, string[]> = {
   scrcpyJar: ['scrcpy.jar'],
   engine: ['engine.poll_interval_ms', 'engine.default_timeout_ms', 'engine.max_total_ms', 'engine.max_steps'],
   recording: ['recording.click_dump', 'recording.confirm_before_save', 'recording.target_mode'],
-  capture: [
-    'capture.logcat_auto_attach',
-    'capture.network.enabled',
-    'capture.network.auto_attach',
-    'capture.network.port',
-  ],
+  capture: ['capture.logcat_auto_attach', 'capture.network.mode', 'capture.network.port'],
   security: ['security.token'],
   storage: [
     'runtime.data_dir',
@@ -650,7 +645,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
             <section class="card exec-card">
               <div class="card-head">
                 <h2>采集</h2>
-                <span class="card-hint" title="logcat 进入运行产物；网络抓包只记录域名，不含正文。">logcat · 域名抓包 · 产物</span>
+                <span class="card-hint" title="logcat 进入运行产物；网络抓包只记录域名，并可在失败节点保存证据。">logcat · 域名抓包 · 失败证据</span>
               </div>
               <div class="card-body">
                 <div class="field-row">
@@ -736,26 +731,26 @@ function applyThemeChoice(choice: ThemeChoice): void {
               <template v-else-if="stats">
                 <div class="kv-grid">
                   <div class="kv">
-                    <span>DB 体积</span><strong>{{ formatBytes(stats.db_size) }}</strong>
+                    <span>数据库体积</span><strong>{{ formatBytes(stats.db_size) }}</strong>
                   </div>
                   <div class="kv">
-                    <span>产物体积</span><strong>{{ formatBytes(stats.artifacts_size) }}</strong>
+                    <span>产物总大小</span><strong>{{ formatBytes(stats.artifacts_size) }}</strong>
                   </div>
                   <div class="kv">
-                    <span>运行数</span><strong>{{ stats.runs }}</strong>
+                    <span>运行记录</span><strong>{{ stats.runs }}</strong>
                   </div>
                   <div class="kv">
-                    <span>产物数</span><strong>{{ stats.artifacts }}</strong>
+                    <span>产物数量</span><strong>{{ stats.artifacts }}</strong>
                   </div>
                   <div class="kv">
-                    <span>最早运行</span><strong>{{ formatDateTime(stats.oldest_run_at) }}</strong>
+                    <span>最早记录</span><strong>{{ formatDateTime(stats.oldest_run_at) }}</strong>
                   </div>
                   <div class="kv">
-                    <span>保留天数</span><strong>{{ stats.retention_days }}</strong>
+                    <span>运行保留天数</span><strong>{{ stats.retention_days }}</strong>
                   </div>
                 </div>
                 <div class="maintenance-actions">
-                  <span class="small">保留天数</span>
+                  <span class="small">运行保留天数</span>
                   <el-input-number
                     v-model="retentionDays"
                     size="small"

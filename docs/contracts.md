@@ -229,8 +229,9 @@ GET /api/devices/{serial}/screenrecord/status → {active,pending,name,time_limi
 POST /api/devices/{serial}/network/start|stop；GET /api/devices/{serial}/network/status
 （未启用→UNSUPPORTED）。域名模式：本机 stdlib 代理 + 设备 http_proxy + adb reverse，
 只记录 host/port/scheme，不安装 CA、不抓 Header/正文；同一时间只允许一台设备抓包；
-停止时恢复设备原 http_proxy。设置 `capture.network.auto_attach=true` 时随 run 自动启停，
-artifact 关联 `run_id`；手动抓包不会被运行结束误停。
+停止时恢复设备原 http_proxy。`capture.network.mode=off|manual|run`：
+off 完全关闭；manual 仅控制台手动；run 随 run 自动启停并关联 `run_id`；
+手动抓包不会被运行结束误停。
 POST /api/devices/{serial}/mirror/start|stop；GET /api/devices/{serial}/mirror/status。
 > 录制挂钩：serial 有活跃录制时注入动作必须经 `app.recorder.hooks` 留痕（on_before_pointer→注入→on_action）。
 

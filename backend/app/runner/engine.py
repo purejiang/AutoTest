@@ -263,7 +263,7 @@ def _stop_run_logcat(run_id: int, serial: str) -> None:
 
 
 def _attach_run_network(run_id: int) -> None:
-    """按 capture.network.auto_attach 自动开启域名抓包；失败绝不能拖垮运行。"""
+    """按 capture.network.mode=run 自动开启域名抓包；失败绝不能拖垮运行。"""
     try:
         capture = network.attach_if_needed(run_id)
         if capture is not None:

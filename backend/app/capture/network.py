@@ -55,9 +55,15 @@ def _safe_serial(serial: str) -> str:
     return _SAFE_RE.sub("_", str(serial or "")) or "device"
 
 
+def mode() -> str:
+    """网络抓包模式：off / manual / run；非法值按 off 处理。"""
+    value = str(config.get("capture.network.mode") or "off").strip().lower()
+    return value if value in {"off", "manual", "run"} else "off"
+
+
 def available() -> bool:
-    """抓包可用 = 配置开启（域名代理为 stdlib 实现，无第三方依赖）。"""
-    return bool(config.get("capture.network.enabled"))
+    """抓包是否可用：manual/run 模式；域名代理为 stdlib 实现，无第三方依赖。"""
+    return mode() != "off"
 
 
 def _ensure_available() -> None:
@@ -858,10 +864,8 @@ def stop(serial: str) -> dict[str, Any]:
 
 
 def attach_if_needed(run_id: int) -> NetworkCapture | None:
-    """运行期自动开启域名抓包；只复用本 run 的采集，不抢占手动/其他 run 的采集。"""
-    if not bool(config.get("capture.network.enabled")):
-        return None
-    if not bool(config.get("capture.network.auto_attach")):
+    """运行期自动开启域名抓包；仅 mode=run 生效，不抢占手动/其他 run 的采集。"""
+    if mode() != "run":
         return None
     try:
         run_key = int(run_id)

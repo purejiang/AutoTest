@@ -69,12 +69,47 @@ def _coerce_value(key: str, value: Any) -> Any:
 
 
 # ---------------------------------------------------------------- DB 层 <-> config
+def _old_bool(row: Setting | None) -> bool:
+    if row is None:
+        return False
+    value = row.value
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in _TRUE_STRINGS
+    return bool(value)
+
+
+def _migrate_network_mode(session: Session) -> None:
+    """把旧的 enabled + auto_attach 两个开关迁移成单一下拉 mode。
+
+    enabled=false -> off（删除旧行即可，默认值就是 off）
+    enabled=true + auto_attach=false -> manual
+    enabled=true + auto_attach=true  -> run
+    已有 mode 时只清掉旧行，不覆盖新值。
+    """
+    mode_row = session.get(Setting, "capture.network.mode")
+    enabled_row = session.get(Setting, "capture.network.enabled")
+    auto_row = session.get(Setting, "capture.network.auto_attach")
+    if enabled_row is None and auto_row is None:
+        return
+    if mode_row is None and _old_bool(enabled_row):
+        value = "run" if _old_bool(auto_row) else "manual"
+        session.add(Setting(key="capture.network.mode", value=value, updated_at=now_iso()))
+    for row in (enabled_row, auto_row):
+        if row is not None:
+            session.delete(row)
+    session.flush()
+
+
 def load_into_config(session: Session | None = None) -> dict[str, Any]:
     """读 settings 表 -> config.set_db_overrides()。启动时与每次写入后调用。"""
     if session is not None:
+        _migrate_network_mode(session)
         rows = session.execute(select(Setting)).scalars().all()
     else:
         with db.session_scope() as own:
+            _migrate_network_mode(own)
             rows = own.execute(select(Setting)).scalars().all()
     values = {
         row.key: row.value

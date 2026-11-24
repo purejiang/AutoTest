@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import tests.test_core_support as support
+from app import db, models
+from app.services import settings_service
 
 core_client = support.core_client
 
@@ -25,6 +27,20 @@ def test_default_response_shape(core_client) -> None:
     assert {"adb.connect_timeout_s", "scrcpy.jar"} <= keys
     assert body["effective"]["adb.connect_timeout_s"] == 20
     assert body["effective"]["scrcpy.jar"] == ""
+
+
+def test_network_mode_migrates_old_switches(core_client) -> None:
+    with db.session_scope() as session:
+        session.add(models.Setting(key="capture.network.enabled", value=True))
+        session.add(models.Setting(key="capture.network.auto_attach", value=True))
+    settings_service.load_into_config()
+
+    body = core_client.get("/api/settings").json()
+    assert body["effective"]["capture.network.mode"] == "run"
+    with db.session_scope() as session:
+        assert session.get(models.Setting, "capture.network.mode").value == "run"
+        assert session.get(models.Setting, "capture.network.enabled") is None
+        assert session.get(models.Setting, "capture.network.auto_attach") is None
 
 
 def test_new_toolchain_keys_are_editable(core_client) -> None:

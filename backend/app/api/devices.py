@@ -946,11 +946,11 @@ def screenrecord_stop(serial: str) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- 网络抓包（可选，M8）
 def _ensure_network_enabled() -> None:
-    if not config.get("capture.network.enabled"):
+    if not config.get("capture.network.mode") or config.get("capture.network.mode") == "off":
         raise ApiError(
             "UNSUPPORTED",
-            "network capture is disabled (capture.network.enabled=false)",
-            {"setting": "capture.network.enabled"},
+            "network capture is disabled (capture.network.mode=off)",
+            {"setting": "capture.network.mode"},
         )
 
 

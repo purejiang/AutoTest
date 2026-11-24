@@ -417,7 +417,7 @@ def test_network_capture_disabled_unsupported(core_client) -> None:
     assert response.status_code == 400
     error = response.json()["error"]
     assert error["code"] == "UNSUPPORTED"
-    assert error["details"]["setting"] == "capture.network.enabled"
+    assert error["details"]["setting"] == "capture.network.mode"
 
 
 def test_connect_unavailable_without_adb_module(core_client, monkeypatch) -> None:
