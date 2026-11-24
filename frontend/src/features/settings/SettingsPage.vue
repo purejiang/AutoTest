@@ -11,7 +11,7 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 
 import { describeApiError } from '@/api/client'
 import {
@@ -299,6 +299,20 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('beforeunload', onBeforeUnload)
+})
+
+onBeforeRouteLeave(async () => {
+  if (!showSavebar.value) return true
+  try {
+    await ElMessageBox.confirm(
+      `有 ${changedKeys.value.length} 项未保存的改动，离开后会丢失。`,
+      '离开设置',
+      { type: 'warning', confirmButtonText: '离开', cancelButtonText: '继续编辑' },
+    )
+    return true
+  } catch {
+    return false
+  }
 })
 
 function onMoreCommand(command: string): void {
