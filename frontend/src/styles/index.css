@@ -2701,10 +2701,12 @@ pre,
   width: 100%;
 }
 
-.setting-field .unit {
+.setting-field .field-desc {
   color: var(--muted-2);
   font-size: 10px;
+  line-height: 1.45;
 }
+
 
 .setting-field .setting-default {
   color: var(--muted-2);

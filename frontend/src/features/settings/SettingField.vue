@@ -68,6 +68,7 @@ function defaultLabel(entry: SettingEntry): string | null {
         @click="emit('clear')"
       />
     </div>
+    <div v-if="entry.desc" class="field-desc">{{ entry.desc }}</div>
 
     <el-switch
       v-if="entry.type === 'bool'"
@@ -111,6 +112,5 @@ function defaultLabel(entry: SettingEntry): string | null {
     <div v-if="defaultLabel(entry) !== null" class="setting-default">
       默认：{{ defaultLabel(entry) }}
     </div>
-    <div v-if="entry.desc" class="unit">{{ entry.desc }}</div>
   </div>
 </template>
