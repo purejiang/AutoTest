@@ -145,6 +145,9 @@ function sourceTitle(key: string): string {
   <section class="card mirror-config-card">
     <div class="card-head">
       <h2>镜像</h2>
+      <span class="card-hint" title="预设只修改最大边、帧率和码率；裁剪单独设置，保存后需重启镜像。">
+        画质 · 帧率 · 码率 · 裁剪
+      </span>
       <StatusTag tone="blue">scrcpy {{ serverVersion }}</StatusTag>
     </div>
     <div class="card-body">
@@ -310,9 +313,6 @@ function sourceTitle(key: string): string {
         </div>
       </div>
 
-      <div class="hint" style="margin-top: 8px">
-        改动任意字段会自动切换为「自定义」；三档预设只填最大边 / 帧率 / 码率，不会额外保存配置键。
-      </div>
     </div>
   </section>
 </template>

@@ -10,7 +10,7 @@ import {
   RefreshLeft,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { describeApiError } from '@/api/client'
@@ -47,7 +47,7 @@ const healthQuery = useHealth()
 const statsQuery = useMaintenanceStats()
 const cleanupMutation = useCleanup()
 
-const { theme, resolvedTheme, setTheme } = useTheme()
+const { theme, setTheme } = useTheme()
 
 type SettingsTab = 'general' | 'toolchain' | 'execution' | 'storage' | 'about'
 
@@ -156,12 +156,13 @@ const changedKeys = computed(() =>
     .filter((key) => JSON.stringify(values[key]) !== JSON.stringify(loaded.value[key])),
 )
 
-// 只有存在未保存的后端改动时才显示操作条；关于页不显示，避免遮挡健康信息。
-const showSavebar = computed(() => activeTab.value !== 'about' && changedKeys.value.length > 0)
+// 只有存在未保存的后端改动时才显示操作条；所有 Tab 都保留保存入口，
+// 避免切到「关于」后看不到保存条、改动无法落库。
+const showSavebar = computed(() => changedKeys.value.length > 0)
 
 // 干净状态用页头的一个小标签代替常驻保存条，保持轻量。
 const showSavedTag = computed(
-  () => Boolean(settings.value) && activeTab.value !== 'about' && changedKeys.value.length === 0,
+  () => Boolean(settings.value) && changedKeys.value.length === 0,
 )
 
 const health = computed(() => healthQuery.data.value)
@@ -276,6 +277,29 @@ async function discardChanges(): Promise<void> {
   restoreLoadedValues()
   ElMessage.info('已放弃未保存的更改')
 }
+
+function onGlobalKeydown(event: KeyboardEvent): void {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 's') {
+    event.preventDefault()
+    if (showSavebar.value && !updateMutation.isPending.value) void saveSettings()
+  }
+}
+
+function onBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!showSavebar.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onGlobalKeydown)
+  window.addEventListener('beforeunload', onBeforeUnload)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('beforeunload', onBeforeUnload)
+})
 
 function onMoreCommand(command: string): void {
   if (command === 'reset') {
@@ -405,8 +429,8 @@ function applyThemeChoice(choice: ThemeChoice): void {
         >
           {{ tab.label }}
         </button>
-        <div class="settings-note">
-          配置优先级：默认 &lt; 文件 &lt; 数据库 &lt; 环境变量。外观偏好即时记住到本机，其余设置保存后持久化。
+        <div class="settings-note" title="配置优先级：默认 &lt; 文件 &lt; 数据库 &lt; 环境变量">
+          外观仅本机 · 其余保存后生效
         </div>
       </aside>
 
@@ -416,7 +440,9 @@ function applyThemeChoice(choice: ThemeChoice): void {
           <section class="card settings-card">
             <div class="card-head">
               <h2>外观</h2>
-              <span class="hint">浅深色 · 跟随系统</span>
+              <span class="card-hint" title="切换只影响当前浏览器，不写入后端配置；顶部栏主题按钮与此同步。">
+                仅本机浏览器 · 即时预览
+              </span>
             </div>
             <div class="card-body">
               <div class="theme-choices">
@@ -437,18 +463,15 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   <small>{{ choice.note }}</small>
                 </button>
               </div>
-              <div class="hint" style="margin-top: 8px">
-                切换后立即预览并记住到当前浏览器；不写入后端配置。当前生效：{{
-                  resolvedTheme === 'dark' ? '深色' : '浅色'
-                }}（顶部栏主题按钮与这里同步）。
-              </div>
             </div>
           </section>
 
           <section class="card settings-card">
             <div class="card-head">
               <h2>语言</h2>
-              <StatusTag tone="blue">当前仅简体中文</StatusTag>
+              <span class="card-hint" title="完整中英双语需要抽取全站文案，放到后续版本；本版先保留入口，不做半汉半英。">
+                仅简体中文 · 双语后续版本
+              </span>
             </div>
             <div class="card-body">
               <div class="field" style="max-width: 360px">
@@ -458,9 +481,6 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   <el-option label="English（规划中）" value="en-US" disabled />
                 </el-select>
               </div>
-              <div class="hint" style="margin-top: 7px">
-                完整中英双语需要抽取全站文案，放到后续版本；本版先保留入口，不做半汉半英。
-              </div>
             </div>
           </section>
         </div>
@@ -469,14 +489,14 @@ function applyThemeChoice(choice: ThemeChoice): void {
         <div v-else-if="activeTab === 'toolchain'" class="settings-pane">
           <div class="tool-grid">
             <section class="card tool-card">
+              <div class="card-head">
+                <h2><el-icon :size="15"><Connection /></el-icon> ADB</h2>
+                <span class="card-hint" title="设备连接、命令执行与在线设备数。">设备连接与命令</span>
+                <StatusTag :tone="health?.adb?.version ? 'green' : health ? 'amber' : 'gray'">
+                  {{ health?.adb?.version ? '正常' : health ? '待检查' : '未知' }}
+                </StatusTag>
+              </div>
               <div class="card-body">
-                <div class="tool-head">
-                  <el-icon :size="16"><Connection /></el-icon>
-                  <strong>ADB</strong>
-                  <StatusTag :tone="health?.adb?.version ? 'green' : health ? 'amber' : 'gray'">
-                    {{ health?.adb?.version ? '正常' : health ? '待检查' : '未知' }}
-                  </StatusTag>
-                </div>
                 <div class="tool-row">
                   <span>路径</span><code>{{ health?.adb?.path || '—' }}</code>
                 </div>
@@ -508,30 +528,31 @@ function applyThemeChoice(choice: ThemeChoice): void {
             </section>
 
             <section class="card tool-card">
+              <div class="card-head">
+                <h2><el-icon :size="15"><Cpu /></el-icon> uiautomator2</h2>
+                <span class="card-hint" title="层级树、元素定位、文本输入都依赖该驱动；设备端服务缺失时由后端在首次操作时提示。">
+                  元素定位与输入
+                </span>
+                <StatusTag :tone="health?.status === 'ok' ? 'green' : health ? 'amber' : 'gray'">
+                  {{ health?.status === 'ok' ? '可用' : health ? '降级' : '未知' }}
+                </StatusTag>
+              </div>
               <div class="card-body">
-                <div class="tool-head">
-                  <el-icon :size="16"><Cpu /></el-icon>
-                  <strong>uiautomator2</strong>
-                  <StatusTag :tone="health?.status === 'ok' ? 'green' : health ? 'amber' : 'gray'">
-                    {{ health?.status === 'ok' ? '可用' : health ? '降级' : '未知' }}
-                  </StatusTag>
-                </div>
                 <div class="tool-row"><span>驱动</span><code>U2Driver</code></div>
                 <div class="tool-row"><span>设备服务</span><code>首次操作时检查/安装</code></div>
                 <div class="tool-row"><span>安装入口</span><code>不在此页触发</code></div>
-                <div class="hint" style="margin-top: 7px">
-                  层级树、元素定位、文本输入都依赖该驱动；设备端服务缺失时由后端在首次操作时提示。
-                </div>
               </div>
             </section>
 
             <section class="card tool-card">
+              <div class="card-head">
+                <h2><el-icon :size="15"><Cellphone /></el-icon> scrcpy-server</h2>
+                <span class="card-hint" title="镜像画质、帧率和码率在「执行 → 镜像」配置。">
+                  镜像与录制服务
+                </span>
+                <StatusTag tone="green">已锁定</StatusTag>
+              </div>
               <div class="card-body">
-                <div class="tool-head">
-                  <el-icon :size="16"><Cellphone /></el-icon>
-                  <strong>scrcpy-server</strong>
-                  <StatusTag tone="green">已锁定</StatusTag>
-                </div>
                 <div class="tool-row">
                   <span>版本</span><code>{{ SCRCPY_SERVER_VERSION }}</code>
                 </div>
@@ -548,7 +569,6 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   @update:model-value="values[entry.key] = $event"
                   @clear="deleteOverride(entry)"
                 />
-                <div class="hint" style="margin-top: 7px">镜像画质、帧率和码率在「执行 → 镜像」配置。</div>
               </div>
             </section>
           </div>
@@ -577,7 +597,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
             <section class="card exec-card">
               <div class="card-head">
                 <h2>运行节奏</h2>
-                <StatusTag tone="blue">engine</StatusTag>
+                <span class="card-hint" title="轮询间隔、默认超时、单次运行上限与最大步数。">轮询 · 超时 · 步数</span>
               </div>
               <div class="card-body">
                 <div class="field-row">
@@ -597,7 +617,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
             <section class="card exec-card">
               <div class="card-head">
                 <h2>录制与定位</h2>
-                <StatusTag tone="blue">recording</StatusTag>
+                <span class="card-hint" title="点击前抓层级、录后确认与录制转脚本的定位方式。">层级抓取 · 定位方式</span>
               </div>
               <div class="card-body">
                 <div class="field-row">
@@ -617,7 +637,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
             <section class="card exec-card">
               <div class="card-head">
                 <h2>采集</h2>
-                <StatusTag tone="blue">capture</StatusTag>
+                <span class="card-hint" title="采集内容会进入运行产物与报告。">logcat · 网络 · 写入产物</span>
               </div>
               <div class="card-body">
                 <div class="field-row">
@@ -631,14 +651,13 @@ function applyThemeChoice(choice: ThemeChoice): void {
                     @clear="deleteOverride(entry)"
                   />
                 </div>
-                <div class="hint" style="margin-top: 7px">采集内容会进入运行产物与报告。</div>
               </div>
             </section>
 
             <section class="card exec-card">
               <div class="card-head">
                 <h2>访问与安全</h2>
-                <StatusTag tone="blue">security</StatusTag>
+                <span class="card-hint" title="对外暴露服务时建议设置访问令牌；修改后需重启后端生效。">访问令牌 · 重启生效</span>
               </div>
               <div class="card-body">
                 <SettingField
@@ -650,7 +669,6 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   @update:model-value="values[entry.key] = $event"
                   @clear="deleteOverride(entry)"
                 />
-                <div class="hint" style="margin-top: 7px">对外暴露服务时建议设置；修改后需重启后端生效。</div>
               </div>
             </section>
           </div>
@@ -666,17 +684,12 @@ function applyThemeChoice(choice: ThemeChoice): void {
 
         <!-- ============================================================ 存储 -->
         <div v-else-if="activeTab === 'storage'" class="settings-pane">
-          <el-alert
-            type="warning"
-            :closable="false"
-            show-icon
-            title="数据目录 / 前端目录修改后需重启后端生效"
-            description="SQLite 数据库引擎不会热切换；产物挂载会按新目录动态解析。"
-          />
           <section class="card settings-card">
             <div class="card-head">
               <h2>存储设置</h2>
-              <span class="hint">数据库目录、产物目录与保留策略</span>
+              <span class="card-hint" title="SQLite 数据库引擎不会热切换；产物挂载会按新目录动态解析。">
+                数据/产物目录 · 修改后重启后端
+              </span>
             </div>
             <div class="card-body">
               <div class="settings-grid">
@@ -696,6 +709,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
           <section class="card">
             <div class="card-head">
               <h2>存储统计</h2>
+              <span class="card-hint" title="统计数据库与产物占用，并清理过期运行。">运行/产物体积 · 清理</span>
               <el-button
                 size="small"
                 :icon="Refresh"
@@ -776,8 +790,9 @@ function applyThemeChoice(choice: ThemeChoice): void {
           <section class="card settings-card">
             <div class="card-head">
               <h2>关于 AutoTest</h2>
+              <span class="card-hint">单机 Android UI 自动化平台</span>
               <StatusTag :tone="health?.status === 'ok' ? 'green' : 'amber'">
-                {{ health?.status ?? '未知' }}
+                {{ health?.status === 'ok' ? '正常' : health?.status ?? '未知' }}
               </StatusTag>
             </div>
             <div class="card-body">
@@ -801,15 +816,13 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   <span>配置优先级</span><strong>默认 &lt; 文件 &lt; 数据库 &lt; 环境变量</strong>
                 </div>
               </div>
-              <div class="hint" style="margin-top: 10px">
-                单机 Android UI 自动化平台：设备控制、脚本编排、录制回放、运行观测与报告。
-              </div>
             </div>
           </section>
 
           <section class="card">
             <div class="card-head">
               <h2>健康信息</h2>
+              <span class="card-hint" title="状态来自后端 /api/health，缓存 5 秒。">后端状态 · adb · 目录</span>
               <el-button
                 size="small"
                 :icon="Refresh"
@@ -832,7 +845,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
               <el-descriptions v-else :column="1" border size="small">
                 <el-descriptions-item label="状态">
                   <StatusTag :tone="health.status === 'ok' ? 'green' : 'amber'">
-                    {{ health.status }}
+                    {{ health.status === 'ok' ? '正常' : health.status }}
                   </StatusTag>
                 </el-descriptions-item>
                 <el-descriptions-item label="版本">{{ health.version }}</el-descriptions-item>
@@ -867,7 +880,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
               <span class="savebar-dot" aria-hidden="true" />
               未保存 {{ changedKeys.length }} 项
             </div>
-            <div class="savebar-sub">保存后立即生效；镜像参数需重启镜像</div>
+            <div class="savebar-sub">保存后生效；镜像、目录与令牌类需重启</div>
           </div>
           <div class="savebar-actions">
             <el-button size="small" :disabled="updateMutation.isPending.value" @click="discardChanges">
@@ -878,6 +891,8 @@ function applyThemeChoice(choice: ThemeChoice): void {
               size="small"
               :icon="Check"
               :loading="updateMutation.isPending.value"
+              title="保存更改（⌘S / Ctrl+S）"
+              aria-keyshortcuts="Control+S Meta+S"
               @click="saveSettings"
             >
               保存更改
@@ -984,6 +999,15 @@ function applyThemeChoice(choice: ThemeChoice): void {
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+}
+
+.settings-pane :deep(.el-alert__title) {
+  font-size: 11px;
+}
+
+.settings-pane :deep(.el-alert__description) {
+  font-size: 10.5px;
+  line-height: 1.5;
 }
 
 .settings-card .card-body {
@@ -1094,14 +1118,6 @@ function applyThemeChoice(choice: ThemeChoice): void {
 
 .tool-card .setting-field {
   margin-top: 6px;
-}
-
-.tool-head {
-  font-weight: 650;
-}
-
-.tool-head .tag {
-  margin-left: auto;
 }
 
 .tool-row {
