@@ -19,7 +19,6 @@ const emit = defineEmits<{
   add: [type: NodeType]
   reorder: [fromId: string, targetId: string, position: DropPosition]
   delete: [id: string]
-  toggleEnabled: [id: string, enabled: boolean]
 }>()
 
 const search = ref('')
@@ -221,6 +220,7 @@ onBeforeUnmount(() => {
           <span class="node-name">{{ step.name || step.id }}</span>
           <span class="node-type">
             {{ NODE_TYPE_META[step.type].subtitle }}
+            <span v-if="!step.enabled" class="node-off"> · 已禁用</span>
             <span v-if="step.when" class="node-when"> · when</span>
           </span>
         </span>
@@ -232,14 +232,7 @@ onBeforeUnmount(() => {
           :aria-label="issueTitle(step.id)"
         />
         <span class="node-tools" @click.stop @keydown.stop>
-          <el-switch
-            :model-value="step.enabled"
-            size="small"
-            :aria-label="`${step.name || step.id}：启用/禁用`"
-            @update:model-value="emit('toggleEnabled', step.id, Boolean($event))"
-          />
           <el-button
-            class="node-delete"
             size="small"
             text
             type="danger"
@@ -277,6 +270,10 @@ onBeforeUnmount(() => {
 
 .node-when {
   color: var(--cyan);
+}
+
+.node-off {
+  color: var(--muted-2);
 }
 
 .node-issue {

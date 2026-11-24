@@ -1766,37 +1766,22 @@ pre,
 }
 
 .node-tools {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 1px;
   flex: none;
 }
 
-.node-tools .el-switch {
-  opacity: 0.58;
-  transition: opacity 0.12s ease;
-}
-
-.node-row:hover .node-tools .el-switch,
-.node-row.selected .node-tools .el-switch,
-.node-row:focus-within .node-tools .el-switch {
-  opacity: 1;
+.node-row:hover .node-tools,
+.node-row.selected .node-tools,
+.node-row:focus-within .node-tools {
+  display: flex;
 }
 
 .node-tools .el-button {
   height: 22px;
   width: 22px;
   padding: 0;
-}
-
-.node-delete {
-  visibility: hidden;
-}
-
-.node-row:hover .node-delete,
-.node-row.selected .node-delete,
-.node-row:focus-within .node-delete {
-  visibility: visible;
 }
 
 .editor-main {

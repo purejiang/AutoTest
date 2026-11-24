@@ -330,15 +330,6 @@ function deleteNode(nodeId: string): void {
   }
 }
 
-function toggleNodeEnabled(nodeId: string, enabled: boolean): void {
-  const data = draft.value
-  if (!data) return
-  applyDraft({
-    ...data,
-    steps: data.steps.map((step) => (step.id === nodeId ? { ...step, enabled } : step)),
-  })
-}
-
 function duplicateSelected(): void {
   if (selectedNode.value) duplicateNode(selectedNode.value.id)
 }
@@ -652,7 +643,6 @@ function jumpToPath(path: string): void {
         @add="addNode"
         @reorder="reorderNode"
         @delete="deleteNode"
-        @toggle-enabled="toggleNodeEnabled"
       />
 
       <div class="editor-main">
