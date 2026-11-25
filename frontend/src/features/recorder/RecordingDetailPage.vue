@@ -672,11 +672,6 @@ watch(
   margin-top: 8px;
 }
 
-/* 全局 .recording-event-low 是浅色底；深色主题下用当前色板覆盖，避免亮色行刺眼。 */
-html.dark .page :deep(.el-table .recording-event-low) {
-  --el-table-tr-bg-color: var(--amber-soft);
-}
-
 @keyframes recording-live-pulse {
   0%,
   100% {

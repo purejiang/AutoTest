@@ -27,7 +27,11 @@ export interface MirrorHello {
   sps_b64: string
   /** PPS 的 base64（契约冻结后向后兼容扩展；老后端没有该字段，此时从码流捕获） */
   pps_b64?: string
+  /** **已算过缩放的**实际长边（= max(编码宽, 编码高)），不是设置页的上限；不要直接和 scrcpy.max_size 比较 */
   max_size?: number
+  /** 新后端：按设备长边缩放百分比；configured_max_size 是用户设置的上限 */
+  scale_pct?: number
+  configured_max_size?: number
   max_fps?: number
   video_bit_rate?: number
   [key: string]: unknown
@@ -41,7 +45,12 @@ export interface MirrorConfigControl {
   codec?: string
   sps_b64?: string
   pps_b64?: string
+  /** 已算过缩放的**实际长边**（不是设置页的上限，见 features/mirror/lib/configMismatch.ts） */
   max_size?: number
+  /** 本次启动用的缩放比例；老后端没有 */
+  scale_pct?: number
+  /** 本次启动时设置页的上限；老后端没有 */
+  configured_max_size?: number
   max_fps?: number
   video_bit_rate?: number
   [key: string]: unknown
@@ -73,11 +82,7 @@ export interface MirrorPongControl {
 }
 
 export type MirrorControlMessage =
-  | MirrorConfigControl
-  | MirrorFlushControl
-  | MirrorErrorControl
-  | MirrorStatsControl
-  | MirrorPongControl
+  MirrorConfigControl | MirrorFlushControl | MirrorErrorControl | MirrorStatsControl | MirrorPongControl
 
 export interface MirrorCloseInfo {
   code: number
@@ -146,7 +151,8 @@ function documentHidden(): boolean {
  * 解析一帧二进制消息（导出便于单测）。行为见文件头注释。
  */
 export function parseBinaryFrame(buffer: ArrayBuffer, nowUs?: number): MirrorFrame {
-  const fallbackPts = nowUs ?? (typeof performance !== 'undefined' ? performance.now() * 1000 : Date.now() * 1000)
+  const fallbackPts =
+    nowUs ?? (typeof performance !== 'undefined' ? performance.now() * 1000 : Date.now() * 1000)
   if (buffer.byteLength >= 12) {
     const view = new DataView(buffer)
     const ptsUs = Number(view.getBigUint64(0, false))
@@ -160,17 +166,7 @@ export function parseBinaryFrame(buffer: ArrayBuffer, nowUs?: number): MirrorFra
 }
 
 export function createMirrorSocket(options: MirrorSocketOptions): MirrorSocket {
-  const {
-    serial,
-    token,
-    onHello,
-    onFrame,
-    onControl,
-    onError,
-    onOpen,
-    onClose,
-    wsFactory,
-  } = options
+  const { serial, token, onHello, onFrame, onControl, onError, onOpen, onClose, wsFactory } = options
 
   const url = options.url ?? defaultUrl(serial, token)
   const make = wsFactory ?? ((u: string) => new WebSocket(u))
@@ -313,11 +309,14 @@ export function createMirrorSocket(options: MirrorSocketOptions): MirrorSocket {
         handleBinary(data)
       } else if (typeof Blob !== 'undefined' && data instanceof Blob) {
         // binaryType=arraybuffer 时不应该出现，兜底转一下
-        void data.arrayBuffer().then((buf) => {
-          if (!disposed) handleBinary(buf)
-        }).catch((err: unknown) => {
-          onError?.(err instanceof Error ? err : new Error(String(err)))
-        })
+        void data
+          .arrayBuffer()
+          .then((buf) => {
+            if (!disposed) handleBinary(buf)
+          })
+          .catch((err: unknown) => {
+            onError?.(err instanceof Error ? err : new Error(String(err)))
+          })
       } else {
         onError?.(new Error('mirrorWs: 收到未知类型的 WS 消息'))
       }

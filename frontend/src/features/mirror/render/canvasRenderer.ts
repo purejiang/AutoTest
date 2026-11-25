@@ -32,6 +32,8 @@ export class CanvasRenderer {
   private rafId = 0
   private disposed = false
   private drawnFrames = 0
+  // drawImage 的单帧耗时（EMA）：解码排队但这里很便宜 → 瓶颈在解码/GPU 上传，不是绘制
+  private drawMsEma = 0
   private lastVideoSize = { width: 0, height: 0 }
   private lastCanvasPixels = { width: 0, height: 0 }
   private lastDpr = 1
@@ -52,6 +54,11 @@ export class CanvasRenderer {
 
   get videoSize(): { width: number; height: number } {
     return this.lastVideoSize
+  }
+
+  /** 最近单帧 drawImage 平均耗时（ms，EMA） */
+  get drawMs(): number {
+    return Math.round(this.drawMsEma * 100) / 100
   }
 
   attach(canvas: HTMLCanvasElement, container?: HTMLElement | null): void {
@@ -138,7 +145,10 @@ export class CanvasRenderer {
       this.layout(videoWidth, videoHeight)
       const { width, height } = this.canvas
       if (!width || !height) return
+      const drawStarted = performance.now()
       this.ctx.drawImage(frame, 0, 0, width, height)
+      const drawCost = performance.now() - drawStarted
+      this.drawMsEma = this.drawMsEma === 0 ? drawCost : this.drawMsEma * 0.8 + drawCost * 0.2
       this.drawnFrames += 1
       try {
         this.options.onFrameDrawn?.({
@@ -160,7 +170,12 @@ export class CanvasRenderer {
     this.containerSize = { width: container.clientWidth, height: container.clientHeight }
   }
 
-  /** 按容器可用空间与视频宽高比、DPR 重排 canvas 尺寸（CSS contain 效果）。 */
+  /**
+   * 按容器可用空间与视频宽高比、DPR 重排 canvas 尺寸（CSS contain 效果）。
+   *
+   * CSS 尺寸只取决于容器和画面宽高比，与推流分辨率无关：70% 缩放只是把更小的
+   * 视频帧放大到同一显示尺寸，观感是变糊而不是变小。
+   */
   private layout(videoWidth: number, videoHeight: number): void {
     const canvas = this.canvas
     const container = this.container

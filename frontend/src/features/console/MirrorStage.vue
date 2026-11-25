@@ -30,6 +30,7 @@ import type { Device } from '@/types/api'
 import { useKeyboardInput } from '../mirror/composables/useKeyboardInput'
 import { useMirrorSession } from '../mirror/composables/useMirrorSession'
 import { usePointerGestures } from '../mirror/composables/usePointerGestures'
+import { describeConfigMismatch } from '../mirror/lib/configMismatch'
 import type { MirrorUiStatus } from '../mirror/types'
 import MirrorStatusLine from '../mirror/components/MirrorStatusLine.vue'
 import MirrorStatusOverlay from '../mirror/components/MirrorStatusOverlay.vue'
@@ -121,26 +122,36 @@ watch(
 )
 
 // 设置变更后当前镜像仍在旧参数上跑：提示并允许一键重启。
+// 注意 hello.max_size 是**算过缩放后的实际长边**，不是设置页的上限——比较逻辑见
+// ../mirror/lib/configMismatch.ts（历史上这里直接拿两者比较，导致常驻一条假提示）。
 const settingsQuery = useSettings()
 const restartingMirror = ref(false)
-const configMismatch = computed(() => {
-  const info = session.hello.value
-  const effective = settingsQuery.data.value?.effective
-  if (!info || !effective) return null
-  const diffs: string[] = []
-  const fps = Number(effective['scrcpy.max_fps'])
-  const size = Number(effective['scrcpy.max_size'])
-  const bitrate = Number(effective['scrcpy.video_bit_rate'])
-  if (info.maxFps !== undefined && Number.isFinite(fps) && info.maxFps !== fps) {
-    diffs.push(`帧率 ${info.maxFps} → ${fps}`)
-  }
-  if (info.maxSize !== undefined && Number.isFinite(size) && info.maxSize !== size) {
-    diffs.push(`最大边 ${info.maxSize} → ${size}`)
-  }
-  if (info.videoBitRate !== undefined && Number.isFinite(bitrate) && info.videoBitRate !== bitrate) {
-    diffs.push(`码率 ${Math.round(info.videoBitRate / 1e6)}M → ${Math.round(bitrate / 1e6)}M`)
-  }
-  return diffs.length ? diffs.join('，') : null
+const configMismatch = computed(() =>
+  describeConfigMismatch(session.hello.value, settingsQuery.data.value?.effective),
+)
+// 用户点“忽略”后不再打扰；设置又变了（summary 变化）或换了设备时重新提示。
+const dismissedMismatch = ref<string | null>(null)
+const visibleMismatch = computed(() =>
+  configMismatch.value && configMismatch.value.summary !== dismissedMismatch.value
+    ? configMismatch.value
+    : null,
+)
+watch(
+  () => props.serial,
+  () => {
+    dismissedMismatch.value = null
+  },
+)
+
+function dismissMismatch(): void {
+  dismissedMismatch.value = configMismatch.value?.summary ?? null
+}
+
+const mismatchText = computed(() => {
+  const mismatch = visibleMismatch.value
+  if (!mismatch) return ''
+  const running = mismatch.runningLongEdge > 0 ? `（长边 ${mismatch.runningLongEdge}px）` : ''
+  return `画质设置已变更（${mismatch.summary}），当前镜像仍按旧参数运行${running}，重启镜像后生效。`
 })
 
 async function restartMirrorForConfig(): Promise<void> {
@@ -205,25 +216,28 @@ onClickOutside(moreMenuRef, () => {
 onMounted(() => {
   // 首次挂载时把状态同步给父组件（watch immediate 可能早于父组件监听）。
   emit('status', session.status.value)
+  // 捕获阶段兜底：即使画布的指针捕获被丢掉、或松手点落在黑色区域（不是画布）上，
+  // 也能收到 pointerup/pointercancel 并补发 UP。
+  window.addEventListener('pointerup', handleWindowPointerEnd, true)
+  window.addEventListener('pointercancel', handleWindowPointerEnd, true)
+  window.addEventListener('blur', handleWindowBlur)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onBeforeUnmount(() => {
   if (errorTimer !== null) clearTimeout(errorTimer)
+  canvasRef.value?.removeEventListener('pointerrawupdate', handlePointerRawUpdate)
+  window.removeEventListener('pointerup', handleWindowPointerEnd, true)
+  window.removeEventListener('pointercancel', handleWindowPointerEnd, true)
+  window.removeEventListener('blur', handleWindowBlur)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  releaseOnFocusLoss()
 })
 
 const status = computed(() => session.status.value)
 const streaming = computed(() => status.value === 'streaming')
 const idle = computed(() => status.value === 'idle')
 const starting = computed(() => status.value === 'starting' || status.value === 'checking')
-const resolution = computed(() => {
-  const hello = session.hello.value
-  if (hello && hello.width > 0 && hello.height > 0) return `${hello.width} × ${hello.height}`
-  const device = props.selectedDevice
-  if (device && device.screen_width > 0 && device.screen_height > 0) {
-    return `${device.screen_width} × ${device.screen_height}`
-  }
-  return '分辨率 —'
-})
 const deviceName = computed(() => {
   const device = props.selectedDevice
   if (!device) return '未选择设备'
@@ -236,14 +250,21 @@ const deviceStateText = computed(() => {
   if (device.busy) return device.busy_reason || '占用中'
   return '在线'
 })
+const fps = computed(() => session.stats.value.fps ?? 0)
+// 两个帧率的关系：这里是“画布实际画了多少帧”，状态行的“设备出帧”是“后端从设备读到多少帧”。
+const fpsHint = computed(() => {
+  const serverFps = session.stats.value.serverFps
+  const head = '画布实际渲染帧率（浏览器解码 + 绘制，受屏幕刷新率与解码能力限制）。'
+  const tail = '画面静止时设备不出新帧，两个数字都会变低，属正常。'
+  return serverFps === undefined ? `${head}${tail}` : `${head}设备出帧 ${serverFps}fps。${tail}`
+})
+const showFps = computed(() => status.value !== 'idle')
 const effectCount = computed(
   () =>
     (tapEffectEnabled.value ? 1 : 0) +
     (tapEffectEnabled.value && rippleEnabled.value ? 1 : 0) +
     (swipeEffectEnabled.value ? 1 : 0),
 )
-const fps = computed(() => session.stats.value.fps ?? 0)
-const showFps = computed(() => status.value !== 'idle')
 
 const MORE_KEYS = [
   { key: 'menu', label: '菜单', icon: MenuIcon },
@@ -274,6 +295,13 @@ function handlePointerDown(event: PointerEvent): void {
 }
 
 function handlePointerMove(event: PointerEvent): void {
+  // 鼠标/笔在“没按键”的情况下还在移动 = 上一次 pointerup 丢了（在手机区域外松手、
+  // 浏览器丢掉了指针捕获、或在窗口外松开）：先用当前位置补一条 UP 收尾，
+  // 否则设备端会一直保持按压、触点特效也停不下来。
+  if (gestures.isDragging(event.pointerId) && event.pointerType !== 'touch' && event.buttons === 0) {
+    handlePointerUp(event)
+    return
+  }
   touchEffectRef.value?.move(event.clientX, event.clientY)
   gestures.handlers.onPointerMove(event)
 }
@@ -287,6 +315,50 @@ function handlePointerCancel(event: PointerEvent): void {
   touchEffectRef.value?.cancel()
   gestures.handlers.onPointerCancel(event)
 }
+
+// pointerrawupdate（Chrome）不在 Vue 模板的事件类型里，手动绑定：拖动样本不对齐 rAF、即时下发。
+// 没有 rawupdate 的浏览器不会触发，手势仍走 pointermove。用 passive：这里不做 preventDefault。
+function handlePointerRawUpdate(event: Event): void {
+  const pointerEvent = event as PointerEvent
+  // 与 handlePointerMove 同一条兜底：按键已经抬起却还在移动 → 上一次 UP 丢了。
+  if (
+    gestures.isDragging(pointerEvent.pointerId) &&
+    pointerEvent.pointerType !== 'touch' &&
+    pointerEvent.buttons === 0
+  ) {
+    handlePointerUp(pointerEvent)
+    return
+  }
+  gestures.handlers.onPointerRawUpdate(pointerEvent)
+}
+
+// 指针捕获被浏览器丢掉时，pointerup 会落到别的元素（黑色区域）上、画布收不到：
+// 在 window 上再兜一层，保证每段手势都有 UP 收尾，设备端不会悬空按压。
+function handleWindowPointerEnd(event: PointerEvent): void {
+  if (event.type === 'pointercancel') handlePointerCancel(event)
+  else handlePointerUp(event)
+}
+
+// 拖动中窗口失焦 / 页面切到后台（切应用、系统弹窗、Cmd-Tab）时浏览器可能再也不发 pointerup：
+// 用最后位置补 UP，避免设备端停在按下状态。
+function releaseOnFocusLoss(): void {
+  if (!gestures.isDragging()) return
+  touchEffectRef.value?.cancel()
+  gestures.abortGesture()
+}
+
+function handleWindowBlur(): void {
+  releaseOnFocusLoss()
+}
+
+function handleVisibilityChange(): void {
+  if (document.hidden) releaseOnFocusLoss()
+}
+
+watch(canvasRef, (canvas, previous) => {
+  previous?.removeEventListener('pointerrawupdate', handlePointerRawUpdate)
+  canvas?.addEventListener('pointerrawupdate', handlePointerRawUpdate, { passive: true })
+})
 
 function handleKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && (deviceMenuOpen.value || effectPopoverOpen.value || moreMenuOpen.value)) {
@@ -450,9 +522,8 @@ defineExpose({
           </div>
         </div>
 
-        <div class="mirror-meta">
-          <span class="mono">{{ resolution }}</span>
-          <span v-if="selectedDevice?.rotation" class="hint">{{ selectedDevice.rotation }}°</span>
+        <div v-if="selectedDevice?.rotation" class="mirror-meta">
+          <span class="hint">{{ selectedDevice.rotation }}°</span>
         </div>
 
         <span class="spacer" />
@@ -521,11 +592,14 @@ defineExpose({
         </el-tooltip>
       </div>
 
-      <div v-if="configMismatch" class="mirror-config-alert">
-        <span>画质设置已变更（{{ configMismatch }}），当前镜像仍在用旧参数；重启镜像后生效。</span>
-        <el-button size="small" type="primary" :loading="restartingMirror" @click="restartMirrorForConfig">
-          立即重启镜像
-        </el-button>
+      <div v-if="visibleMismatch" class="mirror-config-alert">
+        <span>{{ mismatchText }}</span>
+        <span class="mirror-config-alert-actions">
+          <el-button size="small" type="primary" :loading="restartingMirror" @click="restartMirrorForConfig">
+            立即重启镜像
+          </el-button>
+          <el-button size="small" text @click="dismissMismatch">忽略</el-button>
+        </span>
       </div>
 
       <div class="stage-wrap">
@@ -554,7 +628,7 @@ defineExpose({
             @start="session.startMirror()"
             @retry="session.reconnect()"
           />
-          <div v-if="showFps" class="stage-fps" aria-live="off">
+          <div v-if="showFps" class="stage-fps" aria-live="off" :title="fpsHint">
             <span class="dot" :class="streaming ? 'live' : 'offline'" />
             <span class="mono">{{ fps }} fps</span>
           </div>
@@ -951,6 +1025,19 @@ defineExpose({
   background: var(--amber-soft);
   color: var(--amber);
   font-size: 11px;
+}
+
+.mirror-config-alert-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+/* 说明文案允许换行，按钮不被挤走 */
+.mirror-config-alert > span:first-child {
+  flex: 1;
+  min-width: 180px;
 }
 
 .stage-wrap {

@@ -21,17 +21,22 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .android import scrcpy
+from .diagnostics import append_sample as append_diag_sample
 from .errors import ApiError
 from .logs import logger
 
-# 订阅者队列默认长度（≈ 1s@30fps 的一半，超过即认为消费慢）
-DEFAULT_SUBSCRIBER_QUEUE = 8
+# 订阅者队列默认长度：按“时间预算”而不是帧数定——≈ 250ms 的帧（60fps 16 帧；30fps 时 8 帧）。
+# 浏览器主线程偶发卡顿（Vue 路由/GC，100~200ms）不该触发丢帧→请求 IDR→编码器重启（100~300ms 黑屏）；
+# 队列只在卡顿后短暂积压，渲染层只画最新一帧，不会把这些旧帧真的显示出来。
+DEFAULT_SUBSCRIBER_QUEUE = 16
 # 控制消息与视频帧分两条通道：控制消息（pong/flush/config/error）优先且不参与丢帧背压
 WAKE_SENTINEL = object()
+# 运行期性能日志间隔（fps/丢帧/订阅者），用于抓“不跟手”发生在哪一环
+PERF_LOG_INTERVAL_S = 10.0
 # 断线重启节流：60s 内最多 3 次
 RESTART_WINDOW_S = 60.0
 MAX_RESTARTS_PER_WINDOW = 3
@@ -297,6 +302,7 @@ class MirrorSession:
     ) -> None:
         self.serial = serial
         self.cfg = cfg or scrcpy.ServerConfig.from_settings()
+        self._configured_max_size = int(self.cfg.max_size)
         self.session_id = uuid.uuid4().hex
         self._starter = starter or (lambda server_cfg: scrcpy.start_server(serial, server_cfg))
         self._size_probe = size_probe
@@ -319,6 +325,7 @@ class MirrorSession:
         self._last_sps: bytes | None = None
         self._pending_config: bytes = b""
         self._last_keyframe_request: float = 0.0
+        self._last_perf_log: float = 0.0
         self._keyframe_requests_throttled: int = 0  # 等待拼到下一视频帧前的 in-band SPS/PPS
         self._codec_config: bytes = b""  # 最近一次 CONFIG 包（SPS/PPS），新订阅者首帧补发
         self._geometry = MirrorGeometry(max_size=int(self.cfg.max_size))
@@ -357,6 +364,8 @@ class MirrorSession:
             "rotation": self._geometry.rotation,
             "codec": self._video_geometry.codec,
             "max_size": self.cfg.max_size,
+            "scale_pct": self.cfg.scale_pct,
+            "configured_max_size": self._configured_max_size,
             "max_fps": self.cfg.max_fps,
             "video_bit_rate": self.cfg.video_bit_rate,
             "uptime_s": round(uptime, 1),
@@ -389,6 +398,10 @@ class MirrorSession:
             self._error = None
             self._error_code = None
         try:
+            # 先探测设备长边，把「按设备缩放」落到本次 server 的 max_size 上；
+            # 探测失败则沿用设置的绝对上限，行为与旧版一致。
+            self._probe_device_size()
+            self._resolve_stream_size()
             server = self._starter(self.cfg)
         except ApiError:
             with self._lock:
@@ -399,7 +412,6 @@ class MirrorSession:
                 self._state = "error"
                 self._error = f"{type(exc).__name__}: {exc}"
             raise ApiError("SCRCPY_FAILED", f"scrcpy server 启动失败: {exc}", {"serial": self.serial}) from exc
-        self._probe_device_size()
         self._adopt_server(server)
         with self._lock:
             self._state = "running"
@@ -445,6 +457,19 @@ class MirrorSession:
             self._device_size = (size[0], size[1])
         else:
             self._device_size = (self._geometry.stream_width, self._geometry.stream_height)
+
+    def _resolve_stream_size(self) -> None:
+        """按设备自然方向长边 + scale_pct 计算最终 max_size，不改用户保存的上限。"""
+        width, height = self._device_size
+        if width <= 0 or height <= 0:
+            return
+        target = int(
+            self.cfg.resolved_max_size(width, height, cap=self._configured_max_size)
+        )
+        if target <= 0 or target == int(self.cfg.max_size):
+            return
+        self.cfg = replace(self.cfg, max_size=target)
+        self._geometry = MirrorGeometry(max_size=target)
 
     def _adopt_server(self, server: Any) -> None:
         self._server = server
@@ -584,7 +609,48 @@ class MirrorSession:
         with self._lock:
             self._frames += 1
             self._frame_times.append(now)
+            while self._frame_times and now - self._frame_times[0] > 1.0:
+                self._frame_times.popleft()
             subscribers = list(self._subscribers.values())
+            log_perf = now - self._last_perf_log >= PERF_LOG_INTERVAL_S
+            if log_perf:
+                self._last_perf_log = now
+                fps = float(len(self._frame_times))
+                dropped = self._dropped
+                queue_depths = [sub.queue.qsize() for sub in subscribers]
+                geometry = self._geometry
+                stream = (geometry.stream_width, geometry.stream_height)
+                rotation = geometry.rotation
+        if log_perf:
+            # 一行可 grep 的现场：出帧率、丢帧、订阅者及其发送队列积压（积压大 = 浏览器消费慢）
+            logger.info(
+                "mirror perf: serial=%s fps=%.1f dropped=%d subscribers=%d queues=%s stream=%dx%d rotation=%s max_fps=%s",
+                self.serial,
+                fps,
+                dropped,
+                len(subscribers),
+                queue_depths,
+                stream[0],
+                stream[1],
+                rotation,
+                self.cfg.max_fps,
+            )
+            append_diag_sample(
+                "server",
+                {
+                    "serial": self.serial,
+                    "session_id": self.session_id,
+                    "server_fps": round(fps, 1),
+                    "dropped": dropped,
+                    "subscribers": len(subscribers),
+                    "queue_depths": queue_depths,
+                    "width": stream[0],
+                    "height": stream[1],
+                    "rotation": rotation,
+                    "max_fps": self.cfg.max_fps,
+                    "scale_pct": self.cfg.scale_pct,
+                },
+            )
         for sub in subscribers:
             self._deliver_frame(sub, binary, keyframe)
 
@@ -948,6 +1014,8 @@ class MirrorSession:
             "sps_b64": _b64(video.sps),
             "pps_b64": _b64(video.pps),
             "max_size": self.cfg.max_size,
+            "scale_pct": self.cfg.scale_pct,
+            "configured_max_size": self._configured_max_size,
             "max_fps": self.cfg.max_fps,
             "video_bit_rate": self.cfg.video_bit_rate,
         }

@@ -1,15 +1,16 @@
 // 键盘输入 -> Android 文本/返回键（契约 §7.1）。
 //
 // 规则：
-//   - 焦点在镜像面板时，可打印字符进本地缓冲，600ms 防抖后 POST .../text {text}；
+//   - 焦点在镜像面板时，可打印字符进本地缓冲，最多 120ms 就 POST .../text {text}；
 //   - 回车立即发送缓冲文本；Esc / 空缓冲时的 Backspace 映射为 key=back；
+//   - 所有文本/按键请求串行发送，避免并发 HTTP 打乱输入顺序；
 //   - 面板内输入框（录制名称等）获得焦点时不拦截。
 
 import { onBeforeUnmount, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 
 import { errorMessage, post } from '../lib/api'
 
-const TEXT_DEBOUNCE_MS = 600
+const TEXT_FLUSH_INTERVAL_MS = 120
 const EDITABLE_SELECTOR = 'input, textarea, select, [contenteditable="true"], [contenteditable=""]'
 
 export interface KeyboardInputOptions {
@@ -26,6 +27,8 @@ export function useKeyboardInput(options: KeyboardInputOptions) {
   const pendingText = ref('')
   let pending = ''
   let timer: ReturnType<typeof setTimeout> | null = null
+  // 输入必须按顺序落到设备：前一个 POST 不结束，后一个不发出
+  let sendChain: Promise<void> = Promise.resolve()
 
   function clearTimer(): void {
     if (timer !== null) {
@@ -34,14 +37,21 @@ export function useKeyboardInput(options: KeyboardInputOptions) {
     }
   }
 
+  function enqueueSend(task: () => Promise<void>): void {
+    sendChain = sendChain.then(task).catch(() => {
+      /* 单个请求失败已由 task 内部提示，链继续 */
+    })
+  }
+
   function postKey(key: string): void {
-    void (async () => {
+    const targetSerial = toValue(options.serial)
+    enqueueSend(async () => {
       try {
-        await post<void>(devicePath(toValue(options.serial), 'key'), { key })
+        await post<void>(devicePath(targetSerial, 'key'), { key })
       } catch (err) {
         options.onError?.(`按键 ${key} 失败：${errorMessage(err)}`)
       }
-    })()
+    })
   }
 
   function flush(): void {
@@ -50,21 +60,23 @@ export function useKeyboardInput(options: KeyboardInputOptions) {
     if (!text) return
     pending = ''
     pendingText.value = ''
-    void (async () => {
+    const targetSerial = toValue(options.serial)
+    enqueueSend(async () => {
       try {
-        await post<void>(devicePath(toValue(options.serial), 'text'), { text })
+        await post<void>(devicePath(targetSerial, 'text'), { text })
       } catch (err) {
         options.onError?.(`文本发送失败：${errorMessage(err)}`)
       }
-    })()
+    })
   }
 
+  // 节流而不是防抖：持续打字时也每 120ms 落一次，不等用户停手
   function scheduleFlush(): void {
-    clearTimer()
+    if (timer !== null) return
     timer = setTimeout(() => {
       timer = null
       flush()
-    }, TEXT_DEBOUNCE_MS)
+    }, TEXT_FLUSH_INTERVAL_MS)
   }
 
   function onKeyDown(event: KeyboardEvent): void {

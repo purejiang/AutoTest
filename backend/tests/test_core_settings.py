@@ -59,6 +59,24 @@ def test_new_toolchain_keys_are_editable(core_client) -> None:
     assert out_of_range.status_code == 422
 
 
+def test_scrcpy_max_fps_zero_is_editable(core_client) -> None:
+    """scrcpy.max_fps 存成 0（不限，即 scrcpy 默认值）：保存不能把 0 当成空值，镜像启动要原样透传。"""
+    from app.android import scrcpy
+
+    response = core_client.put("/api/settings", json={"values": {"scrcpy.max_fps": 0}})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["effective"]["scrcpy.max_fps"] == 0
+    assert body["sources"]["scrcpy.max_fps"] == "db"
+    assert core_client.get("/api/settings").json()["effective"]["scrcpy.max_fps"] == 0
+    cfg = scrcpy.ServerConfig.from_settings()
+    assert cfg.max_fps == 0
+    assert "max_fps=0" in " ".join(scrcpy.build_server_args(cfg, "raw"))
+    # 删除覆盖后回到默认 0（不限，与 scrcpy 一致）
+    assert core_client.delete("/api/settings/scrcpy.max_fps").status_code == 200
+    assert scrcpy.ServerConfig.from_settings().max_fps == 0
+
+
 def test_db_layer_overrides_file_layer(core_client) -> None:
     response = core_client.put("/api/settings", json={"values": {"engine.poll_interval_ms": 500}})
     assert response.status_code == 200, response.text
@@ -140,6 +158,9 @@ def test_scrcpy_options(core_client) -> None:
     assert body["codec"] == "h264"
     assert isinstance(body["jar_present"], bool)
     items = {item["key"]: item for item in body["items"]}
-    assert items["scrcpy.max_size"]["value"] == 1600
+    assert items["scrcpy.max_size"]["value"] == 4096
     assert items["scrcpy.max_size"]["type"] == "int"
     assert items["scrcpy.max_size"]["source"] == "default"
+    assert items["scrcpy.scale"]["value"] == 85
+    assert items["scrcpy.scale"]["type"] == "int"
+    assert items["scrcpy.scale"]["source"] == "default"

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-// 镜像画质卡：三档预设只是「一键填三项参数」的快捷方式，保存的仍是
-// scrcpy.max_size / max_fps / video_bit_rate；不新增任何配置键。
-// 手动改动任意一项后自动显示「自定义」。
+// 镜像画质卡：四档预设是「按设备长边缩放 + 上限 + 帧率 + 码率」的快捷方式，
+// 保存 scrcpy.scale / max_size / max_fps / video_bit_rate；手动改任意一项显示「自定义」。
+// 实际分辨率由后端在镜像启动时按设备长边计算。max_fps=0 表示不限（跟随设备刷新率）。
 import { RefreshLeft } from '@element-plus/icons-vue'
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import type { SettingEntry } from '@/types/api'
 import { numberOrNull, settingSourceMeta } from '@/lib/format'
@@ -28,68 +28,101 @@ const emit = defineEmits<{
   clear: [key: string]
 }>()
 
+// 预设 = 只打包“画质”（分辨率 + 码率），不打包帧率：
+//   - 分辨率/码率决定清晰度与带宽，是“画质档位”；
+//   - 帧率决定跟手程度，与画质正交（scrcpy 自己的 --max-fps 默认就是 0 = 不限）。
+// 所以任何预设都可以单独把帧率设成 0；调帧率不会让预设变成“自定义”。
 const MIRROR_PRESETS = [
   {
-    value: 'smooth',
-    label: '流畅优先',
-    detail: '1200px · 30fps · 6Mbps',
-    note: '低带宽，远程 / 弱网',
+    value: 'light',
+    label: '轻量',
+    detail: '70% · 6Mbps',
+    note: '省带宽 / 老电脑',
     recommended: false,
-    maxSize: 1200,
-    maxFps: 30,
+    scale: 70,
+    maxSize: 4096,
     videoBitRate: 6_000_000,
   },
   {
-    value: 'balanced',
-    label: '均衡',
-    detail: '1600px · 30fps · 8Mbps',
+    value: 'standard',
+    label: '标准',
+    detail: '85% · 10Mbps',
     note: '日常调试推荐',
     recommended: true,
-    maxSize: 1600,
-    maxFps: 30,
-    videoBitRate: 8_000_000,
+    scale: 85,
+    maxSize: 4096,
+    videoBitRate: 10_000_000,
   },
   {
-    value: 'sharp',
-    label: '清晰优先',
-    detail: '1920px · 30fps · 16Mbps',
+    value: 'hd',
+    label: '高清',
+    detail: '100% 原生 · 16Mbps',
     note: '看细节 / 截图核对',
     recommended: false,
-    maxSize: 1920,
-    maxFps: 30,
+    scale: 100,
+    maxSize: 4096,
     videoBitRate: 16_000_000,
   },
 ] as const
 
 type MirrorPreset = (typeof MIRROR_PRESETS)[number]
 
-const DEFAULT_PRESET: MirrorPreset = MIRROR_PRESETS.find((preset) => preset.recommended) ?? MIRROR_PRESETS[1]
+const scaleIsNative = computed(() => Number(props.values['scrcpy.scale']) >= 100)
+const fpsIsUnlimited = computed(() => Number(props.values['scrcpy.max_fps']) === 0)
+
+// 本机显示器刷新率（rAF 采样 ~0.5s）：60Hz 屏幕上“不限帧率”会让设备按 120Hz 推流，
+// 解码量翻倍却一帧都显示不出来——这是浏览器端最常见的无谓开销。
+const displayHz = ref<number | null>(null)
+onMounted(() => {
+  if (typeof requestAnimationFrame !== 'function' || typeof performance === 'undefined') return
+  let frames = 0
+  const started = performance.now()
+  const tick = (now: number): void => {
+    frames += 1
+    const elapsed = now - started
+    if (elapsed >= 500) {
+      displayHz.value = Math.round((frames * 1000) / elapsed)
+      return
+    }
+    requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+})
+
+/** 60Hz 屏幕 + 不限帧率 = 解码量白白翻倍，提示一个够用的上限。 */
+const fpsOverkill = computed(() => {
+  if (!fpsIsUnlimited.value || displayHz.value === null) return null
+  if (displayHz.value > 75) return null
+  return displayHz.value
+})
 
 const mirrorPreset = computed<string>(() => {
+  const scale = Number(props.values['scrcpy.scale'])
   const maxSize = Number(props.values['scrcpy.max_size'])
-  const maxFps = Number(props.values['scrcpy.max_fps'])
   const videoBitRate = Number(props.values['scrcpy.video_bit_rate'])
   const matched = MIRROR_PRESETS.find(
-    (preset) =>
-      preset.maxSize === maxSize && preset.maxFps === maxFps && preset.videoBitRate === videoBitRate,
+    (preset) => preset.scale === scale && preset.maxSize === maxSize && preset.videoBitRate === videoBitRate,
   )
   return matched?.value ?? 'custom'
 })
 
-const mirrorPresetLabel = computed(() => {
-  const matched = MIRROR_PRESETS.find((preset) => preset.value === mirrorPreset.value)
-  return matched ? `${matched.label}（${matched.detail}）` : '自定义（下面三项手动组合）'
-})
-
 function applyPreset(preset: MirrorPreset): void {
+  emit('change', 'scrcpy.scale', preset.scale)
   emit('change', 'scrcpy.max_size', preset.maxSize)
-  emit('change', 'scrcpy.max_fps', preset.maxFps)
   emit('change', 'scrcpy.video_bit_rate', preset.videoBitRate)
 }
 
-function restoreDefaultPreset(): void {
-  applyPreset(DEFAULT_PRESET)
+/** 帧率与预设解耦：这里只改 scrcpy.max_fps，画质档位保持不变。 */
+function applyFps(fps: number): void {
+  emit('change', 'scrcpy.max_fps', fps)
 }
+
+// 帧率快速选项：0 = 不限是 scrcpy 默认，也是“跟手”的关键；60/30 是解码吃紧时的降级。
+const FPS_QUICK_PICKS = [
+  { value: 0, label: '不限' },
+  { value: 60, label: '60' },
+  { value: 30, label: '30' },
+] as const
 
 function numeric(key: string): number | null {
   const value = Number(props.values[key])
@@ -114,6 +147,19 @@ function updateBitrate(value: number | null | undefined): void {
   if (num === null) return
   emit('change', 'scrcpy.video_bit_rate', Math.round(num * 1_000_000))
 }
+
+// 当前组合一览：把四个数字拼成一句话，避免用户对着一堆输入框猜“现在到底跑什么”。
+const summary = computed(() => {
+  const scale = Number(props.values['scrcpy.scale'])
+  const fps = Number(props.values['scrcpy.max_fps'])
+  const bitrate = bitrateMbps.value
+  const parts = [
+    Number.isFinite(scale) ? `${scale}%` : null,
+    Number.isFinite(fps) ? (fps === 0 ? '帧率不限' : `${fps}fps`) : null,
+    bitrate === null ? null : `${bitrate}Mbps`,
+  ].filter(Boolean)
+  return parts.join(' · ')
+})
 
 function cropValue(): string {
   const value = props.values['scrcpy.crop']
@@ -164,7 +210,7 @@ function defaultLabel(key: string): string {
       <h2>镜像</h2>
       <RestartHint
         target="镜像"
-        detail="预设只修改最大边、帧率和码率；裁剪单独设置。保存后需停止并重新启动镜像；正在进行的运行不受影响。"
+        detail="预设按设备长边比例缩放，再受长边上限约束；实际分辨率在镜像启动时按设备计算。保存后需停止并重新启动镜像。"
       />
       <StatusTag tone="blue">scrcpy {{ serverVersion }}</StatusTag>
     </div>
@@ -188,24 +234,57 @@ function defaultLabel(key: string): string {
         </button>
       </div>
 
-      <div class="preset-current">
-        当前：<b>{{ mirrorPresetLabel }}</b>
-        <el-button
-          v-if="mirrorPreset === 'custom'"
-          size="small"
-          text
-          type="primary"
-          title="套用默认画质：均衡 1600px / 30fps / 8Mbps"
-          @click="restoreDefaultPreset"
-        >
-          恢复默认画质
-        </el-button>
+      <div class="preset-hint">
+        预设只决定<strong>画质</strong>（缩放 + 码率）；<strong>帧率是独立项</strong>，任何预设都可以单独设成
+        0（不限）。<br />
+        100% 使用设备原生分辨率；低于 100%
+        时按设备长边比例缩放并受长边上限约束，实际分辨率在启动镜像时计算，不放大。
+      </div>
+
+      <div v-if="summary" class="mirror-summary">
+        <span>当前：{{ summary }}</span>
+        <span v-if="mirrorPreset === 'custom'" class="mirror-summary-tag">自定义画质</span>
       </div>
 
       <div class="field-grid">
         <div class="field">
           <span class="field-label">
-            最大边（px）
+            按设备缩放（%）
+            <StatusTag
+              v-if="sourceOf('scrcpy.scale') !== 'default'"
+              :tone="sourceMeta('scrcpy.scale').tone"
+              :title="sourceTitle('scrcpy.scale')"
+            >
+              {{ sourceMeta('scrcpy.scale').label }}
+            </StatusTag>
+            <el-button
+              v-if="sourceOf('scrcpy.scale') === 'db'"
+              size="small"
+              text
+              :icon="RefreshLeft"
+              title="删除数据库覆盖，按优先级回到配置文件/默认值"
+              @click="emit('clear', 'scrcpy.scale')"
+            />
+          </span>
+          <el-input-number
+            :model-value="numeric('scrcpy.scale')"
+            size="small"
+            :min="limitOf('scrcpy.scale', 'min', 50)"
+            :max="limitOf('scrcpy.scale', 'max', 100)"
+            :step="5"
+            controls-position="right"
+            style="width: 100%"
+            :disabled="disabled"
+            @update:model-value="updateNumber('scrcpy.scale', $event)"
+          />
+          <div v-if="hasDefault('scrcpy.scale')" class="field-default">
+            默认：{{ defaultLabel('scrcpy.scale') }}
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="field-label">
+            长边上限（px）
             <StatusTag
               v-if="sourceOf('scrcpy.max_size') !== 'default'"
               :tone="sourceMeta('scrcpy.max_size').tone"
@@ -226,14 +305,15 @@ function defaultLabel(key: string): string {
             :model-value="numeric('scrcpy.max_size')"
             size="small"
             :min="limitOf('scrcpy.max_size', 'min', 480)"
-            :max="limitOf('scrcpy.max_size', 'max', 2560)"
+            :max="limitOf('scrcpy.max_size', 'max', 4096)"
             :step="10"
             controls-position="right"
             style="width: 100%"
-            :disabled="disabled"
+            :disabled="disabled || scaleIsNative"
             @update:model-value="updateNumber('scrcpy.max_size', $event)"
           />
-          <div v-if="hasDefault('scrcpy.max_size')" class="field-default">
+          <div v-if="scaleIsNative" class="field-default">100% 时按原生分辨率，不使用上限</div>
+          <div v-else-if="hasDefault('scrcpy.max_size')" class="field-default">
             默认：{{ defaultLabel('scrcpy.max_size') }}
           </div>
         </div>
@@ -260,16 +340,36 @@ function defaultLabel(key: string): string {
           <el-input-number
             :model-value="numeric('scrcpy.max_fps')"
             size="small"
-            :min="limitOf('scrcpy.max_fps', 'min', 5)"
-            :max="limitOf('scrcpy.max_fps', 'max', 120)"
+            :min="limitOf('scrcpy.max_fps', 'min', 0)"
+            :max="limitOf('scrcpy.max_fps', 'max', 240)"
             :step="1"
             controls-position="right"
             style="width: 100%"
             :disabled="disabled"
             @update:model-value="updateNumber('scrcpy.max_fps', $event)"
           />
-          <div v-if="hasDefault('scrcpy.max_fps')" class="field-default">
-            默认：{{ defaultLabel('scrcpy.max_fps') }}
+          <div class="fps-quick">
+            <button
+              v-for="option in FPS_QUICK_PICKS"
+              :key="option.value"
+              type="button"
+              class="fps-chip"
+              :class="{ active: Number(values['scrcpy.max_fps']) === option.value }"
+              :disabled="disabled"
+              @click="applyFps(option.value)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+          <div v-if="fpsOverkill !== null" class="field-hint-warn">
+            本机屏幕约 {{ fpsOverkill }}Hz：设 0 会让设备按自身刷新率（可能 120Hz）推流，约一半解码是白费；
+            建议改成 {{ fpsOverkill }}。
+          </div>
+          <div v-else-if="fpsIsUnlimited" class="field-default">
+            0 = 不限，跟随设备刷新率（与 scrcpy 默认一致）；画质预设不受影响
+          </div>
+          <div v-else-if="hasDefault('scrcpy.max_fps')" class="field-default">
+            默认：{{ defaultLabel('scrcpy.max_fps') }}（不限）
           </div>
         </div>
 
@@ -341,7 +441,6 @@ function defaultLabel(key: string): string {
           </div>
         </div>
       </div>
-
     </div>
   </section>
 </template>
@@ -404,24 +503,90 @@ function defaultLabel(key: string): string {
   font-size: 9.5px;
 }
 
-.preset-current {
+.preset-hint {
+  margin: 4px 0 8px;
+  color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.field-hint-warn {
+  padding: 4px 6px;
+  border-radius: 5px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.preset-hint strong {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* “当前：85% · 帧率不限 · 10Mbps” —— 让用户不必从四个输入框里拼出实际状态 */
+.mirror-summary {
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  margin: 9px 0 8px;
-  color: var(--muted);
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--mono);
   font-size: 10.5px;
 }
 
-.preset-current b {
+.mirror-summary-tag {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--muted-2);
+  font-family: var(--font);
+  font-size: 9.5px;
+}
+
+/* 帧率快捷项：不限 / 60 / 30（与预设解耦，随时可切） */
+.fps-quick {
+  display: flex;
+  gap: 4px;
+}
+
+.fps-chip {
+  flex: 1;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.fps-chip:hover {
+  border-color: var(--accent);
   color: var(--accent);
-  font-weight: 650;
+}
+
+.fps-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.fps-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .field-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
   gap: 10px;
 }
 
@@ -451,6 +616,12 @@ function defaultLabel(key: string): string {
 
 .field-label :deep(.tag) {
   flex: none;
+}
+
+@media (max-width: 1400px) {
+  .preset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1200px) {

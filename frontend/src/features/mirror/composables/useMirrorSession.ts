@@ -1,16 +1,25 @@
 // 镜像会话 composable：WS 生命周期 + SPS/PPS 捕获 + VideoDecoder 配置/解码 + fps 统计。
 //
 // 数据流：
-//   mirrorWs(二进制帧) -> splitNals(缓存 SPS/PPS、识别 IDR) -> 串行化队列
+//   mirrorWs(二进制帧) -> inspectAnnexB(只看前导 NAL：缓存 SPS/PPS、识别 IDR) -> 串行化队列
 //   -> MirrorDecoder.configure(Annex B 优先/avcC 回退) -> decode -> VideoFrame
 //   -> CanvasRenderer.present(只画最新一帧)
 //
 // 串行化：所有帧处理都排进同一条 Promise 链，保证 configure/flush 与 decode 的先后顺序；
 // 重连/停止时重置链并丢弃旧代（generation）任务，避免旧帧喂进新解码器。
 
-import { computed, onBeforeUnmount, onMounted, ref, toValue, watch, type MaybeRefOrGetter, type Ref } from 'vue'
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  toValue,
+  watch,
+  type MaybeRefOrGetter,
+  type Ref,
+} from 'vue'
 
-import { base64ToBytes, bytesEqual, nalType, splitNals } from '@/lib/h264'
+import { base64ToBytes, bytesEqual, inspectAnnexB } from '@/lib/h264'
 import {
   createMirrorSocket,
   type MirrorCloseInfo,
@@ -19,11 +28,12 @@ import {
   type MirrorSocket,
 } from '@/lib/mirrorWs'
 import { MirrorDecoder, type MirrorDecoderMode } from '@/lib/webcodecs'
+import { formatMirrorDiag, measureDisplayHz, recordMirrorDiag } from '../lib/diag'
 import { CanvasRenderer } from '../render/canvasRenderer'
 import { errorMessage, get, post } from '../lib/api'
 import type { MirrorHelloInfo, MirrorStats, MirrorStatusInfo, MirrorUiStatus } from '../types'
 
-const INITIAL_STATS: MirrorStats = { fps: 0, dropped: 0, decoded: 0, queueSize: 0 }
+const INITIAL_STATS: MirrorStats = { fps: 0, dropped: 0, decoded: 0, queueSize: 0, drawMs: 0 }
 const CONFIGURE_RETRY_GAP_MS = 2000
 
 export interface UseMirrorSessionOptions {
@@ -55,6 +65,8 @@ function toHelloInfo(msg: MirrorHello, fallbackSerial: string): MirrorHelloInfo 
     rotation: Number(msg.rotation) || 0,
     codec: typeof msg.codec === 'string' ? msg.codec : '',
     maxSize: typeof msg.max_size === 'number' ? msg.max_size : undefined,
+    scalePct: typeof msg.scale_pct === 'number' ? msg.scale_pct : undefined,
+    configuredMaxSize: typeof msg.configured_max_size === 'number' ? msg.configured_max_size : undefined,
     maxFps: typeof msg.max_fps === 'number' ? msg.max_fps : undefined,
     videoBitRate: typeof msg.video_bit_rate === 'number' ? msg.video_bit_rate : undefined,
   }
@@ -90,12 +102,19 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
   let cleanupSession: (() => void) | null = null
   let stopSessionWatch: (() => void) | null = null
   let statsTimer: number | undefined
+  // 本机屏幕刷新率：60Hz 屏上渲染 60fps 就是上限，判读瓶颈时必须扣掉这部分
+  let displayHz: number | null = null
+  let diagUploadWarned = false
 
   const isAlive = (): boolean => !disposed
 
   function setupStatsTimer(): void {
+    void measureDisplayHz().then((hz) => {
+      displayHz = hz
+    })
     let lastTick = typeof performance !== 'undefined' ? performance.now() : Date.now()
     let lastPresented = 0
+    let ticks = 0
     statsTimer = window.setInterval(() => {
       if (!isAlive()) return
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
@@ -111,6 +130,61 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
         decoded: decoderStats?.decoded ?? 0,
         serverFps: serverStatsRef.fps,
         queueSize: decoderStats?.queueSize ?? 0,
+        drawMs: rendererRef?.drawMs ?? 0,
+        awaitingKeyframe: decoderStats?.awaitingKeyframe ?? false,
+      }
+      // 每 5s 一行诊断日志（控制台可 grep；__autotestMirrorDiag() 可导出最近 120 行）
+      ticks += 1
+      // 只有 streaming 时上报会让「卡在等待关键帧」完全不可见（本轮就是这样：设备 60fps、
+      // 浏览器连着但没有任何样本）。等待关键帧也要上报，用它来区分“卡住”和“画面静止”。
+      if (ticks % 5 === 0 && (status.value === 'streaming' || status.value === 'waiting-keyframe')) {
+        const line = formatMirrorDiag({
+          serial: serial.value,
+          width: hello.value?.width,
+          height: hello.value?.height,
+          serverFps: serverStatsRef.fps,
+          renderFps: fps,
+          drawMs: stats.value.drawMs ?? 0,
+          queueSize: stats.value.queueSize,
+          dropped: stats.value.dropped,
+          maxFps: hello.value?.maxFps,
+          displayHz,
+        })
+        console.info(line)
+        recordMirrorDiag(line)
+        // 同时落盘到后端（data/diag/mirror-YYYYMMDD.jsonl），供事后分析；
+        // 失败静默：诊断上报不能影响镜像，也不能弹错误提示。
+        const diagUrl = `/devices/${encodeURIComponent(serial.value)}/mirror/diag`
+        const legacyDiag = {
+          session_id: hello.value?.sessionId ?? '',
+          width: hello.value?.width ?? 0,
+          height: hello.value?.height ?? 0,
+          render_fps: stats.value.fps,
+          server_fps: serverStatsRef.fps ?? null,
+          draw_ms: stats.value.drawMs ?? 0,
+          queue_size: stats.value.queueSize,
+          dropped: stats.value.dropped,
+          max_fps: hello.value?.maxFps ?? null,
+          decoder_mode: decoderMode.value ?? '',
+          awaiting_keyframe: stats.value.awaitingKeyframe ?? false,
+          hidden: typeof document !== 'undefined' && document.hidden,
+        }
+        const warnOnce = (err: unknown): void => {
+          if (diagUploadWarned) return
+          diagUploadWarned = true
+          console.warn('[mirror-diag] 上报失败（诊断分析会缺浏览器侧数据）：', err)
+        }
+        void post(diagUrl, { ...legacyDiag, phase: status.value, display_hz: displayHz }).catch(
+          (err: unknown) => {
+            // 旧后端（schema 还不认识 phase/display_hz）会 422：退回最小字段再发一次，
+            // 保证换参数/升级期间的滑动数据不丢。
+            if ((err as { status?: number } | null)?.status === 422) {
+              void post(diagUrl, legacyDiag).catch(warnOnce)
+              return
+            }
+            warnOnce(err)
+          },
+        )
       }
     }, 1000)
   }
@@ -205,10 +279,9 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
     }
 
     const processFrame = async (
-      nals: Uint8Array[],
+      payload: Uint8Array,
       keyframe: boolean,
       ptsUs: number,
-      payload: Uint8Array,
       gen: number,
     ): Promise<void> => {
       if (!isSessionAlive() || gen !== generation || !decoder) return
@@ -219,32 +292,44 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
       if (!decoder.isConfigured) return
       if (awaitingKeyframe && !keyframe) return
       if (keyframe) awaitingKeyframe = false
-      decoder.decode(payload, ptsUs, { keyframe, nals })
+      // nals 不在这里切：Annex B 模式直接喂整条；avcC 回退路径由 decode() 内部按需 splitNals
+      submit(decoder, payload, keyframe, ptsUs)
+    }
+
+    /** 提交一帧；断链（丢帧/解码错误）时向后端要一个 IDR。 */
+    function submit(target: MirrorDecoder, payload: Uint8Array, keyframe: boolean, ptsUs: number): void {
+      target.decode(payload, ptsUs, { keyframe })
+      if (target.needsKeyframe) requestKeyframeThrottled()
     }
 
     const handleFrame = (payload: Uint8Array, ptsUs: number): void => {
       if (!isSessionAlive()) return
-      const nals = splitNals(payload)
-      if (nals.length === 0) return
-      let keyframe = false
-      for (const nal of nals) {
-        const type = nalType(nal)
-        if (type === 7) {
-          if (!bytesEqual(nal, sps)) {
-            sps = nal.slice()
-            needsConfigure = true
-          }
-        } else if (type === 8) {
-          if (!bytesEqual(nal, pps)) {
-            pps = nal.slice()
-            if (!decoder?.isConfigured) needsConfigure = true
-          }
-        } else if (type === 5) {
-          keyframe = true
+      if (payload.byteLength === 0) return
+      // 热路径：只看前导 NAL（P 帧读 4 字节就结束），不对几十 KB 的 slice 做逐字节扫描
+      const info = inspectAnnexB(payload)
+      if (info.sps) {
+        if (!bytesEqual(info.sps, sps)) {
+          sps = info.sps
+          needsConfigure = true
+        }
+      }
+      if (info.pps) {
+        if (!bytesEqual(info.pps, pps)) {
+          pps = info.pps
+          if (!decoder?.isConfigured) needsConfigure = true
         }
       }
       const gen = generation
-      enqueue(() => processFrame(nals, keyframe, ptsUs, payload, gen))
+      const keyframe = info.keyframe
+      // 快路径（绝大多数帧）：已配置且没有待应用的参数集/配置变化时同步提交，
+      // 少一次 Promise + 微任务排队；只有需要 configure/flush 时才进串行链。
+      if (decoder?.isConfigured && !needsConfigure) {
+        if (awaitingKeyframe && !keyframe) return
+        if (keyframe) awaitingKeyframe = false
+        submit(decoder, payload, keyframe, ptsUs)
+        return
+      }
+      enqueue(() => processFrame(payload, keyframe, ptsUs, gen))
     }
 
     const applyParameterSets = (spsB64: unknown, ppsB64: unknown): void => {
@@ -279,7 +364,8 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
       error.value = null
       awaitingKeyframe = true
       setStatusSafe('waiting-keyframe')
-      socket?.requestKeyframe()
+      // 不在这里再 requestKeyframe()：后端 subscribe() 已为新订阅者强制请求过一次 IDR。
+      // 每个请求都是一次编码器重启（100~300ms 不出帧），open/hello 各要一次只会把启动拖慢。
     }
 
     const handleControl = (msg: MirrorControlMessage): void => {
@@ -294,6 +380,10 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
             if (typeof msg.rotation === 'number') next.rotation = msg.rotation
             if (typeof msg.codec === 'string') next.codec = msg.codec
             if (typeof msg.max_size === 'number') next.maxSize = msg.max_size
+            if (typeof msg.scale_pct === 'number') next.scalePct = msg.scale_pct
+            if (typeof msg.configured_max_size === 'number') {
+              next.configuredMaxSize = msg.configured_max_size
+            }
             if (typeof msg.max_fps === 'number') next.maxFps = msg.max_fps
             if (typeof msg.video_bit_rate === 'number') next.videoBitRate = msg.video_bit_rate
             hello.value = next
@@ -337,7 +427,7 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
       if (!isSessionAlive()) return
       setStatusSafe('connecting')
       awaitingKeyframe = true
-      socket?.requestKeyframe()
+      // 同 handleHello：首个 IDR 由后端在订阅时强制请求，客户端不重复触发编码器重启。
     }
 
     const handleClose = (info: MirrorCloseInfo): void => {
@@ -453,7 +543,9 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
       error.value = null
       status.value = 'checking'
       try {
-        const info = await get<MirrorStatusInfo>(`/devices/${encodeURIComponent(sessionSerial)}/mirror/status`)
+        const info = await get<MirrorStatusInfo>(
+          `/devices/${encodeURIComponent(sessionSerial)}/mirror/status`,
+        )
         if (!isSessionAlive()) return
         if (info && info.active === true) {
           startedRef = true
@@ -468,6 +560,9 @@ export function useMirrorSession(options: UseMirrorSessionOptions): MirrorSessio
               rotation: Number(info.rotation) || 0,
               codec: typeof info.codec === 'string' ? info.codec : '',
               maxSize: typeof info.max_size === 'number' ? info.max_size : undefined,
+              scalePct: typeof info.scale_pct === 'number' ? info.scale_pct : undefined,
+              configuredMaxSize:
+                typeof info.configured_max_size === 'number' ? info.configured_max_size : undefined,
               maxFps: typeof info.max_fps === 'number' ? info.max_fps : undefined,
               videoBitRate: typeof info.video_bit_rate === 'number' ? info.video_bit_rate : undefined,
             }

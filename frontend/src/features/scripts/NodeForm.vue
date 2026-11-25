@@ -142,7 +142,7 @@ function onNodeCommand(command: string): void {
 
       <div class="section-label">
         执行条件 when
-        <span class="tag">可选</span>
+        <span class="tag gray">可选</span>
         <span class="hint">不满足时 require=失败 / optional=跳过</span>
       </div>
       <WhenEditor :model-value="node.when" @update:model-value="setWhen" />

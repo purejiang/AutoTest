@@ -456,7 +456,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
             <div class="card-head">
               <h2>外观</h2>
               <span class="card-hint" title="切换只影响当前浏览器，不写入后端配置；顶部栏主题按钮与此同步。">
-                仅本机浏览器 · 即时预览
+                即时预览
               </span>
             </div>
             <div class="card-body">
@@ -1067,7 +1067,8 @@ function applyThemeChoice(choice: ThemeChoice): void {
 }
 
 .theme-preview .tp-rail {
-  background: #0f151d;
+  background: #f8fafc;
+  border-right: 1px solid #e3e8ef;
 }
 
 .theme-preview .tp-body {
@@ -1084,22 +1085,32 @@ function applyThemeChoice(choice: ThemeChoice): void {
   box-shadow: 0 8px 0 #e3e8ef;
 }
 
+.theme-choice[data-theme-choice='dark'] .theme-preview .tp-rail {
+  background: #171717;
+  border-right-color: #2e2e2e;
+}
+
 .theme-choice[data-theme-choice='dark'] .theme-preview .tp-body {
-  background: #0c1118;
+  background: #1f1f1f;
 }
 
 .theme-choice[data-theme-choice='dark'] .theme-preview .tp-body::before {
-  background: #141b24;
-  box-shadow: 0 8px 0 #263241;
+  background: #262626;
+  box-shadow: 0 8px 0 #3a3a3a;
+}
+
+.theme-choice[data-theme-choice='system'] .theme-preview .tp-rail {
+  background: linear-gradient(90deg, #f8fafc 0 50%, #171717 50% 100%);
+  border-right-color: #2e2e2e;
 }
 
 .theme-choice[data-theme-choice='system'] .theme-preview .tp-body {
-  background: linear-gradient(90deg, #f2f4f7 0 50%, #0c1118 50% 100%);
+  background: linear-gradient(90deg, #f2f4f7 0 50%, #1f1f1f 50% 100%);
 }
 
 .theme-choice[data-theme-choice='system'] .theme-preview .tp-body::before {
-  background: linear-gradient(90deg, #fff 0 50%, #141b24 50% 100%);
-  box-shadow: 0 8px 0 #263241;
+  background: linear-gradient(90deg, #fff 0 50%, #262626 50% 100%);
+  box-shadow: 0 8px 0 #3a3a3a;
 }
 
 .theme-choice strong {

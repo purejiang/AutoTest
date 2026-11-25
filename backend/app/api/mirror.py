@@ -10,7 +10,8 @@
 帧二进制布局与上游 scrcpy 完全一致（后端直接透传 12 字节头 + Annex B payload）：
 ``[u64 BE pts_us][u32 BE payload_len][payload]``。
 
-坐标控制**不走 WS**（前端镜像页走 REST tap/swipe，带 nx/ny 归一化坐标，§6.2-5）。
+坐标控制：镜像页拖动首选 WS ``{"kind":"touch"}``（down/move/up，归一化坐标，严格有序、无 HTTP 开销）；
+REST ``/{serial}/touch|tap|swipe`` 为同语义兜底（§6.2-5）。
 """
 
 from __future__ import annotations
@@ -22,9 +23,10 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Query, WebSocket, WebSocketDisconnect
 
-from .. import config
+from .. import config, diagnostics
 from .. import mirror as mirror_module
 from ..android import scrcpy
+from ..api_schemas import MirrorDiagSample
 from ..errors import ApiError
 from ..logs import logger
 
@@ -64,6 +66,7 @@ def _build_config(payload: dict[str, Any] | None) -> scrcpy.ServerConfig:
     values = dict(
         jar_path=base.jar_path,
         max_size=base.max_size,
+        scale_pct=base.scale_pct,
         max_fps=base.max_fps,
         video_bit_rate=base.video_bit_rate,
         crop=base.crop,
@@ -139,6 +142,21 @@ async def stop_mirror(serial: str) -> dict[str, Any]:
     return {"active": False, "serial": serial}
 
 
+@router.post("/api/devices/{serial}/mirror/diag")
+async def push_mirror_diag(serial: str, payload: MirrorDiagSample) -> dict[str, Any]:
+    """浏览器上报一条诊断采样（每 5s）→ 追加到 data/diag/mirror-YYYYMMDD.jsonl。
+
+    只落盘不计算：分析交给 scripts/analyze_mirror_diag.py，避免把统计逻辑放进请求路径。
+    写盘失败不影响镜像（diagnostics.append_sample 内部吞异常并告警）。
+    """
+    path = await asyncio.to_thread(
+        diagnostics.append_sample,
+        "client",
+        {"serial": serial, **payload.model_dump()},
+    )
+    return {"ok": True, "stored": bool(path)}
+
+
 @router.get("/api/devices/{serial}/mirror/status")
 async def mirror_status(serial: str) -> dict[str, Any]:
     return _session_payload(serial)
@@ -180,8 +198,10 @@ async def _receive_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
         if kind == "ping":
             session.push_control(sub, {"kind": "pong"})
         elif kind == "request_keyframe":
-            # 客户端显式请求（工具栏按钮/新连接首帧）→ 绕过节流
-            session.request_keyframe(force=True)
+            # 客户端请求走 0.8s 节流：浏览器 open/hello/工具栏可能在同一瞬间连发几条，
+            # 而每次 RESET_VIDEO 都会让编码器重启（100~300ms 不出帧）；新订阅者需要的 IDR
+            # 由 subscribe() 强制请求（force=True），这里只需兜住用户手动/解码错误恢复。
+            session.request_keyframe()
             logger.debug("mirror ws requested keyframe for %s", session.serial)
         elif kind == "touch":
             # 流式触摸（首选通道）：down/move/up 直接写 control socket，无 HTTP 开销、严格有序。
@@ -197,18 +217,33 @@ async def _receive_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
             if not (0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0):
                 continue
             try:
-                from .devices import apply_stream_touch  # 局部导入避免循环依赖
+                from .devices import apply_stream_touch, stream_touch_is_fast  # 局部导入避免循环依赖
 
-                # WS 通道不阻塞画面：设备被运行占用时静默忽略（REST 端点才抛 409）
-                await asyncio.to_thread(
-                    apply_stream_touch,
-                    serial_of(session),
-                    action,
-                    nx,
-                    ny,
-                    raise_on_busy=False,
-                    owner=_touch_owner(sub),
-                )
+                # WS 通道不阻塞画面：设备被运行占用时静默忽略（REST 端点才抛 409）。
+                # move 是拖动热路径（每秒几十条），直接在事件循环里注入：
+                # 正常镜像拖动不碰 SQLite，一次 control socket 写入是微秒级；
+                # 若改成每条 to_thread，线程池排队会直接变成拖动延迟。
+                # down/up 在没有 run 占用、没有活跃录制时同样走快路径（注入后只剩纯内存工作），
+                # 保证 down → move 严格有序；录制/run 期间（要抓层级、查库）才放线程池。
+                if action == "move" or stream_touch_is_fast(serial_of(session)):
+                    apply_stream_touch(
+                        serial_of(session),
+                        action,
+                        nx,
+                        ny,
+                        raise_on_busy=False,
+                        owner=_touch_owner(sub),
+                    )
+                else:
+                    await asyncio.to_thread(
+                        apply_stream_touch,
+                        serial_of(session),
+                        action,
+                        nx,
+                        ny,
+                        raise_on_busy=False,
+                        owner=_touch_owner(sub),
+                    )
             except Exception:  # noqa: BLE001 - 单条触摸失败不能打断镜像
                 logger.debug("mirror ws touch failed", exc_info=True)
         else:

@@ -81,6 +81,12 @@
   （tap / long_press / swipe / drag，按位移与时长判定），录制与转脚本语义不变
 - 无镜像会话（无 control socket）时 `/touch` 返回 `UNSUPPORTED`，前端自动回落到"松手后一次性手势"，
   并在状态行提示一次，不影响无镜像场景
+- **UP 一定送达**（v0.2.6 加固）：设备端只认 down/move/up，漏掉 up 就会一直保持按压。除了
+  `pointerup`，还有三层兜底——① 画布指针捕获被浏览器丢掉时，挂在 window 捕获阶段的
+  `pointerup/pointercancel` 负责补 UP；② 鼠标已经在窗口外松开（浏览器不再发 pointerup）时，
+  下一次 `pointermove/pointerrawupdate` 看到 `buttons=0` 就当场补 UP；③ 拖动中窗口失焦 / 页面切后台 /
+  组件卸载时用最后位置主动补 UP。WS 的 up 发不出去时再静默走一次 REST `/touch`。
+  （现象对照：以前在手机区域外松手，页面会一直以为还按着，回到画布移动仍在拖设备。）
 真机验证：down+up = 点击（2/2 正确）、down+move…+up 能把设置页从「我的设备/WLAN」滚到「锁屏/显示与亮度」、
 录制得到 `key → swipe → tap` 三条事件并成功转脚本。
 
@@ -183,3 +189,24 @@
 - 物理录制的 **2 点标定**精度与旋转时间线（当前只验证了触摸设备探测与事件解析）。
 - 多设备并发（当前 registry 支持多 serial，未做并发压测）。
 - Windows 平台全流程（adb 路径探测、打包、录屏/pull 路径差异）。
+
+## 镜像跟手：浏览器端实测（Xiaomi 23127PN0CC → macOS / i7-4578U / 60Hz 屏）
+
+结论：镜像“不跟手”的最大变量是**浏览器**，不是 scrcpy 参数。用 `scripts/analyze_mirror_diag.py`
+分析 `data/diag/mirror-*.jsonl` 得到的实测（同一台设备、1020×2270 / 85% / 不限帧率）：
+
+| 时段 | 浏览器 | 活跃样本渲染 fps（中位） | 跟上期望的比例 | 判定 |
+|---|---|---|---|---|
+| 03:00–03:02 | Safari | 14~16 | 26%~33% | 明显跟不上（Safari 的 WebCodecs 解码路径慢） |
+| 03:04–03:05 | Chrome（切换后） | 45~55 | 75%~92% | 基本跟得上 |
+| 03:06–03:07 | Chrome（快速滑动） | 28~56 | 47%~93% | 仍有掉帧：85% + 不限帧率 ≈ 250MP/s 超出解码预算 |
+
+补充事实：
+- `draw_ms` 全程 0.3~0.5ms，**绘制不是瓶颈**；瓶颈在解码侧（掉帧以 burst 形式出现，丢帧计数 0→22）。
+- 60Hz 屏幕下推流 120fps 时，渲染最多到 60，**约一半解码结果不会被显示**；把帧率设 60 可直接省掉这部分。
+- 把缩放降到 70%（838×1868 ≈ 1.56MP）后，同样 120fps 的解码量从 250MP/s 降到 ≈188MP/s。
+
+诊断数据来源（每 5s 一条，自动落盘）：
+`data/diag/mirror-YYYYMMDD.jsonl`，`source=client` 为浏览器上报（含 `draw_ms`/`queue_size`/`display_hz`），
+`source=server` 为后端 10s 打点（出帧率/发送队列/几何）。前端控制台另有 `[mirror-diag]` 行，
+`__autotestMirrorDiag()` 可导出最近 120 行。

@@ -209,6 +209,46 @@ def make_session(serial: str = "fake-1", *, frames=None) -> tuple[mirror.MirrorS
     return session, servers
 
 
+# ---------------------------------------------------------------- 按设备缩放
+def test_start_resolves_max_size_from_device_long_edge() -> None:
+    captured: dict[str, scrcpy.ServerConfig] = {}
+
+    def starter(cfg):
+        captured["cfg"] = cfg
+        return FakeServer([(1, KEY_PAYLOAD)])
+
+    cfg = scrcpy.ServerConfig(scale_pct=70, max_size=1440)
+    session = mirror.MirrorSession(
+        "scaled", cfg, starter=starter, size_probe=lambda: (1080, 1920)
+    )
+    session.start()
+    try:
+        # 1920 * 70% = 1344，低于 1440 上限
+        assert captured["cfg"].max_size == 1344
+        assert session.hello_payload()["max_size"] == 1344
+    finally:
+        session.stop()
+
+
+def test_start_falls_back_to_cap_when_device_size_unknown() -> None:
+    captured: dict[str, scrcpy.ServerConfig] = {}
+
+    def starter(cfg):
+        captured["cfg"] = cfg
+        return FakeServer([(1, KEY_PAYLOAD)])
+
+    cfg = scrcpy.ServerConfig(scale_pct=70, max_size=1440)
+    session = mirror.MirrorSession(
+        "scaled-unknown", cfg, starter=starter, size_probe=lambda: (0, 0)
+    )
+    session.start()
+    try:
+        assert captured["cfg"].max_size == 1440
+        assert session.hello_payload()["max_size"] == 1440
+    finally:
+        session.stop()
+
+
 # ---------------------------------------------------------------- 广播 / hello / stats
 async def test_session_broadcast_and_hello() -> None:
     session, _servers = make_session()
@@ -233,8 +273,8 @@ async def test_session_broadcast_and_hello() -> None:
         assert hello["height"] == 1920
         assert hello["rotation"] == 0
         assert hello["codec"] == "avc1.64001F"
-        assert hello["max_size"] == 1600
-        assert hello["max_fps"] == 30
+        assert hello["max_size"] == 1920
+        assert hello["max_fps"] == 0
         assert hello["sps_b64"] and hello["pps_b64"]
 
         status = session.status()
@@ -616,3 +656,64 @@ def test_scrcpy_inject_path_abort_before_down_sends_nothing(monkeypatch) -> None
     with pytest.raises(scrcpy.InjectionAborted):
         server.inject_path([(0, 10, 20), (100, 50, 60)], 100, 1080, 1920, should_abort=lambda: True)
     assert sent == []
+
+
+def test_perf_log_emits_once_per_interval(caplog) -> None:
+    """运行期每 10s 打一行可 grep 的性能日志（fps/丢帧/订阅者/发送队列/几何/帧率上限）。
+
+    没有这行日志时，“不跟手”只能靠猜是编码、传输还是浏览器解码慢。
+    """
+    import logging
+
+    session, _servers = make_session()
+    with caplog.at_level(logging.INFO, logger=mirror.logger.name):
+        # 首帧：_last_perf_log 从 0 起，必然满足间隔 → 打一条
+        session._ingest(1, KEY_PAYLOAD)
+        perf_lines = [r for r in caplog.records if "mirror perf:" in r.getMessage()]
+        assert len(perf_lines) == 1, [r.getMessage() for r in caplog.records]
+
+        text = perf_lines[0].getMessage()
+        for expected in ("serial=fake-1", "fps=", "dropped=0", "subscribers=0", "queues=[]", "stream="):
+            assert expected in text, text
+        assert f"max_fps={session.cfg.max_fps}" in text
+
+        # 同一间隔内的后续帧不再重复打点（10s 一条，避免刷屏）
+        session._ingest(2, SLICE_PAYLOAD)
+        session._ingest(3, SLICE_PAYLOAD)
+        perf_lines = [r for r in caplog.records if "mirror perf:" in r.getMessage()]
+        assert len(perf_lines) == 1
+
+        # 把打点时间往前推 → 下一条立刻可打
+        with session._lock:
+            session._last_perf_log = 0.0
+        session._ingest(4, KEY_PAYLOAD)
+        perf_lines = [r for r in caplog.records if "mirror perf:" in r.getMessage()]
+        assert len(perf_lines) == 2
+
+    # 有订阅者时把发送队列积压也带出来（积压大 = 浏览器消费慢）
+    assert "queues=" in perf_lines[-1].getMessage()
+
+
+def test_perf_log_also_persists_jsonl_sample() -> None:
+    """后端 perf 打点同时写一条 source=server 的 JSONL，供分析脚本和浏览器样本按时间对齐。"""
+    import json
+
+    from app import diagnostics
+
+    session, _servers = make_session()
+    session._ingest(1, KEY_PAYLOAD)
+    session._ingest(2, SLICE_PAYLOAD)
+
+    path = diagnostics.current_file()
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    server_rows = [row for row in rows if row["source"] == "server"]
+    assert len(server_rows) == 1, rows
+    row = server_rows[0]
+    assert row["serial"] == "fake-1"
+    assert row["session_id"] == session.session_id
+    # 未 start 的会话没有 video geometry（0x0），这里只校验字段齐全、类型正确
+    assert isinstance(row["width"], int) and isinstance(row["height"], int)
+    assert row["subscribers"] == 0
+    assert row["queue_depths"] == []
+    assert row["max_fps"] == session.cfg.max_fps
+    assert "server_fps" in row

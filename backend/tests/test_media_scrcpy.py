@@ -423,6 +423,73 @@ def test_build_server_args_full_handshake(tmp_path) -> None:
     assert "send_frame_meta=true" in joined
 
 
+def test_max_fps_zero_means_unlimited(tmp_path, monkeypatch) -> None:
+    """0 = 不限帧率（scrcpy 默认语义）：合法、透传给 server、from_settings 不会被 ``or`` 吞掉。"""
+    jar, _ = make_jar(tmp_path)
+    cfg = scrcpy.ServerConfig(jar_path=jar, max_fps=0)
+    assert cfg.max_fps == 0
+    assert "max_fps=0" in " ".join(scrcpy.build_server_args(cfg, "raw"))
+
+    from app import config
+
+    monkeypatch.setattr(config, "_DB_LAYER", {"scrcpy.max_fps": 0})
+    monkeypatch.setattr(config, "_EFFECTIVE", None)
+    assert scrcpy.ServerConfig.from_settings().max_fps == 0
+    # 未配置时默认 0 = 不限（与 scrcpy --max-fps 默认一致）
+    monkeypatch.setattr(config, "_DB_LAYER", {})
+    monkeypatch.setattr(config, "_EFFECTIVE", None)
+    assert scrcpy.ServerConfig.from_settings().max_fps == 0
+
+
+def test_split_nals_matches_byte_scan_and_handles_keyframes() -> None:
+    """split_nals 改用 bytes.find 后必须与逐字节扫描结果一致（含 4 字节起始码、尾部零、无起始码）。"""
+    def byte_scan(data: bytes) -> list[bytes]:
+        nals: list[bytes] = []
+        n = len(data)
+        i = 0
+        start = -1
+        while i + 3 <= n:
+            if data[i] == 0 and data[i + 1] == 0 and data[i + 2] == 1:
+                if start >= 0:
+                    end = i
+                    while end > start and data[end - 1] == 0:
+                        end -= 1
+                    if end > start:
+                        nals.append(data[start:end])
+                start = i + 3
+                i += 3
+            else:
+                i += 1
+        if start >= 0:
+            end = n
+            while end > start and data[end - 1] == 0:
+                end -= 1
+            if end > start:
+                nals.append(data[start:end])
+        return nals
+
+    sps, pps = bytes(PORTRAIT_SPS), bytes(PPS)
+    sc3 = scrcpy.START_CODE_3
+    idr_nal = build_idr()
+    slice_payload = bytes([0x41, 0x9A, 0x12]) + bytes(range(1, 200)) * 40  # 不含起始码的 P 帧 slice
+    samples = {
+        "p-frame": sc3 + slice_payload,
+        "idr-4byte-codes": b"\x00\x00\x00\x01" + sps + b"\x00\x00\x00\x01" + pps + b"\x00\x00\x00\x01" + idr_nal,
+        "idr-mixed-codes": sc3 + sps + b"\x00\x00\x00\x01" + pps + sc3 + idr_nal + b"\x00\x00",
+        "leading-zeros": b"\x00\x00\x00\x00" + sc3 + sps,
+        "no-start-code": slice_payload,
+        "empty": b"",
+    }
+    for name, payload in samples.items():
+        assert scrcpy.split_nals(payload) == byte_scan(payload), name
+
+    idr = scrcpy.split_nals(samples["idr-4byte-codes"])
+    assert [scrcpy.nal_type(nal) for nal in idr] == [7, 8, 5]
+    assert idr == [sps, pps, idr_nal]
+    assert scrcpy.split_nals(samples["p-frame"]) == [slice_payload]
+    assert scrcpy.split_nals(samples["no-start-code"]) == []
+
+
 def test_build_server_args_includes_crop_and_control(tmp_path) -> None:
     cfg = make_cfg(tmp_path, crop="800:1600:100:200", control=True)
     joined = " ".join(scrcpy.build_server_args(cfg, "meta"))
@@ -453,11 +520,36 @@ def test_socket_name_is_unique_and_prefixed() -> None:
     assert str(__import__("os").getpid()) in first
 
 
+def test_resolved_max_size_uses_device_long_edge_and_cap() -> None:
+    # 均衡：85% 长边，上限 1920
+    cfg = scrcpy.ServerConfig(scale_pct=85, max_size=1920)
+    assert cfg.resolved_max_size(1080, 2400) == 1920  # 2040 -> 上限
+    assert cfg.resolved_max_size(1080, 1920) == 1632
+    assert cfg.resolved_max_size(720, 1600) == 1360
+    assert cfg.resolved_max_size(1440, 3200) == 1920  # 2720 -> 上限
+    # 清晰：100% 原生，但受 2560 上限
+    sharp = scrcpy.ServerConfig(scale_pct=100, max_size=4096)
+    assert sharp.resolved_max_size(1080, 2400) == 2400
+    assert sharp.resolved_max_size(1440, 3200) == 3200
+    # 100% 忽略上限：同一设备把上限压到 1920 也按原生 2400 推流
+    capped = scrcpy.ServerConfig(scale_pct=100, max_size=1920)
+    assert capped.resolved_max_size(1080, 2400) == 2400
+    # 不放大：设备长边低于上限时保持原生
+    assert sharp.resolved_max_size(720, 1280) == 1280
+    # 未知尺寸回退到绝对上限
+    assert sharp.resolved_max_size(0, 0) == 4096
+    # 偶数长边
+    odd = scrcpy.ServerConfig(scale_pct=85, max_size=1920)
+    assert odd.resolved_max_size(1080, 1989) % 2 == 0
+
+
 def test_server_config_validation(tmp_path) -> None:
     jar, _ = make_jar(tmp_path)
     with pytest.raises(ApiError) as exc:
-        scrcpy.ServerConfig(jar_path=jar, max_fps=0)
+        scrcpy.ServerConfig(jar_path=jar, max_fps=-1)
     assert exc.value.code == "INVALID_ARGUMENT"
+    with pytest.raises(ApiError):
+        scrcpy.ServerConfig(jar_path=jar, max_fps=241)
     with pytest.raises(ApiError):
         scrcpy.ServerConfig(jar_path=jar, crop="1:2:3")
     with pytest.raises(ApiError):
@@ -466,6 +558,10 @@ def test_server_config_validation(tmp_path) -> None:
         scrcpy.ServerConfig(jar_path=jar, socket_name="bad name!")
     with pytest.raises(ApiError):
         scrcpy.ServerConfig(jar_path=jar, stream_mode="weird")
+    with pytest.raises(ApiError):
+        scrcpy.ServerConfig(jar_path=jar, scale_pct=40)
+    with pytest.raises(ApiError):
+        scrcpy.ServerConfig(jar_path=jar, scale_pct=101)
 
 
 # ---------------------------------------------------------------- ensure_device_online

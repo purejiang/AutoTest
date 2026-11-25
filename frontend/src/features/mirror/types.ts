@@ -11,6 +11,8 @@ export interface MirrorHelloInfo {
   rotation: number
   codec: string
   maxSize?: number
+  scalePct?: number
+  configuredMaxSize?: number
   maxFps?: number
   videoBitRate?: number
 }
@@ -23,6 +25,8 @@ export interface MirrorStatusInfo {
   rotation?: number
   codec?: string
   max_size?: number
+  scale_pct?: number
+  configured_max_size?: number
   max_fps?: number
   video_bit_rate?: number
   session_id?: string
@@ -49,8 +53,12 @@ export interface MirrorStats {
   decoded: number
   /** 服务端 stats 消息里的 fps（可能为空） */
   serverFps?: number
-  /** WebCodecs decodeQueueSize */
+  /** WebCodecs decodeQueueSize（>2 说明解码排队，越大越滞后） */
   queueSize: number
+  /** 单帧绘制耗时（EMA，ms）：判断瓶颈在“画”这一层 */
+  drawMs?: number
+  /** 正在等关键帧（断链恢复中），此时 P 帧被丢是预期行为 */
+  awaitingKeyframe?: boolean
 }
 
 export interface MirrorSessionState {

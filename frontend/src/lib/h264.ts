@@ -73,6 +73,77 @@ function pushTrimmed(src: Uint8Array, start: number, end: number, out: Uint8Arra
   if (end > start) out.push(src.subarray(start, end))
 }
 
+/** 从 from 起找 3 字节起始码（00 00 01），找不到返回 -1。 */
+function findStartCode3(bytes: Uint8Array, from: number): number {
+  const len = bytes.length
+  for (let i = from; i + 2 < len; i++) {
+    if (bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 1) return i
+  }
+  return -1
+}
+
+export interface AnnexBInspection {
+  /** 帧内含 IDR（type 5） */
+  keyframe: boolean
+  /** in-band SPS（去掉起始码与尾部零的拷贝）；没有则 null */
+  sps: Uint8Array | null
+  /** in-band PPS；没有则 null */
+  pps: Uint8Array | null
+}
+
+const NAL_SLICE_FIRST = 1 // non-IDR slice 起始类型
+const NAL_IDR = 5
+const NAL_SPS = 7
+const NAL_PPS = 8
+
+/**
+ * 镜像热路径用的“前导 NAL 体检”：只看 slice 之前的 NAL（SPS/PPS/SEI/AUD…），碰到第一个
+ * slice（type 1..5）就停。
+ *
+ * scrcpy 的帧要么是单个 slice（P 帧：1 个起始码 + 几十 KB slice 数据），要么是
+ * [SPS, PPS, IDR]；防竞争字节保证 NAL 内部不会出现 00 00 01，所以“找下一个起始码”一定
+ * 停在真实边界上。于是 P 帧只读 4 个字节、IDR 只扫 SPS/PPS 的几十字节——不再对每帧
+ * 几十到几百 KB 做逐字节 splitNals（主线程上 60fps+ 时这是纯浪费）。
+ * 完整切分只在 avcC 回退路径（nalsToAvcc）需要，由 decode() 内部按需调用 splitNals。
+ *
+ * 没有起始码时把整条当成一个裸 NAL（与 splitNals 的兜底一致）。
+ */
+export function inspectAnnexB(bytes: Uint8Array): AnnexBInspection {
+  const result: AnnexBInspection = { keyframe: false, sps: null, pps: null }
+  const len = bytes.length
+  if (len === 0) return result
+  const first = findStartCode3(bytes, 0)
+  let start = first < 0 ? 0 : first + 3
+  while (true) {
+    const type = start < len ? bytes[start] & 0x1f : 0
+    if (type === NAL_SPS || type === NAL_PPS) {
+      // 参数集很小（SPS 几十字节、PPS 几字节），找它的结束边界是便宜的
+      const next = findStartCode3(bytes, start)
+      const end = next < 0 ? len : next
+      const nal = trimRange(bytes, start, end)
+      if (type === NAL_SPS) result.sps = nal
+      else result.pps = nal
+      if (next < 0) break
+      start = next + 3
+      continue
+    }
+    if (type === NAL_IDR) result.keyframe = true
+    if (type >= NAL_SLICE_FIRST && type <= NAL_IDR) break // slice：后面的数据不必再看
+    if (first < 0) break // 整条就是一个裸 NAL
+    // 其它非 VCL NAL（SEI/AUD/filler…）：跳到下一个起始码
+    const next = findStartCode3(bytes, start)
+    if (next < 0) break
+    start = next + 3
+  }
+  return result
+}
+
+/** bytes[start:end] 去掉尾部零后的拷贝（参数集要脱离 WS 的 ArrayBuffer 独立存活）。 */
+function trimRange(src: Uint8Array, start: number, end: number): Uint8Array {
+  while (end > start && src[end - 1] === 0) end--
+  return src.slice(start, end)
+}
+
 /** 去掉可能存在的起始码；返回裸 NAL（含 1 字节 NAL header）。 */
 export function stripStartCode(nal: Uint8Array): Uint8Array {
   if (isStartCode3(nal, 0)) return nal.subarray(3)
@@ -612,6 +683,23 @@ export function __selfTest(): string[] {
   } catch (err) {
     failures.push(`base64 往返失败：${(err as Error).message}`)
   }
+
+  // --- 11. inspectAnnexB：热路径只看前导 NAL，结论必须与 splitNals 一致
+  const pFrame = concatBytes([Uint8Array.from([0, 0, 1]), Uint8Array.from([0x41, 0x9a, 0x12]), new Uint8Array(50_000)])
+  const p = inspectAnnexB(pFrame)
+  check(!p.keyframe && !p.sps && !p.pps, 'inspectAnnexB：P 帧应无关键帧/参数集')
+  const k = inspectAnnexB(stream4)
+  check(k.keyframe, 'inspectAnnexB：[SPS,PPS,IDR] 应判定为关键帧')
+  check(!!k.sps && bytesEqual(k.sps, sps), 'inspectAnnexB：应提取 SPS')
+  check(!!k.pps && bytesEqual(k.pps, pps), 'inspectAnnexB：应提取 PPS')
+  check(k.sps!.buffer !== stream4.buffer, 'inspectAnnexB：参数集应是独立拷贝（不引用 WS 的 ArrayBuffer）')
+  const sei = concatBytes([Uint8Array.from([0, 0, 0, 1]), Uint8Array.from([0x06, 0x01, 0x02]), Uint8Array.from([0, 0, 1]), Uint8Array.from([0x65, 0x88])])
+  check(inspectAnnexB(sei).keyframe, 'inspectAnnexB：SEI 之后的 IDR 也应识别')
+  const bare = inspectAnnexB(payloadOnly)
+  check(bare.keyframe && !bare.sps, 'inspectAnnexB：无起始码的裸 IDR 应判定为关键帧')
+  check(inspectAnnexB(new Uint8Array(0)).keyframe === false, 'inspectAnnexB：空 payload 安全')
+  const trailing = concatBytes([Uint8Array.from([0, 0, 1]), sps, Uint8Array.from([0, 0])])
+  check(!!inspectAnnexB(trailing).sps && bytesEqual(inspectAnnexB(trailing).sps!, sps), 'inspectAnnexB：SPS 尾部零应裁剪')
 
   return failures
 }

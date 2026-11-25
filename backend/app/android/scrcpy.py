@@ -294,32 +294,37 @@ def verify_jar(cfg: ServerConfig | None = None) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- H.264 工具
 def split_nals(data: bytes) -> list[bytes]:
-    """Annex B 扫描：返回去掉起始码（00 00 01 / 00 00 00 01）后的 NAL 列表。"""
+    """Annex B 扫描：返回去掉起始码（00 00 01 / 00 00 00 01）后的 NAL 列表。
+
+    起始码用 ``bytes.find``（C 速度）定位：4 字节起始码 ``00 00 00 01`` 会在第 2 个 0 处命中，
+    上一个 NAL 多出的那个 0 由尾部裁剪去掉，结果与逐字节扫描完全一致。
+    关键帧（SPS+PPS+IDR，几十到几百 KB）每个 GOP 都会走一遍；纯 Python 逐字节循环会独占
+    GIL 15~30ms，卡住同进程的 asyncio 循环（触摸注入、WS 发送都在那条循环上）。
+    没有起始码时返回空列表。
+    """
     if not data:
         return []
+    find = data.find
+    pos = find(START_CODE_3)
+    if pos < 0:
+        return []
     nals: list[bytes] = []
-    n = len(data)
-    i = 0
-    start = -1
-    while i + 3 <= n:
-        if data[i] == 0 and data[i + 1] == 0 and data[i + 2] == 1:
-            if start >= 0:
-                end = i
-                while end > start and data[end - 1] == 0:  # 4 字节起始码多出的 0
-                    end -= 1
-                if end > start:
-                    nals.append(data[start:end])
-            start = i + 3
-            i += 3
-        else:
-            i += 1
-    if start >= 0:
-        end = n
-        while end > start and data[end - 1] == 0:
-            end -= 1
-        if end > start:
-            nals.append(data[start:end])
+    start = pos + 3
+    while True:
+        pos = find(START_CODE_3, start)
+        if pos < 0:
+            break
+        _append_nal(data, start, pos, nals)
+        start = pos + 3
+    _append_nal(data, start, len(data), nals)
     return nals
+
+
+def _append_nal(data: bytes, start: int, end: int, out: list[bytes]) -> None:
+    """``data[start:end]`` 去掉 trailing_zero_8bits 后追加（空 NAL 丢弃）。"""
+    nal = data[start:end].rstrip(b"\x00")
+    if nal:
+        out.append(nal)
 
 
 def nal_type(nal: bytes) -> int:
@@ -853,11 +858,19 @@ _SOCKET_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 @dataclass
 class ServerConfig:
-    """scrcpy server 参数（字段名与设置项白名单对齐，契约 §10）。"""
+    """scrcpy server 参数（字段名与设置项白名单对齐，契约 §10）。
+
+    ``max_size`` 是缩放后的长边上限；``scale_pct`` 先按设备长边百分比缩放，
+    ``resolved_max_size()`` 在镜像启动时结合两者算出最终传入 server 的值。
+    """
 
     jar_path: Path | None = None
     max_size: int = 1600
-    max_fps: int = 30
+    scale_pct: int = 100
+    # 帧率上限：0 = 不限（跟随设备刷新率，与 scrcpy --max-fps 默认值一致）。
+    # 30fps 会多出一帧的采样等待，拖动/滚动明显不如 scrcpy 跟手；限帧只在电脑解码
+    # 跟不上时才需要（解码队列积压会自己丢帧，但画面会一顿一顿）。
+    max_fps: int = 0
     video_bit_rate: int = 8_000_000
     crop: str = ""
     codec: str = "h264"
@@ -875,7 +888,9 @@ class ServerConfig:
     def __post_init__(self) -> None:
         if self.max_size and not (0 < int(self.max_size) <= 4096):
             raise ApiError("INVALID_ARGUMENT", f"scrcpy.max_size 非法: {self.max_size}")
-        if not (1 <= int(self.max_fps) <= 240):
+        if not (50 <= int(self.scale_pct) <= 100):
+            raise ApiError("INVALID_ARGUMENT", f"scrcpy.scale 非法: {self.scale_pct}")
+        if not (0 <= int(self.max_fps) <= 240):
             raise ApiError("INVALID_ARGUMENT", f"scrcpy.max_fps 非法: {self.max_fps}")
         if int(self.video_bit_rate) <= 0:
             raise ApiError("INVALID_ARGUMENT", f"scrcpy.video_bit_rate 非法: {self.video_bit_rate}")
@@ -894,11 +909,38 @@ class ServerConfig:
     def from_settings(cls, jar: Path | None = None) -> ServerConfig:
         return cls(
             jar_path=jar if jar is not None else None,
-            max_size=int(config.get("scrcpy.max_size") or 1600),
-            max_fps=int(config.get("scrcpy.max_fps") or 30),
-            video_bit_rate=int(config.get("scrcpy.video_bit_rate") or 8_000_000),
+            max_size=int(config.get("scrcpy.max_size") or 4096),
+            scale_pct=int(config.get("scrcpy.scale") or 100),
+            # 0 是合法值（不限帧率），不能用 ``or`` 兜底
+            max_fps=int(config.get("scrcpy.max_fps", 0)),
+            video_bit_rate=int(config.get("scrcpy.video_bit_rate") or 10_000_000),
             crop=str(config.get("scrcpy.crop") or ""),
         )
+
+    def resolved_max_size(
+        self, native_width: int, native_height: int, cap: int | None = None
+    ) -> int:
+        """按设备自然方向长边算最终 max_size：比例缩放后夹到 [长边下限, 上限]。
+
+        - 不放大：结果不会超过设备长边；
+        - 设备尺寸未知（<=0）时回退到配置的绝对上限；
+        - ``cap`` 可显式传入原始上限（避免重复解析时把上次结果当上限）；
+        - H.264 编码对奇数边长不友好，向下取偶数。
+        """
+        long_edge = max(int(native_width or 0), int(native_height or 0))
+        if long_edge <= 0:
+            return max(0, int(self.max_size))
+        if int(self.scale_pct) >= 100:
+            # 100% 的语义是“设备原生像素”，不再受长边上限约束；仅保留 4096 硬上限
+            target = long_edge
+        else:
+            target = round(long_edge * int(self.scale_pct) / 100)
+            target = max(540, target)
+            limit = int(self.max_size if cap is None else cap) or 0
+            if limit > 0:
+                target = min(target, limit)
+        target = min(target, long_edge, 4096)
+        return max(2, target - (target % 2))
 
     @property
     def device_socket_name(self) -> str:
@@ -910,6 +952,7 @@ class ServerConfig:
     def to_dict(self) -> dict[str, Any]:
         return {
             "max_size": self.max_size,
+            "scale_pct": self.scale_pct,
             "max_fps": self.max_fps,
             "video_bit_rate": self.video_bit_rate,
             "crop": self.crop,

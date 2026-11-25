@@ -227,6 +227,23 @@ def _touch_needs_db(serial: str) -> bool:
     return False
 
 
+def stream_touch_is_fast(serial: str) -> bool:
+    """down/up 能否在事件循环里同步执行（与 move 同一条路径、严格有序）。
+
+    注入本身只是一次 control socket 写（微秒级）；之后的工作只有在 run 占用（查 paused run）
+    或活跃录制（抓层级/写事件）时才会碰 SQLite/adb。没有这两样时走线程池只会多一跳，
+    还可能让紧随其后的 move 先于 down 执行而被当作“无配对手势”丢掉。
+    """
+    try:
+        if _touch_needs_db(serial):
+            return False
+        from ..recorder import hooks  # noqa: PLC0415 - 局部导入，避免循环依赖
+
+        return not hooks.is_recording(serial)
+    except Exception:  # noqa: BLE001 - 占用查询异常按“不快”处理，走线程池
+        return False
+
+
 def _manual_state(serial: str, session: Session) -> int | None:
     """校验手动控制是否允许；返回 paused run 的 id（需 note_manual + manual_intervention 留痕）。"""
     manual_run_id: int | None = None

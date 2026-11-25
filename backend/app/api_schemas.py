@@ -121,10 +121,37 @@ class ScreenRecordStartRequest(ApiModel):
 
 
 class MirrorStartRequest(ApiModel):
-    max_size: int | None = Field(default=None, ge=480, le=2560)
-    max_fps: int | None = Field(default=None, ge=5, le=120)
+    max_size: int | None = Field(default=None, ge=480, le=4096)
+    max_fps: int | None = Field(default=None, ge=0, le=240)  # 0 = 不限
     video_bit_rate: int | None = Field(default=None, ge=1_000_000, le=32_000_000)
     crop: str | None = None
+
+
+class MirrorDiagSample(BaseModel):
+    """浏览器侧镜像诊断采样（每 5s 一条，落盘 JSONL 用于事后分析）。
+
+    - 字段都取自前端已经算好的值；``session_id`` 用来把同一次镜像会话的样本归组；
+    - **允许未知字段**：埋点/遥测要向前兼容——前端先更新（多带 display_hz/phase）而
+      后端还没重启时，不能因为 ``extra="forbid"`` 把整条样本 422 掉（本轮就踩了这个坑：
+      新前端 + 旧后端 → 全部 422 → 日志里一条客户端样本都没有，完全静默）。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    session_id: str = ""
+    width: int = Field(default=0, ge=0, le=16384)
+    height: int = Field(default=0, ge=0, le=16384)
+    render_fps: float = Field(default=0, ge=0, le=1000)
+    server_fps: float | None = Field(default=None, ge=0, le=1000)
+    draw_ms: float = Field(default=0, ge=0, le=10_000)
+    queue_size: int = Field(default=0, ge=0, le=10_000)
+    dropped: int = Field(default=0, ge=0)
+    max_fps: int | None = Field(default=None, ge=0, le=1000)
+    display_hz: float | None = Field(default=None, ge=1, le=1000)
+    decoder_mode: str = ""
+    phase: str = ""  # 页面状态：streaming / waiting-keyframe / reconnecting…
+    awaiting_keyframe: bool = False
+    hidden: bool = False
 
 
 class ConnectRequest(ApiModel):

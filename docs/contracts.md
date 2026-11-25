@@ -201,13 +201,25 @@ WS 订阅者从内存 pubsub 收实时事件；断线用 `?since_seq=n` 从 DB �
 client→server：`{"kind":"ping"}`→`{"kind":"pong"}`；`{"kind":"ack","last_seq":13}`（仅记 meta）。
 
 ### 6.2 `/ws/mirror/{serial}?token=`
-1) 首条 text 为 hello：`{"kind":"hello","serial","session_id","width","height","rotation","codec":"avc1.x","sps_b64","max_size","max_fps"}`。
+1) 首条 text 为 hello：`{"kind":"hello","serial","session_id","width","height","rotation","codec":"avc1.x","sps_b64","max_size","scale_pct","configured_max_size","max_fps","video_bit_rate"}`。
+   ⚠️ 其中 `max_size` 是**已算过缩放的实际上限**（设备长边 × `scale_pct`，再受用户上限约束，例：2670×70%→1868），
+   `configured_max_size` 才是设置页的上限值；前端判断“设置是否已变更”必须比较 `scale_pct`/`configured_max_size`，
+   直接把 `max_size` 和 `scrcpy.max_size` 比较会产生常驻假提示（`config` 控制消息同此语义）。
 2) 视频帧为 binary：`[u64 BE pts_us][u32 BE payload_len][Annex B payload]`（12 字节头）。
 3) 控制 text：server→`{"kind":"config",...}`（参数变化/旋转）、`{"kind":"flush","reason":"keyframe_drop"}`、
-   `{"kind":"error","code","message"}`、`{"kind":"stats","fps","dropped"}`；client→`{"kind":"request_keyframe"}`、`{"kind":"ping"}`。
+   `{"kind":"error","code","message"}`、`{"kind":"stats","fps","dropped"}`；client→`{"kind":"request_keyframe"}`、`{"kind":"ping"}`、
+   `{"kind":"touch","action":"down|move|up","nx","ny"}`。
+   `request_keyframe` 服务端按 0.8s 节流（每次 RESET_VIDEO 都是编码器重启，100~300ms 不出帧）；
+   新订阅者需要的 IDR 由服务端在 subscribe 时强制请求，客户端 open/hello 不必再要。
+   前端收到 `flush` 只把状态置为“等下一个 IDR”，不重建 VideoDecoder（IDR 会刷新参考帧）。
 4) 背压：消费者慢→丢帧到下一 IDR 边界，补发整 GOP，先发 flush。
-5) 坐标：镜像页控制走 REST（§7.1），带归一化坐标 nx,ny∈[0,1]（相对视频帧），后端按镜像几何反算设备像素。
-   归一化是前端唯一坐标表达。
+5) 坐标：镜像页拖动首选同一条 WS 的 `touch` 消息（严格有序、无 HTTP 开销）；REST `/touch|tap|swipe`（§7.1）为同语义兜底。
+   坐标统一为归一化 nx,ny∈[0,1]（相对视频帧），后端按镜像几何反算设备像素。归一化是前端唯一坐标表达。
+   Chrome 下拖动样本走 `pointerrawupdate`（不对齐 rAF，比 pointermove 早最多一帧），pointermove 只补未发过的样本。
+   **每段手势必须有 up 收尾**：画布捕获失效时由 window 捕获阶段的 `pointerup/pointercancel` 兜底；
+   鼠标已松开却仍收到 `pointermove/pointerrawupdate`（`buttons=0`）视为 UP 丢失，用当前位置补 up；
+   窗口失焦/页面隐藏/组件卸载用最后位置补 up；WS 发不出 up 时静默回落一次 REST `/touch`。
+   前端在 `up` 之前被拒绝而残留的手势，由下一次 `down` 先补 up（后端 owner 语义不变）。
 6) 无 WebCodecs：前端显示引导页，后端**不**降级截图轮询。
 
 ### 6.3 `/ws/recordings/{recording_id}?since_seq=0`
@@ -232,7 +244,10 @@ POST /api/devices/{serial}/network/start|stop；GET /api/devices/{serial}/networ
 停止时恢复设备原 http_proxy。`capture.network.mode=off|manual|run`：
 off 完全关闭；manual 仅控制台手动；run 随 run 自动启停并关联 `run_id`；
 手动抓包不会被运行结束误停。
-POST /api/devices/{serial}/mirror/start|stop；GET /api/devices/{serial}/mirror/status。
+POST /api/devices/{serial}/mirror/start|stop；GET /api/devices/{serial}/mirror/status；
+POST /api/devices/{serial}/mirror/diag：浏览器每 5s 上报一条诊断采样（渲染 fps/绘制耗时/解码队列/丢帧），
+落盘 `<data_dir>/diag/mirror-YYYYMMDD.jsonl`（`source=client`；后端每 10s 的 perf 打点为 `source=server`），
+由 `scripts/analyze_mirror_diag.py` 分析；写盘失败只告警，不影响镜像。
 > 录制挂钩：serial 有活跃录制时注入动作必须经 `app.recorder.hooks` 留痕（on_before_pointer→注入→on_action）。
 
 ### 7.2 脚本（be-core）
@@ -296,6 +311,9 @@ GET /api/health → {status,version,db,adb:{path,version,devices},data_dir}。
 
 v0.2.5 起 `SETTINGS_SCHEMA` 补充两个 `DEFAULTS` 已有但未展示的 key：
 `adb.connect_timeout_s`（int，1..120，工具链 → ADB）、`scrcpy.jar`（string，工具链 → scrcpy-server，留空用 vendor 内置 jar）。
+v0.2.6 另新增 `scrcpy.scale`（int，50..100，按设备自然长边缩放百分比），`scrcpy.max_size` 改为缩放后的长边上限
+（默认 4096，不再放大）；`scrcpy.max_fps` 范围改为 0..240、**默认 0（不限，跟随设备刷新率，与 scrcpy 一致）**；
+`MirrorStartRequest.max_fps` 同步为 0..240。
 不改 settings 表结构、不做 migration；主题/语言只存前端 localStorage。
 
 ## 8. 录制挂钩（`app/recorder/hooks.py`，Lead 已写）
@@ -355,6 +373,18 @@ v0.2.5 手势回放补充：
   pts = pts_and_flags & ~(1<<61) & ~(1<<62)；session meta 变化（旋转/改尺寸）→ 重发 config；
   连接顺序 video → control（只连 video 时 server 不出帧）；
 - 后端→前端 WS 帧保持 `[u64 pts][u32 len][Annex B payload]` 不变（前端按此实现）；
+- 分辨率：`scrcpy.scale`（50..100%）按设备自然长边缩放，再由 `scrcpy.max_size` 封顶；启动时探测
+  `wm size`，探测失败回退到绝对上限；不放大。三档画质：轻量 70%、标准 85%、高清 100%（100% 为原生；4096 为 scrcpy 硬上限）；
+- 帧率：`scrcpy.max_fps` 默认 **0** = 不限（跟随设备刷新率），透传 `max_fps=0`。
+  已对 scrcpy master 源码核实默认值：`server/.../Options.java` 里 `maxFps`（float，未赋值即 0）、`maxSize`（0 = 不缩放）、
+  `videoBitRate = 8000000`（8 Mbps）；`doc/video.md` 亦写明“默认按设备分辨率镜像”“默认码率 8 Mbps”。
+  30fps 会多一帧采样等待且滚动不顺，是与 scrcpy 观感差距最大的单一因素；
+  帧率是与画质正交的独立设置：限帧只在电脑解码跟不上时才需要（解码队列积压会主动丢帧，表现为一顿一顿），
+  官方对性能问题的建议是降分辨率/码率而不是限帧。预设只描述画质（缩放+上限+码率），不含帧率：
+  轻量 70%/6M、标准 85%/10M、高清 100%/16M；调帧率不会让预设变成“自定义”。
+  `from_settings()` 对该 key 不做 `or` 兜底（0 是合法值）；
+- 关键帧：`split_nals` 用 `bytes.find` 定位起始码（逐字节版在 i7-4578U 上扫一个 291KB IDR 要 37ms 并独占 GIL，
+  卡住 asyncio 循环上的触摸/WS 发送）；前端热路径 `inspectAnnexB` 只看前导 NAL，P 帧不再全量切分；
 - 旋转：视频尺寸变化→新 SPS→重发 config；stream→device 逆映射由 MirrorSession 维护（含 max_size/crop/rotation）；
 - 崩溃/断线自动重启（≤3 次/分钟），WS 发 error 保持连接；
 - 启动自检：socket 数、首帧 ≤8s、codec 字符串从 SPS 解析；

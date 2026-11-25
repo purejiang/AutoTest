@@ -12,14 +12,22 @@ scrcpy-server 是 Android 端的 dex jar，由 adb push 到手机后通过 app_p
     backend/vendor/scrcpy-server-v5.0.1.jar
     backend/vendor/scrcpy.lock.json   # {version,url,asset_name,local_name,sha256,size,fetched_at}
 
+下载源（国内直连 GitHub 经常超时，按顺序回退）：
+    1. 官方 GitHub Release（正式来源）
+    2. gh-proxy.com / ghfast.top / ghproxy.net（GitHub 反代，URL 前缀式）
+镜像只是通道，**内容校验不变**：下载完必须与 ``OFFICIAL_SHA256``（官方 release 资产摘要）一致，
+不一致立即删除并换下一个源——镜像不可信也不能污染 vendor jar。
+
+可用环境变量：
+    AUTOTEST_SCRCPY_URL   指定唯一下载地址（公司代理/离线镜像站），设置后不再尝试其它源
+    AUTOTEST_SCRCPY_JAR   覆盖 jar 目标路径（lock 文件放在 jar 同目录），便于测试注入
+
 注意：GitHub release 资产名是 ``scrcpy-server-v5.0.1``（**没有** .jar 后缀），
 本地保存为 ``scrcpy-server-v5.0.1.jar``（扩展名只是方便识别，jar 内容一致）。
 urllib 默认 HTTP/1.1，不会触发 GitHub 的 HTTP/2 framing 问题。
 
 约定：
-- 只允许从官方 GitHub Release 下载；下载失败**绝不**伪造成功，打印清晰错误并非零退出。
-- 环境变量 ``AUTOTEST_SCRCPY_JAR`` 可覆盖 jar 目标路径（lock 文件放在 jar 同目录），
-  便于离线环境/测试注入，正式环境不要设置。
+- 下载失败**绝不**伪造成功，打印清晰错误并非零退出；
 - 不做任何解压/执行动作；SHA256 由 backend/app/android/scrcpy.py 启动前复核。
 """
 
@@ -45,6 +53,15 @@ URL = f"https://github.com/Genymobile/scrcpy/releases/download/v{VERSION}/{ASSET
 # 官方 release API 的 assets[].digest（仅作参考展示；lock 文件以实际下载校验值为准）
 OFFICIAL_SHA256 = "764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536"
 
+# 下载源：官方优先，失败按顺序回退到 GitHub 反代（国内直连 GitHub 常被卡）。
+# 每一份下载都必须通过 OFFICIAL_SHA256 校验，镜像无法替换内容。
+MIRRORS: list[tuple[str, str]] = [
+    ("GitHub releases", URL),
+    ("gh-proxy.com", f"https://gh-proxy.com/{URL}"),
+    ("ghfast.top", f"https://ghfast.top/{URL}"),
+    ("ghproxy.net", f"https://ghproxy.net/{URL}"),
+]
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENDOR_DIR = REPO_ROOT / "backend" / "vendor"
 
@@ -52,6 +69,14 @@ USER_AGENT = "AutoTest-fetch-scrcpy/1.0 (+https://github.com/Genymobile/scrcpy)"
 TIMEOUT_S = 30
 RETRIES = 2  # 失败后最多再重试 2 次（总尝试 3 次）
 CHUNK = 1024 * 256
+
+
+class DownloadError(Exception):
+    """所有下载源都失败（或内容校验不通过）。``errors`` 是逐源失败原因。"""
+
+    def __init__(self, errors: list[str]) -> None:
+        super().__init__("; ".join(errors) or "no download source available")
+        self.errors = errors
 
 
 # ------------------------------------------------------------------ paths
@@ -164,7 +189,46 @@ def download(url: str, dest: Path, retries: int = RETRIES) -> None:
     raise last_error
 
 
-def write_lock(jar: Path) -> dict:
+def candidate_sources() -> list[tuple[str, str]]:
+    """(名称, URL) 列表：``AUTOTEST_SCRCPY_URL`` 设置时只用它，否则官方 + 镜像按序回退。"""
+    override = os.environ.get("AUTOTEST_SCRCPY_URL", "").strip()
+    if override:
+        return [("AUTOTEST_SCRCPY_URL", override)]
+    return list(MIRRORS)
+
+
+def download_verified(dest: Path) -> dict:
+    """按序尝试各下载源，**每一份都必须**与官方 SHA256 一致才采用。
+
+    镜像只当通道用：内容对不上就删掉并换下一个源，最后仍失败则抛 ``DownloadError``
+    （带每个源的失败原因，方便判断是网络问题还是内容问题）。
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    errors: list[str] = []
+    for name, url in candidate_sources():
+        print(f"downloading ({name}) {url}")
+        try:
+            # 官方源多试几次；镜像失败得快一点，避免国内网络下每个镜像都卡满超时
+            download(url, dest, retries=RETRIES if name == "GitHub releases" else 0)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
+            errors.append(f"{name}: {type(exc).__name__}: {exc}")
+            print(f"  failed: {name}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            continue
+        digest = sha256_file(dest)
+        if digest != OFFICIAL_SHA256:
+            # 内容不对：可能是镜像返回了错误页/被篡改，宁可失败也不能落盘
+            errors.append(f"{name}: sha256 mismatch (got {digest}, expected {OFFICIAL_SHA256})")
+            print(f"  rejected: sha256 mismatch from {name}", file=sys.stderr)
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            continue
+        return {"source": name, "url": url, "sha256": digest}
+    raise DownloadError(errors)
+
+
+def write_lock(jar: Path, source: dict | None = None) -> dict:
     digest = sha256_file(jar)
     lock = {
         "version": VERSION,
@@ -176,6 +240,10 @@ def write_lock(jar: Path) -> dict:
         "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "verified_against": "GitHub release API digest field (assets[].digest)",
     }
+    if source:
+        # 记录实际用的下载通道（镜像只影响传输，不影响 sha256）
+        lock["downloaded_from"] = source.get("url", "")
+        lock["download_source"] = source.get("source", "")
     lock_file = lock_path(jar)
     lock_file.parent.mkdir(parents=True, exist_ok=True)
     lock_file.write_text(json.dumps(lock, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -203,21 +271,23 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     try:
-        download(URL, jar)
-    except Exception as exc:  # noqa: BLE001 - 对外只暴露一行清晰错误
+        source = download_verified(jar)
+    except DownloadError as exc:
+        detail = "\n".join(f"  - {item}" for item in exc.errors) or f"  - {exc}"
         print(
-            f"ERROR: failed to download scrcpy-server v{VERSION} from {URL}\n"
-            f"  reason: {type(exc).__name__}: {exc}\n"
-            "  hint: check network/proxy, or download it manually and place it at "
-            f"{jar}\n"
-            "        (then write the lock with: python scripts/fetch_scrcpy.py --check "
-            "after adding sha256 manually, or rerun --force)",
+            f"ERROR: failed to download scrcpy-server v{VERSION}（所有下载源都失败）\n"
+            f"{detail}\n"
+            "  hint: 国内直连 GitHub 常超时，可用反代前缀自行下载，例如\n"
+            f"        https://gh-proxy.com/{URL}\n"
+            "        或设置 AUTOTEST_SCRCPY_URL 指向你信任的镜像；把文件放到 "
+            f"{jar} 后运行 --check 校验。\n"
+            f"        官方 SHA256 必须是 {OFFICIAL_SHA256}。",
             file=sys.stderr,
         )
         return 1
 
-    lock = write_lock(jar)
-    print(f"saved: {jar} ({lock['size']} bytes)")
+    lock = write_lock(jar, source)
+    print(f"saved: {jar} ({lock['size']} bytes) via {lock.get('download_source') or 'unknown'}")
     print(f"sha256: {lock['sha256']}")
     print(f"lock:  {lock_path(jar)}")
     return 0

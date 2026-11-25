@@ -10,7 +10,7 @@
 | 设备控制 | 点击 / 长按 / 滑动 / 拖拽 / 输入 / 系统键（返回·桌面·最近任务·音量·电源）/ 启停清应用 / shell / 截图 / 录屏 / logcat |
 | 实时镜像 | scrcpy 服务端 + WebCodecs 低延迟解码，鼠标直接在镜像上操作设备（归一化坐标，后端反算设备像素） |
 | 镜像触控特效 | 工具栏三个独立开关（记住选择）：点击特效（触点/长按环）、波纹、滑动特效（轨迹/跟随点） |
-| 镜像画质预设 | 设置页一键套用流畅/均衡/清晰（分辨率/帧率/码率），也可手动微调；保存后停止并重新启动镜像生效 |
+| 镜像画质预设 | 设置页三档画质（轻量 70%/6M、标准 85%/10M、高清 100%/16M，按设备长边比例缩放 + 长边上限 + 码率）；帧率是独立项（默认不限，同 scrcpy），任何预设都可单独限帧；保存后停止并重新启动镜像生效 |
 | 步骤脚本 | JSON 数据文件，顺序执行；每个节点独立配置执行条件、定位方式、超时、停顿、重试、失败策略、节点名/注释、重跑安全性 |
 | 12 类节点 | click / long_click / swipe / drag / input / key / wait / app / shell / assert / sub_script / screenshot |
 | 脚本录制 | **镜像网页操作录制（主）** + 真机操作录制（辅助，getevent）；支持暂停、计时、事件数；录制草稿可一键转脚本/重新生成；脚本可作为节点嵌入其他脚本 |
@@ -287,9 +287,32 @@ cd frontend && npm run build                    # 类型检查 + 构建到 front
 ## 常见问题
 
 - **npm 报 EPERM（`~/.npm` 缓存被 root 占用）**：`sudo chown -R $(id -u):$(id -g) ~/.npm`，或临时用 `npm_config_cache=/tmp/autotest-npm-cache npm install`。
+- **国内下载 scrcpy-server 失败/很慢（GitHub 连不上）**：`scripts/fetch_scrcpy.py` 已内置镜像回退——官方 Release 失败后自动尝试
+  `gh-proxy.com` → `ghfast.top` → `ghproxy.net`，每份下载都必须与官方 SHA256 一致才落盘（镜像只能当通道，换不了内容）。
+  也可以自己用 `AUTOTEST_SCRCPY_URL=https://gh-proxy.com/https://github.com/... python scripts/fetch_scrcpy.py` 指定单一地址。
+  手工下载后放到 `backend/vendor/scrcpy-server-v5.0.1.jar`，再跑 `--check` 校验即可。
 - **adb 找不到**：设置页填 adb 绝对路径，或把 platform-tools 加进 PATH。
 - **设备 offline/unauthorized**：重新插拔、手机上确认授权、`adb kill-server && adb start-server`。
 - **镜像黑屏/报错**：确认 scrcpy-server jar 已下载（`sh scripts/setup.sh`），在设置页调小 `max_size`(如 800) 与码率。
+- **操作不如 scrcpy 跟手**：先确认设置页「帧率」是 0（不限，这也是 scrcpy 的默认值）——限成 30 会多一帧采样等待、滚动不顺，是观感差距最大的因素。若画面开始一顿一顿，说明电脑解码跟不上，按 scrcpy 的官方建议降分辨率/码率（选「轻量」70%）而不是限帧；镜像状态行的「设备出帧 Nfps」（后端从设备读到几帧）vs 左上角渲染 fps（画布实际画了几帧）可以直接看出瓶颈：设备出帧明显高于渲染＝浏览器端跟不上。对比手感时关掉「特效」（本地轨迹零延迟，会放大设备响应的滞后感）。
+- **换了 Chrome 就流畅了**：Safari 的 WebCodecs 解码路径明显更慢（旧版甚至没有 `VideoDecoder`），镜像跟不上时优先换
+  Chrome/Edge；此时“降分辨率/限帧”往往没用，因为瓶颈在浏览器实现而不是参数。
+- **浏览器端解码/绘制跟不上（设备出帧高、渲染 fps 低）**：先看状态行两个新指标——「解码队列 N」（>2 表示
+  WebCodecs 排队，越大越滞后）和「绘制 X ms」（单帧 drawImage 耗时）。要留证据时：
+  浏览器控制台每 5 秒会打一行 `[mirror-diag]`（出帧/渲染/绘制/队列/丢帧），执行 `__autotestMirrorDiag()`
+  可一次导出最近 120 行；后端日志每 10 秒一行 `mirror perf:`（`fps` `dropped` `subscribers` `queues`
+  `stream` `rotation` `max_fps`），`queues` 持续大于 0 说明浏览器消费不过来。
+  这些样本还会落盘到 `<data_dir>/diag/mirror-YYYYMMDD.jsonl`（浏览器每 5s 一条 `source=client`，
+  后端每 10s 一条 `source=server`），事后直接分析：
+
+  ```bash
+  python scripts/analyze_mirror_diag.py            # 默认只看最新镜像会话（换参数/换浏览器=新会话）
+  python scripts/analyze_mirror_diag.py --list     # 有哪些文件（体积/行数）
+  python scripts/analyze_mirror_diag.py --session ID   # 指定会话
+  python scripts/analyze_mirror_diag.py --all      # 所有会话
+  ```**队列涨、绘制便宜**→卡在解码：按官方
+  建议降分辨率（「轻量」70%，还可再降到 50%），或把帧率限到本机屏幕刷新率（60Hz 屏设 0 会按设备 120Hz 推流，
+  约一半解码白费，设置页会给出提示）。**绘制 ms 高**（>8ms）→卡在绘制/GPU 上传：降低缩放或减少画布 DPR。
 - **浏览器不支持 WebCodecs**（Firefox 旧版/Safari 旧版）：镜像页会提示；此时用**真机录制**模式（手机真实操作，通过 getevent 采集）。
 - **录制没有出现节点**：检查录制的设备是否就是操作的那台；真机录制需要先通过触摸设备确认与 2 点标定。
 - **运行时提示 409 DEVICE_BUSY**：设备被运行/录制占用；手动控制（含 shell）在运行中会被拒绝，暂停运行后即可操作（并会留痕）。

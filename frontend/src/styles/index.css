@@ -34,8 +34,14 @@
   --violet-soft: #f2edff;
   --cyan: #0e7490;
   --cyan-soft: #e6f7fb;
-  --rail-bg: #0f151d;
-  --rail-ink: #cbd5e1;
+  --rail-bg: #ffffff;
+  --rail-ink: #5b6779;
+  --rail-ink-strong: #18212b;
+  --rail-ink-muted: #64748b;
+  --rail-hover: #f1f5f9;
+  --rail-active-bg: #eef4ff;
+  --rail-active-ink: #2563eb;
+  --rail-line: #e3e8ef;
   --radius: 8px;
   --radius-sm: 6px;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
@@ -71,67 +77,76 @@
    Element 的 dark/css-vars.css 在 main.ts 中先于本文件加载，这里覆盖主色与背景。 */
 html.dark {
   color-scheme: dark;
-  --bg: #0c1118;
-  --surface: #141b24;
-  --surface-2: #19222e;
-  --surface-3: #202b39;
-  --surface-hover: #1b2532;
-  --line-soft: #1f2a37;
-  --ink: #e6edf5;
-  --muted: #9aa9ba;
-  --muted-2: #6b7c90;
-  --line: #263241;
-  --line-2: #344256;
-  --accent: #4f8ef7;
-  --accent-hover: #6aa1ff;
-  --accent-soft: #172640;
-  --green: #4ade80;
-  --green-soft: #12291b;
-  --amber: #fbbf24;
-  --amber-soft: #2a2110;
-  --red: #f87171;
-  --red-soft: #2c1416;
-  --violet: #a78bfa;
-  --violet-soft: #1e1733;
-  --cyan: #22d3ee;
-  --cyan-soft: #0c2429;
-  --rail-bg: #080c12;
-  --rail-ink: #aebccd;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
-  --shadow-md: 0 16px 36px rgba(0, 0, 0, 0.46);
+  /* 中性灰阶（对齐 VS Code Dark Modern 的亮度层次），主背景 #1f1f1f，
+     卡片比背景亮一档，靠边框而不是大阴影分层。 */
+  --bg: #1f1f1f;
+  --surface: #262626;
+  --surface-2: #2c2c2c;
+  --surface-3: #333333;
+  --surface-hover: #2a2a2a;
+  --line-soft: #333333;
+  --ink: #ededed;
+  --muted: #b0b0b0;
+  --muted-2: #8c8c8c;
+  --line: #3a3a3a;
+  --line-2: #4a4a4a;
+  --accent: #5b9bff;
+  --accent-hover: #7cb2ff;
+  --accent-soft: #223047;
+  --green: #6ecf8f;
+  --green-soft: #1d3226;
+  --amber: #e3b341;
+  --amber-soft: #352b18;
+  --red: #f28b82;
+  --red-soft: #3a2323;
+  --violet: #b9a1ff;
+  --violet-soft: #2b2542;
+  --cyan: #63d4e8;
+  --cyan-soft: #17323a;
+  --rail-bg: #171717;
+  --rail-ink: #b5b5b5;
+  --rail-ink-strong: #ededed;
+  --rail-ink-muted: #8c8c8c;
+  --rail-hover: rgba(255, 255, 255, 0.06);
+  --rail-active-bg: #223047;
+  --rail-active-ink: #5b9bff;
+  --rail-line: #2e2e2e;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 16px 36px rgba(0, 0, 0, 0.55);
 
-  --el-color-primary: #4f8ef7;
-  --el-color-primary-light-3: #3d6db8;
-  --el-color-primary-light-5: #2f568f;
-  --el-color-primary-light-7: #223f69;
-  --el-color-primary-light-8: #1c3457;
-  --el-color-primary-light-9: #172640;
-  --el-color-primary-dark-2: #6aa1ff;
-  --el-color-success: #4ade80;
-  --el-color-warning: #fbbf24;
-  --el-color-danger: #f87171;
-  --el-color-error: #f87171;
-  --el-text-color-primary: #e6edf5;
-  --el-text-color-regular: #c3cedd;
-  --el-text-color-secondary: #9aa9ba;
-  --el-text-color-placeholder: #6b7c90;
-  --el-border-color: #344256;
-  --el-border-color-light: #263241;
-  --el-border-color-lighter: #1f2a37;
-  --el-border-color-extra-light: #1a2330;
-  --el-fill-color: #202b39;
-  --el-fill-color-light: #19222e;
-  --el-fill-color-lighter: #141b24;
-  --el-fill-color-extra-light: #101720;
-  --el-fill-color-dark: #2a3748;
-  --el-fill-color-darker: #344256;
-  --el-fill-color-blank: #141b24;
-  --el-bg-color: #141b24;
-  --el-bg-color-page: #0c1118;
-  --el-bg-color-overlay: #19222e;
-  --el-mask-color: rgba(4, 7, 11, 0.72);
-  --el-box-shadow-light: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --el-box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --el-color-primary: #5b9bff;
+  --el-color-primary-light-3: #4a7cc4;
+  --el-color-primary-light-5: #3b5f96;
+  --el-color-primary-light-7: #2c456b;
+  --el-color-primary-light-8: #253a5a;
+  --el-color-primary-light-9: #1f2e45;
+  --el-color-primary-dark-2: #7cb2ff;
+  --el-color-success: #6ecf8f;
+  --el-color-warning: #e3b341;
+  --el-color-danger: #f28b82;
+  --el-color-error: #f28b82;
+  --el-text-color-primary: #ededed;
+  --el-text-color-regular: #cfcfcf;
+  --el-text-color-secondary: #a6a6a6;
+  --el-text-color-placeholder: #7a7a7a;
+  --el-text-color-disabled: #6a6a6a;
+  --el-border-color: #4a4a4a;
+  --el-border-color-light: #3a3a3a;
+  --el-border-color-lighter: #333333;
+  --el-border-color-extra-light: #2e2e2e;
+  --el-fill-color: #333333;
+  --el-fill-color-light: #2c2c2c;
+  --el-fill-color-lighter: #292929;
+  --el-fill-color-extra-light: #242424;
+  --el-fill-color-dark: #3a3a3a;
+  --el-fill-color-darker: #454545;
+  --el-fill-color-blank: #262626;
+  --el-bg-color: #262626;
+  --el-bg-color-page: #1f1f1f;
+  --el-bg-color-overlay: #2c2c2c;
+  --el-mask-color: rgba(0, 0, 0, 0.6);
+  --el-box-shadow-light: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --el-box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
 }
 
 html.dark body {
@@ -154,11 +169,19 @@ html.dark .editor-validation-head,
 html.dark .node-editor-head,
 html.dark .validation-list,
 html.dark .settings-savebar,
-html.dark .tab-btn.active,
 html.dark .pre-block,
 html.dark .event-list {
   background: var(--surface-2);
   color: var(--ink);
+}
+
+/* 选中态统一用蓝色底，避免深色下出现浅色/白色块 */
+html.dark .tab-btn.active,
+html.dark .seg button.active {
+  border-color: var(--line-2);
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: none;
 }
 
 html.dark .validation-item:hover {
@@ -254,6 +277,7 @@ pre,
   flex-direction: column;
   background: var(--rail-bg);
   color: var(--rail-ink);
+  border-right: 1px solid var(--rail-line);
 }
 
 .brand {
@@ -263,7 +287,7 @@ pre,
   align-items: center;
   gap: 9px;
   padding: 0 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--rail-line);
 }
 
 .brand-mark {
@@ -287,14 +311,14 @@ pre,
 }
 
 .brand-name {
-  color: #f8fafc;
+  color: var(--rail-ink-strong);
   font-size: 13px;
   font-weight: 650;
   letter-spacing: 0.2px;
 }
 
 .brand-version {
-  color: #7f8da0;
+  color: var(--rail-ink-muted);
   font-size: 10px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -327,13 +351,13 @@ pre,
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff;
+  background: var(--rail-hover);
+  color: var(--rail-ink-strong);
 }
 
 .nav-item.active {
-  background: rgba(37, 99, 235, 0.2);
-  color: #fff;
+  background: var(--rail-active-bg);
+  color: var(--rail-active-ink);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
@@ -341,7 +365,7 @@ pre,
   margin-top: auto;
   flex: none;
   padding: 9px 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--rail-line);
 }
 
 .rail-health {
@@ -361,8 +385,8 @@ pre,
 }
 
 .rail-health:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff;
+  background: var(--rail-hover);
+  color: var(--rail-ink-strong);
 }
 
 .rail-health .dot.online {
@@ -1197,7 +1221,7 @@ pre,
   display: flex;
   gap: 9px;
   padding: 9px 10px;
-  border-bottom: 1px solid #f1f4f8;
+  border-bottom: 1px solid var(--line-soft);
   cursor: pointer;
   min-width: 0;
 }
@@ -1207,7 +1231,7 @@ pre,
 }
 
 .device-item:hover {
-  background: #fbfcfe;
+  background: var(--surface-hover);
 }
 
 .device-item.selected {
@@ -1603,6 +1627,13 @@ pre,
   background: var(--line-2);
 }
 
+.mirror-statusline-dot {
+  flex: none;
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 1;
+}
+
 .mirror-statusline-spacer {
   flex: 1;
 }
@@ -1781,7 +1812,7 @@ pre,
 }
 
 .node-row:hover {
-  background: #fbfcfe;
+  background: var(--surface-hover);
 }
 
 .node-row.selected {
@@ -1804,7 +1835,7 @@ pre,
   height: 22px;
   flex: none;
   border-radius: 5px;
-  background: #f1f5f9;
+  background: var(--surface-3);
   color: var(--muted);
   font-size: 11px;
 }
@@ -2437,7 +2468,7 @@ pre,
   max-height: 460px;
   overflow: auto;
   padding: 6px 8px;
-  border: 1px solid #eef2f7;
+  border: 1px solid var(--line-soft);
   border-radius: 6px;
   background: #fafbfd;
   font-size: 11.5px;
@@ -2448,7 +2479,7 @@ pre,
   align-items: baseline;
   gap: 8px;
   padding: 3px 0;
-  border-bottom: 1px dashed #eef2f7;
+  border-bottom: 1px dashed var(--line-soft);
 }
 
 .event-item:last-child {
@@ -2570,7 +2601,7 @@ pre,
 
 .mini-table td {
   padding: 4px 6px;
-  border-bottom: 1px solid #f1f4f8;
+  border-bottom: 1px solid var(--line-soft);
   vertical-align: top;
 }
 
@@ -2588,11 +2619,11 @@ pre,
 }
 
 .step-row-failed {
-  --el-table-tr-bg-color: #fff5f5;
+  --el-table-tr-bg-color: var(--red-soft);
 }
 
 .step-row-current {
-  --el-table-tr-bg-color: #f5f8ff;
+  --el-table-tr-bg-color: var(--accent-soft);
 }
 
 /* ---------------------------------------------------------------- recorder */
@@ -2604,7 +2635,7 @@ pre,
 }
 
 .recording-event-low {
-  --el-table-tr-bg-color: #fffaeb;
+  --el-table-tr-bg-color: var(--amber-soft);
 }
 
 .kv {
@@ -2613,7 +2644,7 @@ pre,
   justify-content: space-between;
   gap: 10px;
   padding: 4px 0;
-  border-bottom: 1px solid #f1f4f8;
+  border-bottom: 1px solid var(--line-soft);
   font-size: 11.5px;
 }
 
@@ -2734,8 +2765,8 @@ pre,
 }
 
 .tool-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
@@ -3018,7 +3049,36 @@ pre,
 }
 
 html.dark .topbar {
-  background: rgba(20, 27, 36, 0.94);
+  background: rgba(31, 31, 31, 0.88);
+}
+
+/* Element 里少数写死白色的浮层，深色下必须换掉 */
+html.dark .el-loading-mask {
+  background-color: rgba(31, 31, 31, 0.72);
+}
+
+html.dark .el-table-filter {
+  border-color: var(--line);
+  background-color: var(--surface-2);
+}
+
+html.dark .el-table__header-wrapper tr th.el-table__fixed-right-patch,
+html.dark .el-table__body-wrapper tr td.el-table__fixed-right-patch {
+  background: var(--surface-2);
+}
+
+html.dark .batch-bar {
+  border-bottom-color: rgba(91, 155, 255, 0.26);
+  color: #cfe0ff;
+}
+
+html.dark .batch-bar .small {
+  color: #9fbbe8;
+}
+
+html.dark .tag.gray {
+  background: var(--surface-3);
+  color: var(--muted);
 }
 
 html.dark .count-pill {
@@ -3053,6 +3113,16 @@ html.dark .el-button:not(.el-button--primary):not(.el-button--danger):not(.is-te
   --el-button-hover-bg-color: var(--surface-2);
   --el-button-hover-border-color: var(--accent);
   --el-button-hover-text-color: var(--accent);
+}
+
+/* 主色按钮用更深的蓝底，保证白字对比度；链接/选中文字仍用亮蓝 */
+html.dark .el-button--primary:not(.is-text):not(.is-link):not(.is-plain) {
+  --el-button-bg-color: #3a72cc;
+  --el-button-border-color: #3a72cc;
+  --el-button-hover-bg-color: #4884e0;
+  --el-button-hover-border-color: #4884e0;
+  --el-button-active-bg-color: #3466b8;
+  --el-button-active-border-color: #3466b8;
 }
 
 html.dark .el-button.is-text {

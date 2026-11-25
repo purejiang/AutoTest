@@ -97,10 +97,6 @@ const runStatus = ref('')
 const monitorVisible = ref(false)
 
 const runMeta = computed(() => runStatusMeta(runStatus.value))
-const deviceName = computed(() => {
-  if (!props.device) return props.serial || '未选择设备'
-  return [props.device.brand, props.device.model].filter(Boolean).join(' ') || props.device.serial
-})
 
 function emitRunningState(status: string): void {
   emit('running-change', isActiveRun(status), status === 'paused')
@@ -229,12 +225,6 @@ watch(
         @input="onSearchInput"
         @clear="clearSearch"
       />
-
-      <div class="auto-device-line">
-        <span class="dot" :class="serial ? 'online' : 'offline'" />
-        <span class="auto-device-name" :title="serial ?? ''">{{ deviceName }}</span>
-        <span v-if="!serial" class="auto-device-warn">选择设备后才能运行</span>
-      </div>
 
       <div v-if="varsOpen" class="vars-panel">
         <label class="vars-label">变量覆盖（JSON，可选）</label>
@@ -365,27 +355,6 @@ watch(
 .auto-search {
   flex: none;
   margin-bottom: 6px;
-}
-
-.auto-device-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 20px;
-  margin-bottom: 5px;
-  color: var(--muted);
-  font-size: 10.5px;
-}
-
-.auto-device-name {
-  max-width: 210px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.auto-device-warn {
-  color: var(--amber);
 }
 
 .vars-panel {
@@ -534,10 +503,6 @@ watch(
 @media (max-width: 640px) {
   .auto-list {
     padding: 9px;
-  }
-
-  .auto-device-name {
-    max-width: 150px;
   }
 }
 </style>

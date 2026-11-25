@@ -62,7 +62,7 @@ function download(): void {
       :description="describeApiError(query.error.value)"
     />
     <el-skeleton v-else-if="!objectUrl" :rows="6" animated />
-    <div v-else style="text-align: center; background: #fafbfd; border-radius: 8px; padding: 8px">
+    <div v-else style="text-align: center; background: var(--surface-2); border-radius: 8px; padding: 8px">
       <img :src="objectUrl" :alt="`${serial} 截图`" style="max-width: 100%; max-height: 70vh" />
     </div>
     <template #footer>
