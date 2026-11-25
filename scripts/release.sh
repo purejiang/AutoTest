@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键发版：同步前后端版本号 → 提交 → 打 annotated tag（纯本地仓库）
+# 一键发版：同步前后端版本号 → 提交 → 打 annotated tag（本地；推送远端另行 git push）
 #
 #   sh scripts/release.sh 0.1.1        # 指定版本号（推荐）
 #   sh scripts/release.sh              # 自动在当前后端版本上 +1 patch（0.1.0 → 0.1.1）
@@ -125,7 +125,7 @@ if [ "$DO_TAG" = "1" ]; then
 
 版本号：后端 $VERSION / 前端 $VERSION
 提交：$(git rev-parse --short HEAD)
-仓库：本地 git（无远程），备份建议 git bundle create autotest.bundle --all"
+远端：https://github.com/purejiang/AutoTest（main + tags）；备份 git bundle create autotest.bundle --all"
   echo "    已打 tag：$TAG"
 fi
 

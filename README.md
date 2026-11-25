@@ -88,9 +88,11 @@ v0.2 也不迁移旧数据库。升级前请先备份，再移走或删除
 `~/.autotest/data/autotest.db`（或整个 `~/.autotest/data`）后重新启动；启动时的 schema guard
 会明确提示旧库不兼容，不会自动删除数据。
 
-### 版本管理（本地 git，无远程）
+### 版本管理（本地 git + GitHub 远端）
 
-仓库是**纯本地** git（`git remote -v` 为空），不联网、不推送。每次改动想留档时：
+仓库原本是**纯本地** git；现在挂了 GitHub 远端 `origin`（`https://github.com/purejiang/AutoTest`，公开），
+用来发布源码快照：日常改动只管本地提交/打 tag，确认要发布时再 `git push origin main --tags`。
+每次改动想留档时：
 
 ```bash
 sh scripts/save.sh "改了镜像布局"     # 一条命令提交当前改动
@@ -132,9 +134,12 @@ sh scripts/release.sh 0.2.0 --rebuild   # 顺带重建前端产物
 
 版本号同步范围：`backend/pyproject.toml`、`backend/app/__init__.py`、`frontend/package.json`、
 `frontend/package-lock.json`。**release 只同步 `frontend/`**；`frontend-react/` 是冻结回滚备份，
-不参与发版。发版前要求工作区干净；tag 是**本地**的（仓库无远程，不会推送到任何地方）。打完后：
+不参与发版。发版前要求工作区干净；tag 先打在**本地**，推送后 GitHub 会自动给出该 tag 的源码 zip
+（`https://github.com/purejiang/AutoTest/archive/refs/tags/v0.2.6.zip`），**不需要建 Release**。打完后：
 
 ```bash
+git push origin main             # 推源码
+git push origin --tags           # 推版本 tag（GitHub 自动生成 Source code zip）
 git tag -l                       # 看所有版本标签
 git show v0.1.1                  # 看该版本改了什么
 git reset --hard v0.1.0          # 回退到某个版本
@@ -245,9 +250,10 @@ scripts/          setup / dev / build / start / release / 环境自检 / scrcpy 
 - 数据库层：设置页写入（优先级最高）
 - 数据目录：`~/.autotest/data`（`runtime.data_dir` 可改），含 DB、artifacts、reports、日志
 
-## 版本管理（本地 git，无远程）
+## 版本管理（本地 git + GitHub 远端）
 
-仓库是**纯本地** git（`git remote -v` 为空），不联网、不推送。每次改动想留档时：
+远端 `origin` = `https://github.com/purejiang/AutoTest`（公开源码镜像）；本地提交/打 tag 不变，
+需要发布时 `git push origin main --tags`。每次改动想留档时：
 
 ```bash
 sh scripts/save.sh "改了镜像布局"     # 一条命令提交当前改动
@@ -265,7 +271,7 @@ git log --oneline --graph        # 历史
 git diff                         # 未提交的改动
 git diff HEAD~1 --stat           # 上一次提交改了什么
 git checkout <hash> -- <file>    # 把某文件恢复到某个版本
-git tag -l                       # 版本标签（当前 v0.1.1）
+git tag -l                       # 版本标签（当前 v0.2.6）
 ```
 
 ## 开发
