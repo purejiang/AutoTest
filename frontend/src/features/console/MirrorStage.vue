@@ -11,12 +11,14 @@ import {
   Grid,
   HomeFilled,
   Link,
+  Lock,
   Menu as MenuIcon,
   MoreFilled,
   Promotion,
   Refresh,
   SwitchButton,
   TurnOff,
+  VideoPause,
   VideoPlay,
 } from '@element-plus/icons-vue'
 import { onClickOutside } from '@vueuse/core'
@@ -56,8 +58,12 @@ const props = withDefaults(
     token?: string
     devices: Device[]
     selectedDevice: Device | null
+    /** 脚本运行中（未暂停）：镜像锁定，手动注入全部禁用（后端同样 409）。 */
+    runLocked?: boolean
+    /** 脚本已暂停：干预模式开启，手动操作允许并留痕。 */
+    runPaused?: boolean
   }>(),
-  { token: undefined },
+  { token: undefined, runLocked: false, runPaused: false },
 )
 
 const emit = defineEmits<{
@@ -168,7 +174,7 @@ async function restartMirrorForConfig(): Promise<void> {
 const gestures = usePointerGestures({
   serial: computed(() => props.serial),
   canvasRef,
-  enabled: computed(() => session.status.value === 'streaming'),
+  enabled: computed(() => session.status.value === 'streaming' && !props.runLocked),
   onError: (message) => {
     actionError.value = message
   },
@@ -177,11 +183,25 @@ const gestures = usePointerGestures({
 
 const keyboard = useKeyboardInput({
   serial: computed(() => props.serial),
-  enabled: computed(() => session.status.value === 'streaming' && session.isSupported),
+  enabled: computed(
+    () => session.status.value === 'streaming' && session.isSupported && !props.runLocked,
+  ),
   onError: (message) => {
     actionError.value = message
   },
 })
+
+// 脚本开始运行 -> 立即锁定：把可能悬着的手势补 UP、清掉触点特效、收起菜单。
+watch(
+  () => props.runLocked,
+  (locked) => {
+    if (!locked) return
+    gestures.abortGesture()
+    touchEffectRef.value?.clear()
+    moreMenuOpen.value = false
+    effectPopoverOpen.value = false
+  },
+)
 
 watch(actionError, (value) => {
   if (errorTimer !== null) clearTimeout(errorTimer)
@@ -289,12 +309,14 @@ function getCanvas(): HTMLCanvasElement | null {
 }
 
 function handlePointerDown(event: PointerEvent): void {
+  if (props.runLocked) return
   focusPanel()
   touchEffectRef.value?.down(event.clientX, event.clientY)
   gestures.handlers.onPointerDown(event)
 }
 
 function handlePointerMove(event: PointerEvent): void {
+  if (props.runLocked) return
   // 鼠标/笔在“没按键”的情况下还在移动 = 上一次 pointerup 丢了（在手机区域外松手、
   // 浏览器丢掉了指针捕获、或在窗口外松开）：先用当前位置补一条 UP 收尾，
   // 否则设备端会一直保持按压、触点特效也停不下来。
@@ -307,11 +329,13 @@ function handlePointerMove(event: PointerEvent): void {
 }
 
 function handlePointerUp(event: PointerEvent): void {
+  if (props.runLocked) return
   touchEffectRef.value?.up(event.clientX, event.clientY)
   gestures.handlers.onPointerUp(event)
 }
 
 function handlePointerCancel(event: PointerEvent): void {
+  if (props.runLocked) return
   touchEffectRef.value?.cancel()
   gestures.handlers.onPointerCancel(event)
 }
@@ -436,11 +460,13 @@ function refreshMirror(): void {
 }
 
 function sendKey(key: string): void {
+  if (props.runLocked) return
   keyMutation.mutate({ key })
   moreMenuOpen.value = false
 }
 
 function sendKeySilent(key: string): void {
+  if (props.runLocked) return
   keyMutation.mutate({ key })
 }
 
@@ -607,6 +633,7 @@ defineExpose({
           <canvas
             ref="canvasRef"
             class="mirror-canvas"
+            :class="{ 'is-locked': runLocked }"
             @pointerdown="handlePointerDown"
             @pointermove="handlePointerMove"
             @pointerup="handlePointerUp"
@@ -614,7 +641,7 @@ defineExpose({
           />
           <TouchEffectOverlay
             ref="touchEffectRef"
-            :enabled="(tapEffectEnabled || swipeEffectEnabled) && streaming"
+            :enabled="(tapEffectEnabled || swipeEffectEnabled) && streaming && !runLocked"
             :tap-enabled="tapEffectEnabled"
             :swipe-enabled="swipeEffectEnabled"
             :ripple-enabled="rippleEnabled"
@@ -632,16 +659,47 @@ defineExpose({
             <span class="dot" :class="streaming ? 'live' : 'offline'" />
             <span class="mono">{{ fps }} fps</span>
           </div>
+          <div
+            v-if="runLocked || runPaused"
+            class="stage-run-hint"
+            :class="{ 'is-paused': runPaused && !runLocked }"
+            role="status"
+          >
+            <el-icon :size="12">
+              <Lock v-if="runLocked" />
+              <VideoPause v-else />
+            </el-icon>
+            <span v-if="runLocked">脚本运行中 · 镜像已锁定，暂停后可手动干预</span>
+            <span v-else>脚本已暂停 · 手动干预开启（操作会留痕）</span>
+          </div>
         </div>
 
         <aside class="action-rail">
-          <button type="button" class="rail-btn" title="返回" @click="sendKeySilent('back')">
+          <button
+            type="button"
+            class="rail-btn"
+            title="返回"
+            :disabled="runLocked"
+            @click="sendKeySilent('back')"
+          >
             <el-icon :size="16"><Back /></el-icon><span>返回</span>
           </button>
-          <button type="button" class="rail-btn" title="桌面" @click="sendKeySilent('home')">
+          <button
+            type="button"
+            class="rail-btn"
+            title="桌面"
+            :disabled="runLocked"
+            @click="sendKeySilent('home')"
+          >
             <el-icon :size="16"><HomeFilled /></el-icon><span>桌面</span>
           </button>
-          <button type="button" class="rail-btn" title="最近任务" @click="sendKeySilent('recents')">
+          <button
+            type="button"
+            class="rail-btn"
+            title="最近任务"
+            :disabled="runLocked"
+            @click="sendKeySilent('recents')"
+          >
             <el-icon :size="16"><Grid /></el-icon><span>最近</span>
           </button>
           <button type="button" class="rail-btn accent" title="截图" @click="emit('screenshot')">
@@ -654,6 +712,7 @@ defineExpose({
               class="rail-btn"
               :aria-expanded="moreMenuOpen"
               title="更多系统按键"
+              :disabled="runLocked"
               @click="moreMenuOpen = !moreMenuOpen"
             >
               <el-icon :size="16"><MoreFilled /></el-icon><span>更多</span>
@@ -1074,6 +1133,35 @@ defineExpose({
   max-height: 100%;
 }
 
+/* 脚本运行中：镜像锁定，鼠标显示禁止。 */
+.mirror-canvas.is-locked {
+  cursor: not-allowed;
+}
+
+.stage-run-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(10, 14, 20, 0.94);
+  color: #f8fafc;
+  font-size: 10.5px;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.stage-run-hint.is-paused {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
 .stage-fps {
   position: absolute;
   top: 10px;
@@ -1143,9 +1231,14 @@ defineExpose({
   cursor: pointer;
 }
 
-.rail-btn:hover {
+.rail-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.07);
   color: #f0f6ff;
+}
+
+.rail-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .rail-btn.accent {

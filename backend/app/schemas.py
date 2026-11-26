@@ -243,6 +243,8 @@ class InputParams(StrictModel):
     text: str
     target: Target | None = None
     clear_first: bool = False
+    # 输入完收起输入法：横屏/游戏内 IME 会盖住下面的按钮，点击会落到键盘上导致提交无效。
+    hide_keyboard: bool = False
 
 
 class KeyParams(StrictModel):
@@ -275,7 +277,7 @@ class WaitParams(StrictModel):
 
 
 class AppParams(StrictModel):
-    action: Literal["launch", "stop", "clear", "restart"]
+    action: Literal["launch", "stop", "clear", "restart", "grant"]
     package: str | None = None
     activity: str | None = None
 
@@ -417,6 +419,10 @@ STEP_MODELS: dict[str, type[_StepBase]] = {
 
 class ScriptSettings(LooseModel):
     default_timeout_ms: int = Field(default=8000, ge=100, le=600_000)
+    # 全节点默认停顿：节点自身 delay_*_ms=0（未单独设置）时使用，>0 即节点自定义。
+    # 默认 0 = 不额外停顿；录制转换生成的脚本同样写 0，保留录制还原的真实间隔。
+    default_delay_before_ms: int = Field(default=0, ge=0, le=600_000)
+    default_delay_after_ms: int = Field(default=0, ge=0, le=600_000)
     on_fail: Literal["abort", "continue"] = "abort"
     logcat: bool = False
     retry: Retry | None = None
@@ -442,24 +448,65 @@ class ScriptData(LooseModel):
 
 # ---------------------------------------------------------------- 语义校验
 
+# pydantic 会把 model_validator 里抛的 ValueError 包装成 "Value error, ..."，
+# 这段前缀对用户没意义，展示前剥掉。
+_PYDANTIC_MSG_PREFIXES = ("Value error, ", "Assertion failed, ")
+
+
+def _strip_pydantic_prefix(message: str) -> str:
+    for prefix in _PYDANTIC_MSG_PREFIXES:
+        if message.startswith(prefix):
+            return message[len(prefix) :]
+    return message
+
+
+def _error_subject(data: Any, loc: tuple[Any, ...]) -> str:
+    """把「第几个节点」翻译成节点 id/名称，让报错能直接定位到节点（无则返回空串）。"""
+    if not loc or loc[0] != "steps" or len(loc) < 2:
+        return ""
+    steps = data.get("steps") if isinstance(data, dict) else None
+    if not isinstance(steps, list):
+        return ""
+    try:
+        index = int(loc[1])
+        step = steps[index]
+    except (IndexError, TypeError, ValueError):
+        return ""
+    if not isinstance(step, dict):
+        return ""
+    step_id = str(step.get("id") or "").strip()
+    name = str(step.get("name") or "").strip()
+    if step_id and name:
+        return f"节点 {step_id}（{name}）: "
+    if step_id:
+        return f"节点 {step_id}: "
+    return f"第 {index + 1} 个节点: "
+
 
 def validate_script(
     data: Any,
     known_script_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    """返回 {valid, errors[], warnings[], script?}。errors 项：{path, code, message}。"""
+    """返回 {valid, errors[], warnings[], script?}。errors 项：{path, code, message}。
+
+    message 会带上节点 id/名称（如「节点 s3（点击1）: target by=text requires value」），
+    因为前端 toast 只展示 message、不展示 path，只给 "target by=text requires value"
+    用户根本不知道是哪个节点。
+    """
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     try:
         script = ScriptData.model_validate(data)
     except ValidationError as exc:
         for err in exc.errors():
-            path = ".".join(str(part) for part in err.get("loc", ()))
+            loc = tuple(err.get("loc", ()))
+            path = ".".join(str(part) for part in loc)
+            message = _strip_pydantic_prefix(str(err.get("msg", "")))
             errors.append(
                 {
                     "path": f"script.{path}" if path else "script",
                     "code": err.get("type", ""),
-                    "message": err.get("msg", ""),
+                    "message": f"{_error_subject(data, loc)}{message}",
                 }
             )
         return {"valid": False, "errors": errors, "warnings": warnings}
@@ -520,6 +567,8 @@ def empty_script(name: str = "未命名脚本") -> dict[str, Any]:
         "variables": {},
         "settings": {
             "default_timeout_ms": 8000,
+            "default_delay_before_ms": 0,
+            "default_delay_after_ms": 0,
             "on_fail": "abort",
             "logcat": False,
             "retry": None,

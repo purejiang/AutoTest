@@ -199,6 +199,8 @@ function openConnect(): void {
           :token="token"
           :devices="devices"
           :selected-device="selectedDevice"
+          :run-locked="autoRunning && !autoPaused"
+          :run-paused="autoPaused"
           @select-device="selectDevice"
           @connect-device="openConnect"
           @refresh-devices="refreshDevices"

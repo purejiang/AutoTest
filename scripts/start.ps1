@@ -3,13 +3,15 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Open -Port 9000 -Rebuild
 #   powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -React   # 回滚 React 前端
+#   powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Reload  # 开发用：后端改动自动重启（跑批时勿开）
 param(
     [int]$Port = 8787,
     [string]$BindHost = "127.0.0.1",
     [switch]$Open,
     [switch]$Rebuild,
     [switch]$React,
-    [switch]$Vue
+    [switch]$Vue,
+    [switch]$Reload
 )
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
@@ -91,8 +93,8 @@ if ($Open) { Start-Process $url }
 Push-Location backend
 # 优先用项目自带 venv，避免 uv 全局缓存权限异常导致启动失败。
 if (Test-Path ".venv\Scripts\python.exe") {
-    & ".venv\Scripts\python.exe" -m uvicorn app.main:app --host $BindHost --port $Port
+    & ".venv\Scripts\python.exe" -m uvicorn app.main:app --host $BindHost --port $Port @ReloadArg
 } else {
-    uv run uvicorn app.main:app --host $BindHost --port $Port
+    uv run uvicorn app.main:app --host $BindHost --port $Port @ReloadArg
 }
 Pop-Location

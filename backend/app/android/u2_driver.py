@@ -21,7 +21,9 @@ uiautomator2 3.7.1 实际 API（已核对安装包源码）：
 
 from __future__ import annotations
 
+import io
 import re
+import shlex
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -257,79 +259,196 @@ class U2Driver:
         return result
 
     def screenshot(self) -> bytes:
-        """PNG bytes：adb exec-out screencap -p（二进制安全，比 u2 截图快）。"""
-        return adb.shell_bytes(self.serial, ["screencap", "-p"], timeout_s=20)
+        """PNG bytes：adb exec-out screencap -p（二进制安全，比 u2 截图快）。
+
+        adb screencap 偶发返回空/截断数据（部分机型高负载、横竖屏切换、Unity 大画面时），
+        这里校验 PNG 头并重试 3 次，仍失败再回落 u2 jsonrpc 截图，避免整次运行被一张截图拖挂。
+        """
+        last_error: Exception | None = None
+        for _ in range(3):
+            try:
+                raw = adb.shell_bytes(self.serial, ["screencap", "-p"], timeout_s=20)
+            except Exception as exc:  # noqa: BLE001 - 统一重试
+                last_error = exc
+                raw = b""
+            if isinstance(raw, (bytes, bytearray)) and bytes(raw).startswith(b"\x89PNG\r\n\x1a\n"):
+                return bytes(raw)
+            last_error = RuntimeError(
+                f"adb screencap returned invalid data ({len(raw) if isinstance(raw, (bytes, bytearray)) else 'non-bytes'} bytes)"
+            )
+            time.sleep(0.15)
+        device = self._device()
+        try:
+            # u2 的 screenshot(format=...) 只支持 pillow/opencv，转成 PNG bytes
+            image = device.screenshot(format="pillow")
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            raw = buffer.getvalue()
+            if isinstance(raw, (bytes, bytearray)) and bytes(raw).startswith(b"\x89PNG\r\n\x1a\n"):
+                return bytes(raw)
+            last_error = RuntimeError("u2 screenshot returned invalid PNG")
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+        raise ApiError(
+            "DEVICE_UNAVAILABLE",
+            f"screenshot failed on {self.serial}: {last_error}",
+            {"serial": self.serial},
+        )
 
     # ------------------------------------------------------------ 输入动作
+    # ------------------------------------------------------------ 注入（adb first）
+    # 为什么不用 u2 的 click/swipe/press：uiautomator2 服务端在注入后会同步等「界面空闲」，
+    # 对 Unity/常驻动画的界面要等满 ~10s 才返回（实测 click/swipe/press 都是 10s+）；
+    # 引擎默认节点超时 8s，会出现「点击已生效但节点被判 STEP_TIMEOUT」。
+    # `adb shell input` 直接注入输入事件、不等待空闲，实测 ~0.1s；失败时回落 u2。
+    def _adb_input(self, params: list[str], op: str, timeout_s: float = 15) -> None:
+        result = adb.shell(self.serial, ["input", *params], timeout_s=timeout_s)
+        code = int(getattr(result, "code", 0) or 0)
+        if code != 0:
+            detail = (getattr(result, "stderr", "") or getattr(result, "stdout", "") or "").strip()
+            raise RuntimeError(f"adb input {params[0]} failed (code={code}): {detail[:200]}")
+
     def click(self, x: int, y: int) -> None:
-        device = self._device()
-        self._call("click", device.click, int(x), int(y))
+        def _impl() -> None:
+            try:
+                self._adb_input(["tap", str(int(x)), str(int(y))], "click")
+            except Exception as exc:  # 老设备/受限 ROM 兜底
+                logger.warning("adb input tap failed on %s (%s); fallback to u2 click", self.serial, exc)
+                device = self._device()
+                device.click(int(x), int(y))
+
+        self._call("click", _impl)
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None:
-        device = self._device()
-        # u2 的 1 step ≈ 5ms；调用方给时长，驱动侧换算成 steps（≥5）
-        steps = max(5, int(round(max(0, int(duration_ms)) / 5.0)))
-        self._call("swipe", device.swipe, int(x1), int(y1), int(x2), int(y2), steps=steps)
+        duration = max(1, int(duration_ms))
+
+        def _impl() -> None:
+            try:
+                self._adb_input(
+                    ["swipe", str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)), str(duration)],
+                    "swipe",
+                )
+            except Exception as exc:
+                logger.warning("adb input swipe failed on %s (%s); fallback to u2 swipe", self.serial, exc)
+                device = self._device()
+                # u2 的 1 step ≈ 5ms；调用方给时长，驱动侧换算成 steps（≥5）
+                steps = max(5, int(round(duration / 5.0)))
+                device.swipe(int(x1), int(y1), int(x2), int(y2), steps=steps)
+
+        self._call("swipe", _impl)
 
     def swipe_path(self, points: list[tuple[int, int]], duration_ms: int = 300) -> None:
-        """按录制轨迹多点滑动：曲线/变速手势与录制一致（u2 swipe_points 按轨迹插值）。"""
+        """按录制轨迹滑动；无镜像会话时退化为 adb 两点 swipe。
+
+        有镜像时引擎走 scrcpy control 通道逐点回放（保留轨迹/变速），本方法只做兜底；
+        兜底不再用 u2 `swipe_points`（它会等界面空闲 ~10s，常驻动画界面直接超时）。
+        """
         pts = [(int(x), int(y)) for x, y in points]
         if len(pts) < 2:
             return
-        device = self._device()
-        duration = max(0.05, max(0, int(duration_ms)) / 1000.0)
-        swipe_points = getattr(device, "swipe_points", None)
-        if callable(swipe_points):
-            self._call("swipe_path", swipe_points, pts, duration)
-            return
-        # 老版本 u2 没有 swipe_points：降级为分段 short swipe（保持轨迹形状）
-        self._call("swipe_path_fallback", device.swipe, pts[0][0], pts[0][1], pts[-1][0], pts[-1][1],
-                   steps=max(5, len(pts)))
+        self.swipe(pts[0][0], pts[0][1], pts[-1][0], pts[-1][1], duration_ms=duration_ms)
 
     def drag(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 1000) -> None:
-        """拖拽（契约外扩展，actions.drag 优先使用；u2 drag duration 单位为秒）。"""
-        device = self._device()
-        duration = max(0.1, max(0, int(duration_ms)) / 1000.0)
-        self._call("drag", device.drag, int(x1), int(y1), int(x2), int(y2), duration)
+        """拖拽（契约外扩展，actions.drag 优先使用）：adb input swipe（不等界面空闲）。"""
+        duration = max(100, int(duration_ms))
+
+        def _impl() -> None:
+            try:
+                self._adb_input(
+                    ["swipe", str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)), str(duration)],
+                    "drag",
+                )
+            except Exception as exc:
+                logger.warning("adb drag failed on %s (%s); fallback to u2 drag", self.serial, exc)
+                device = self._device()
+                device.drag(int(x1), int(y1), int(x2), int(y2), duration / 1000.0)
+
+        self._call("drag", _impl)
 
     def long_press(self, x: int, y: int, duration_ms: int = 800) -> None:
-        device = self._device()
-        duration = max(0.1, max(0, int(duration_ms)) / 1000.0)
-        self._call("long_press", device.long_click, int(x), int(y), duration)
+        duration = max(100, min(int(duration_ms), 60_000))
+
+        def _impl() -> None:
+            try:
+                # adb input swipe 同点同坐标 + 按压时长 = 长按
+                self._adb_input(
+                    ["swipe", str(int(x)), str(int(y)), str(int(x)), str(int(y)), str(duration)],
+                    "long_press",
+                )
+            except Exception as exc:
+                logger.warning("adb long press failed on %s (%s); fallback to u2 long_click", self.serial, exc)
+                device = self._device()
+                device.long_click(int(x), int(y), duration / 1000.0)
+
+        self._call("long_press", _impl)
 
     def key(self, name_or_code: str | int) -> None:
         try:
             code = resolve_key(name_or_code)
         except ValueError as exc:
             raise ApiError("INVALID_ARGUMENT", str(exc), {"key": name_or_code}) from exc
-        device = self._device()
-        self._call("key", device.press, code)
+
+        def _impl() -> None:
+            try:
+                self._adb_input(["keyevent", str(int(code))], "key")
+            except Exception as exc:
+                logger.warning("adb keyevent failed on %s (%s); fallback to u2 press", self.serial, exc)
+                device = self._device()
+                device.press(code)
+
+        self._call("key", _impl)
 
     def input_text(self, text: str) -> None:
-        device = self._device()
-        self._call("input_text", device.send_keys, str(text))
+        """输入文本：ASCII 走 adb ``input text``；非 ASCII 用无障碍 ``set_text``。
+
+        为什么不用 u2 ``send_keys``：它实现是「写剪贴板 + 注入 Ctrl+V 粘贴」，
+        部分机型/游戏输入框上粘贴不生效，Ctrl+V 被当成普通按键只输入一个 "v"
+        （实测 send_keys('zzz111') 后输入框只有 "v"）。adb input text 实测正确；
+        中文等非 ASCII 字符 adb 不支持，用无障碍 ACTION_SET_TEXT。
+        """
+        text = str(text)
+        if not text:
+            return
+
+        def _impl() -> None:
+            if all(ord(char) < 128 for char in text):
+                try:
+                    # input text 用 %s 表示空格；shlex.quote 防止 & ; | 等被设备 shell 解释
+                    escaped = text.replace(" ", "%s")
+                    self._adb_input(["text", shlex.quote(escaped)], "input_text")
+                    return
+                except Exception as exc:
+                    logger.warning(
+                        "adb input text failed on %s (%s); fallback to u2 send_keys", self.serial, exc
+                    )
+                self._device().send_keys(text)
+                return
+            device = self._device()
+            try:
+                device(focused=True).set_text(text)
+            except Exception as exc:
+                logger.warning(
+                    "set_text failed on %s (%s); fallback to u2 send_keys", self.serial, exc
+                )
+                device.send_keys(text)
+
+        self._call("input_text", _impl)
 
     def clear_text(self) -> None:
-        """优先 u2 ``clear_text``；失败降级为「移到末尾 + 多次 DEL」（不静默吞错）。"""
-        device = self._device()
-        try:
-            device.clear_text()
-            return
-        except Exception as exc:
-            logger.warning(
-                "u2 clear_text failed on %s (%s); fallback to keyevent deletes", self.serial, exc
-            )
-        self._fallback_clear_text(device)
+        """清空当前焦点输入框：移到末尾 + 批量 DEL（一次 adb keyevent，不等界面空闲）。"""
 
-    def _fallback_clear_text(self, device: Any) -> None:
         def _impl() -> None:
             device = self._device()
             count = self._focused_text_length(device)
-            device.shell("input keyevent KEYCODE_MOVE_END")
-            for _ in range(max(1, min(count + 1, 200))):
-                device.press(67)  # KEYCODE_DEL
+            # KEYCODE_MOVE_END=123, KEYCODE_DEL=67；input keyevent 支持一次传多个键码
+            codes = ["123", *(["67"] * max(1, min(count + 1, 200)))]
+            try:
+                self._adb_input(["keyevent", *codes], "clear_text", timeout_s=20)
+            except Exception as exc:
+                logger.warning("adb clear_text failed on %s (%s); fallback to u2 clear_text", self.serial, exc)
+                device.clear_text()
 
-        self._call("clear_text_fallback", _impl)
+        self._call("clear_text", _impl)
 
     def _focused_text_length(self, device: Any) -> int:
         """从 dump 里找 focused="true" 节点的 text 长度，用于估算删除次数（缺省 50）。"""
@@ -346,6 +465,53 @@ class U2Driver:
         return 50
 
     # ------------------------------------------------------------ 应用/系统
+    def _runtime_permissions(self, package: str) -> list[str]:
+        """dumpsys package 里该应用声明的运行时权限（含已授予/未授予，如通知/存储/相机）。"""
+        result = adb.shell(self.serial, ["dumpsys", "package", str(package)], timeout_s=15)
+        text = str(getattr(result, "stdout", "") or "")
+        permissions: list[str] = []
+        in_section = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("runtime permissions:"):
+                in_section = True
+                continue
+            if not in_section:
+                continue
+            if not stripped:
+                break
+            name, _, rest = stripped.partition(":")
+            if "granted=" in rest and "." in name and name not in permissions:
+                permissions.append(name)
+        return permissions
+
+    def _grant_permissions(self, package: str, permissions: list[str]) -> list[str]:
+        """best effort：逐个 ``pm grant``，失败的（如厂商私有权限）记 debug 跳过。"""
+        granted: list[str] = []
+        for permission in permissions:
+            result = adb.shell(self.serial, ["pm", "grant", str(package), permission], timeout_s=10)
+            code = int(getattr(result, "code", 0) or 0)
+            detail = str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "").strip()
+            if code == 0 and not detail.lower().startswith("error"):
+                granted.append(permission)
+            else:
+                logger.debug(
+                    "grant %s on %s failed (code=%s): %s", permission, package, code, detail[:160]
+                )
+        return granted
+
+    def hide_keyboard(self) -> None:
+        """收起输入法：确认 IME 正在显示才发返回键，避免误触发页面返回。"""
+
+        def _impl() -> None:
+            result = adb.shell(self.serial, ["dumpsys", "input_method"], timeout_s=10)
+            text = str(getattr(result, "stdout", "") or "")
+            if "mInputShown=true" not in text:
+                return
+            self.key("back")
+
+        self._call("hide_keyboard", _impl)
+
     def app_start(self, package: str, activity: str | None = None) -> None:
         device = self._device()
         self._call("app_start", device.app_start, str(package), activity)
@@ -355,8 +521,37 @@ class U2Driver:
         self._call("app_stop", device.app_stop, str(package))
 
     def app_clear(self, package: str) -> None:
+        """清除数据，清完自动把该应用声明的运行时权限重新授予。
+
+        ``pm clear`` 会把运行时权限重置成「未授予」，下次启动 App 就会弹系统授权框
+        （通知/存储/相机…），把登录页挡在后面，脚本等的元素永远不出现。
+        自动化场景下清数据后保持权限已授予，保证每次冷启动可复现。
+        """
         device = self._device()
-        self._call("app_clear", device.app_clear, str(package))
+
+        def _impl() -> None:
+            permissions = self._runtime_permissions(str(package))
+            device.app_clear(str(package))
+            granted = self._grant_permissions(str(package), permissions)
+            if permissions:
+                logger.info(
+                    "app_clear %s: re-granted %d/%d runtime permissions",
+                    package,
+                    len(granted),
+                    len(permissions),
+                )
+
+        self._call("app_clear", _impl)
+
+    def app_grant(self, package: str) -> list[str]:
+        """补齐该应用声明的全部运行时权限（best effort），返回成功授予的列表。"""
+        package = str(package)
+        permissions = self._runtime_permissions(package)
+        if not permissions:
+            return []
+        granted = self._grant_permissions(package, permissions)
+        logger.info("app_grant %s: granted %d/%d runtime permissions", package, len(granted), len(permissions))
+        return granted
 
     def shell(self, command: str, timeout_s: float = 10) -> CommandResult:
         """u2 shell -> CommandResult；u2 的 ShellResponse 无独立 stderr（合并在 output）。"""

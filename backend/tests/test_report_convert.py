@@ -155,6 +155,9 @@ def test_events_to_script_is_valid_and_one_node_per_event() -> None:
     assert script["steps"][7]["params"]["action"] == "launch"
     # 回放时序：首个节点有起步延迟（给应用/页面稳定时间）
     assert script["steps"][0]["delay_before_ms"] == convert._FIRST_STEP_DELAY_MS
+    # 录制脚本不继承全节点默认停顿：节奏只由录制还原的节点间隔决定
+    assert script["settings"]["default_delay_before_ms"] == 0
+    assert script["settings"]["default_delay_after_ms"] == 0
     # 一事件一节点：两个 tap 不合并
     assert script["steps"][0]["params"]["target"] == _node_target()
     assert script["steps"][1]["params"]["duration_ms"] == 900

@@ -29,6 +29,18 @@ def test_default_response_shape(core_client) -> None:
     assert body["effective"]["scrcpy.jar"] == ""
 
 
+def test_default_delay_settings_exposed(core_client) -> None:
+    """全局默认停顿：设置页可见、默认 0、有范围校验。"""
+    body = core_client.get("/api/settings").json()
+    schema = {item["key"]: item for item in body["schema"]}
+    for key in ("engine.default_delay_before_ms", "engine.default_delay_after_ms"):
+        assert schema[key]["default"] == 0
+        assert body["effective"][key] == 0
+        assert body["sources"][key] == "default"
+    out_of_range = core_client.put("/api/settings", json={"values": {"engine.default_delay_before_ms": -1}})
+    assert out_of_range.status_code == 422
+
+
 def test_network_mode_migrates_old_switches(core_client) -> None:
     with db.session_scope() as session:
         session.add(models.Setting(key="capture.network.enabled", value=True))

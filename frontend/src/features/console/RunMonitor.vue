@@ -35,6 +35,14 @@ const queryClient = useQueryClient()
 
 const runQuery = useRun(computed(() => props.runId))
 const run = computed(() => runQuery.data.value ?? null)
+
+/** 本次运行的变量覆盖（只显示覆盖项，完整生效值在运行详情）。 */
+const runVariableOverrides = computed<Array<[string, string]>>(() =>
+  Object.entries(run.value?.variables ?? {}),
+)
+const runVariableTitle = computed(() =>
+  runVariableOverrides.value.map(([name, value]) => `${name} = ${value || '（空）'}`).join('\n'),
+)
 const scriptQuery = useScript(computed(() => props.scriptId ?? run.value?.script_id ?? undefined))
 const ws = useRunEventsWs(computed(() => props.runId))
 
@@ -222,6 +230,9 @@ function openDetail(): void {
       <div class="run-meta">
         <span class="run-device" :title="run.device_serial || ''">
           设备 <b>{{ run.device_serial || '—' }}</b>
+        </span>
+        <span v-if="runVariableOverrides.length > 0" class="run-vars-chip" :title="runVariableTitle">
+          变量 <b>{{ runVariableOverrides.length }}</b>
         </span>
         <span>{{ currentIndex }} / {{ totalSteps }}</span>
         <span
@@ -561,5 +572,18 @@ function openDetail(): void {
   .console-run .run-meta {
     gap: 8px;
   }
+}
+
+.run-vars-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 9.5px;
+  cursor: help;
 }
 </style>

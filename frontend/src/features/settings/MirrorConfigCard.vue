@@ -117,12 +117,29 @@ function applyFps(fps: number): void {
   emit('change', 'scrcpy.max_fps', fps)
 }
 
-// 帧率快速选项：0 = 不限是 scrcpy 默认，也是“跟手”的关键；60/30 是解码吃紧时的降级。
-const FPS_QUICK_PICKS = [
-  { value: 0, label: '不限' },
-  { value: 60, label: '60' },
-  { value: 30, label: '30' },
+// 帧率改成下拉：0 = 不限是 scrcpy 默认，也是“跟手”的关键；其余是常见屏幕刷新率。
+// 配置/历史值不在列表里时仍作为一个「当前」选项列出，下拉不会把已有设置悄悄改掉。
+const FPS_PICKS = [
+  { value: 0, label: '不限（0）' },
+  { value: 30, label: '30 fps' },
+  { value: 45, label: '45 fps' },
+  { value: 60, label: '60 fps' },
+  { value: 90, label: '90 fps' },
+  { value: 120, label: '120 fps' },
+  { value: 144, label: '144 fps' },
 ] as const
+
+const fpsOptions = computed<Array<{ value: number; label: string }>>(() => {
+  const options: Array<{ value: number; label: string }> = FPS_PICKS.map((option) => ({
+    value: option.value,
+    label: option.label,
+  }))
+  const current = numeric('scrcpy.max_fps')
+  if (current !== null && !options.some((option) => option.value === current)) {
+    options.push({ value: current, label: `${current} fps（当前）` })
+  }
+  return options
+})
 
 function numeric(key: string): number | null {
   const value = Number(props.values[key])
@@ -337,30 +354,20 @@ function defaultLabel(key: string): string {
               @click="emit('clear', 'scrcpy.max_fps')"
             />
           </span>
-          <el-input-number
-            :model-value="numeric('scrcpy.max_fps')"
+          <el-select
+            :model-value="numeric('scrcpy.max_fps') ?? 0"
             size="small"
-            :min="limitOf('scrcpy.max_fps', 'min', 0)"
-            :max="limitOf('scrcpy.max_fps', 'max', 240)"
-            :step="1"
-            controls-position="right"
             style="width: 100%"
             :disabled="disabled"
-            @update:model-value="updateNumber('scrcpy.max_fps', $event)"
-          />
-          <div class="fps-quick">
-            <button
-              v-for="option in FPS_QUICK_PICKS"
+            @update:model-value="applyFps(Number($event))"
+          >
+            <el-option
+              v-for="option in fpsOptions"
               :key="option.value"
-              type="button"
-              class="fps-chip"
-              :class="{ active: Number(values['scrcpy.max_fps']) === option.value }"
-              :disabled="disabled"
-              @click="applyFps(option.value)"
-            >
-              {{ option.label }}
-            </button>
-          </div>
+              :value="option.value"
+              :label="option.label"
+            />
+          </el-select>
           <div v-if="fpsOverkill !== null" class="field-hint-warn">
             本机屏幕约 {{ fpsOverkill }}Hz：设 0 会让设备按自身刷新率（可能 120Hz）推流，约一半解码是白费；
             建议改成 {{ fpsOverkill }}。
@@ -549,41 +556,6 @@ function defaultLabel(key: string): string {
 }
 
 /* 帧率快捷项：不限 / 60 / 30（与预设解耦，随时可切） */
-.fps-quick {
-  display: flex;
-  gap: 4px;
-}
-
-.fps-chip {
-  flex: 1;
-  height: 22px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--surface);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10px;
-  cursor: pointer;
-}
-
-.fps-chip:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.fps-chip.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.fps-chip:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
 .field-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));

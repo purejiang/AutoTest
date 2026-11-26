@@ -42,6 +42,15 @@ const eventsQuery = useRunEvents(computed(() => (validId.value ? runId.value : u
 const ws = useRunEventsWs(computed(() => (validId.value ? runId.value : undefined)))
 
 const run = computed(() => runQuery.data.value)
+
+/** 本次运行变量：脚本默认 + 覆盖（覆盖项高亮，方便回查这次用的包名/账号）。 */
+const runVariables = computed<Array<{ name: string; value: string; override: boolean }>>(() => {
+  const data = run.value
+  if (!data) return []
+  const overrides = data.variables ?? {}
+  const effective = data.effective_variables ?? overrides
+  return Object.entries(effective).map(([name, value]) => ({ name, value, override: name in overrides }))
+})
 const liveStatus = computed(() => ws.status.value ?? run.value?.status ?? '')
 const statusMeta = computed(() => runStatusMeta(liveStatus.value))
 
@@ -228,6 +237,25 @@ function clearEvents(): void {
                 <tr><td>运行 ID</td><td class="code-text">#{{ run.id }}</td></tr>
                 <tr><td>脚本</td><td>{{ run.script_name || run.script_id || '—' }}</td></tr>
                 <tr><td>设备</td><td class="code-text">{{ run.device_serial || '—' }}</td></tr>
+                <tr>
+                  <td>变量</td>
+                  <td>
+                    <div v-if="runVariables.length > 0" class="run-vars">
+                      <span
+                        v-for="item in runVariables"
+                        :key="item.name"
+                        class="run-var"
+                        :class="{ override: item.override }"
+                        :title="item.override ? '本次运行覆盖' : '脚本默认'"
+                      >
+                        <span class="code-text">{{ item.name }}</span>
+                        <span class="run-var-eq">=</span>
+                        <span>{{ item.value || '（空）' }}</span>
+                      </span>
+                    </div>
+                    <span v-else class="muted">—</span>
+                  </td>
+                </tr>
                 <tr><td>状态</td><td>{{ statusMeta.label }}</td></tr>
                 <tr><td>调试</td><td>{{ run.debug?.step_mode ? `单步${run.debug?.breakpoints?.length ? ` · 断点 ${run.debug.breakpoints.join(',')}` : ''}` : '否' }}</td></tr>
                 <tr><td>开始</td><td>{{ formatDateTime(run.started_at) }}</td></tr>

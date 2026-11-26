@@ -391,7 +391,7 @@ function refreshDeviceInfo(): void {
               ><el-icon><Document /></el-icon
             ></span>
             <div class="tool-main">
-              <strong>层级树</strong><small>查看当前界面元素树，点击节点复制选择器</small>
+              <strong>层级树</strong><small>截屏上叠加元素层级，悬停看信息，点击复制选择器</small>
             </div>
             <el-button size="small" @click="emit('hierarchy')">打开</el-button>
           </div>

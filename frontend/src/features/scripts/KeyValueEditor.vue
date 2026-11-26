@@ -2,17 +2,22 @@
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
+import VariableField from '@/components/VariableField.vue'
+
 const props = withDefaults(
   defineProps<{
     value: Record<string, string>
     keyPlaceholder?: string
     valuePlaceholder?: string
     emptyHint?: string
+    /** 值输入框是否提供「{{ }}」变量按钮（脚本设置里声明变量时不需要）。 */
+    variablePicker?: boolean
   }>(),
   {
     keyPlaceholder: '变量名',
     valuePlaceholder: '值（运行时可被请求覆盖）',
     emptyHint: '暂无变量',
+    variablePicker: false,
   },
 )
 
@@ -62,7 +67,15 @@ function addKey(): void {
         :placeholder="keyPlaceholder"
         @update:model-value="renameKey(key, $event)"
       />
+      <VariableField
+        v-if="variablePicker"
+        :model-value="itemValue"
+        size="small"
+        :placeholder="valuePlaceholder"
+        @update:model-value="setValue(key, $event)"
+      />
       <el-input
+        v-else
         :model-value="itemValue"
         size="small"
         :placeholder="valuePlaceholder"
@@ -89,5 +102,10 @@ function addKey(): void {
 .kv-row .el-input:first-child {
   width: 35%;
   flex: none;
+}
+
+.kv-row .variable-field {
+  flex: 1;
+  min-width: 0;
 }
 </style>

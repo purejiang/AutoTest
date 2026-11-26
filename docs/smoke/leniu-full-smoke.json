@@ -1,0 +1,1171 @@
+{
+  "schema_version": 1,
+  "name": "灵妖劫·全链路冒烟（启动→注册→创角→入服→调起支付→返回退出）",
+  "notes": "真机 2700x1224 横屏坐标。注册账号/密码来自变量 account/password，每次运行请覆盖为唯一账号。不删数据（资源已下载），单次约 2.5~3 分钟；如需测全新安装，请另跑 docs/smoke/leniu-cold-install.json。",
+  "variables": {
+    "account": "smoke0001",
+    "password": "abc12345"
+  },
+  "settings": {
+    "default_timeout_ms": 8000,
+    "on_fail": "abort",
+    "logcat": false,
+    "retry": null,
+    "screenshot_on_fail": true
+  },
+  "defaults": {
+    "retry": null
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "name": "停止游戏（确保从干净进程启动）",
+      "type": "app",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 30000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "action": "stop",
+        "package": "com.mten.tgp"
+      }
+    },
+    {
+      "id": "s2",
+      "name": "等待3s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 8000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 3000
+      }
+    },
+    {
+      "id": "s3",
+      "name": "启动游戏",
+      "type": "app",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 30000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "action": "launch",
+        "package": "com.mten.tgp"
+      }
+    },
+    {
+      "id": "s4",
+      "name": "等待45s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 50000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 45000
+      }
+    },
+    {
+      "id": "s5",
+      "name": "等待登录页（游客试玩）",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 95000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "until",
+        "target": {
+          "by": "text",
+          "value": "游客试玩"
+        },
+        "state": "visible",
+        "timeout_ms": 90000,
+        "interval_ms": 350
+      }
+    },
+    {
+      "id": "s6",
+      "name": "点击登录游戏（仅标题页需要）",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 1355,
+          "y": 825
+        }
+      }
+    },
+    {
+      "id": "s7",
+      "name": "等待4s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 9000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 4000
+      }
+    },
+    {
+      "id": "s8",
+      "name": "确认登录页（游客试玩）",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 95000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "until",
+        "target": {
+          "by": "text",
+          "value": "游客试玩"
+        },
+        "state": "visible",
+        "timeout_ms": 90000,
+        "interval_ms": 350
+      }
+    },
+    {
+      "id": "s9",
+      "name": "截图-登录页",
+      "type": "screenshot",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 500
+      },
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "01-登录页"
+      }
+    },
+    {
+      "id": "s10",
+      "name": "打开账号登录",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [
+        "注册"
+      ],
+      "params": {
+        "target": {
+          "by": "resource_id",
+          "value": "com.mten.tgp:id/rly_other_login_items_leniu"
+        }
+      }
+    },
+    {
+      "id": "s11",
+      "name": "等待账号注册入口",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 20000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "until",
+        "target": {
+          "by": "resource_id",
+          "value": "com.mten.tgp:id/ln_ovs_account_register_btn"
+        },
+        "state": "visible",
+        "timeout_ms": 15000,
+        "interval_ms": 350
+      }
+    },
+    {
+      "id": "s12",
+      "name": "点击账号注册",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [
+        "注册"
+      ],
+      "params": {
+        "target": {
+          "by": "resource_id",
+          "value": "com.mten.tgp:id/ln_ovs_account_register_btn"
+        }
+      }
+    },
+    {
+      "id": "s13",
+      "name": "等待注册页",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 20000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "until",
+        "target": {
+          "by": "resource_id",
+          "value": "com.mten.tgp:id/ln_ovs_account_register_submit_btn"
+        },
+        "state": "visible",
+        "timeout_ms": 15000,
+        "interval_ms": 350
+      }
+    },
+    {
+      "id": "s14",
+      "name": "输入账号",
+      "type": "input",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [
+        "注册"
+      ],
+      "params": {
+        "text": "{{account}}",
+        "target": {
+          "by": "resource_id",
+          "value": "com.mten.tgp:id/ln_ovs_account_register_edt"
+        },
+        "clear_first": true,
+        "hide_keyboard": true
+      }
+    },
+    {
+      "id": "s15",
+      "name": "输入密码",
+      "type": "input",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [
+        "注册"
+      ],
+      "params": {
+        "text": "{{password}}",
+        "target": {
+          "by": "resource_id",
+          "value": "com.mten.tgp:id/ln_ovs_account_register_psw_edt"
+        },
+        "clear_first": true,
+        "hide_keyboard": true
+      }
+    },
+    {
+      "id": "s16",
+      "name": "截图-注册页已填",
+      "type": "screenshot",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 500
+      },
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "02-注册页已填"
+      }
+    },
+    {
+      "id": "s17",
+      "name": "提交注册并登录",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [
+        "注册"
+      ],
+      "params": {
+        "target": {
+          "by": "resource_id",
+          "value": "com.mten.tgp:id/ln_ovs_account_register_submit_btn"
+        }
+      }
+    },
+    {
+      "id": "s18",
+      "name": "等待30s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 35000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 30000
+      }
+    },
+    {
+      "id": "s19",
+      "name": "截图-注册完成",
+      "type": "screenshot",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 500
+      },
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "03-注册完成"
+      }
+    },
+    {
+      "id": "s20",
+      "name": "点击登录游戏（如出现）",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 1355,
+          "y": 825
+        }
+      }
+    },
+    {
+      "id": "s21",
+      "name": "等待6s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 11000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 6000
+      }
+    },
+    {
+      "id": "s22",
+      "name": "点击开始游戏（选服）",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 1400,
+          "y": 890
+        }
+      }
+    },
+    {
+      "id": "s23",
+      "name": "等待20s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 25000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 20000
+      }
+    },
+    {
+      "id": "s24",
+      "name": "截图-创角界面",
+      "type": "screenshot",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 500
+      },
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "04-创角界面"
+      }
+    },
+    {
+      "id": "s25",
+      "name": "进入游戏（创角完成）",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 2317,
+          "y": 1073
+        }
+      }
+    },
+    {
+      "id": "s26",
+      "name": "等待45s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 50000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 45000
+      }
+    },
+    {
+      "id": "s27",
+      "name": "截图-入服成功",
+      "type": "screenshot",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 500
+      },
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "05-入服成功"
+      }
+    },
+    {
+      "id": "s28",
+      "name": "展开左侧菜单",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 200,
+          "y": 180
+        }
+      }
+    },
+    {
+      "id": "s29",
+      "name": "点击首充入口",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 200,
+          "y": 245
+        }
+      }
+    },
+    {
+      "id": "s30",
+      "name": "等待4s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 9000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 4000
+      }
+    },
+    {
+      "id": "s31",
+      "name": "截图-首充页面",
+      "type": "screenshot",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 500
+      },
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "06-首充页面"
+      }
+    },
+    {
+      "id": "s32",
+      "name": "点击立即领取",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 2118,
+          "y": 930
+        }
+      }
+    },
+    {
+      "id": "s33",
+      "name": "等待4s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 9000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 4000
+      }
+    },
+    {
+      "id": "s34",
+      "name": "选择 $0.99 档位",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 1034,
+          "y": 890
+        }
+      }
+    },
+    {
+      "id": "s35",
+      "name": "等待2s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 7000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 2000
+      }
+    },
+    {
+      "id": "s36",
+      "name": "确认单独购买（调起支付）",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 1126,
+          "y": 806
+        }
+      }
+    },
+    {
+      "id": "s37",
+      "name": "等待2s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 7000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 2000
+      }
+    },
+    {
+      "id": "s38",
+      "name": "截图-支付调起",
+      "type": "screenshot",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 500
+      },
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "07-支付调起"
+      }
+    },
+    {
+      "id": "s39",
+      "name": "等待5s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 10000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 5000
+      }
+    },
+    {
+      "id": "s40",
+      "name": "截图-支付结果（不完成支付）",
+      "type": "screenshot",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 500
+      },
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "08-支付结果"
+      }
+    },
+    {
+      "id": "s41",
+      "name": "返回键(1)",
+      "type": "key",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "key": "back"
+      }
+    },
+    {
+      "id": "s42",
+      "name": "等待1s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 6500,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 1500
+      }
+    },
+    {
+      "id": "s43",
+      "name": "返回键(2)",
+      "type": "key",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "key": "back"
+      }
+    },
+    {
+      "id": "s44",
+      "name": "等待1s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 6500,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 1500
+      }
+    },
+    {
+      "id": "s45",
+      "name": "返回键(3)",
+      "type": "key",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "key": "back"
+      }
+    },
+    {
+      "id": "s46",
+      "name": "等待2s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 7000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 2000
+      }
+    },
+    {
+      "id": "s47",
+      "name": "截图-退出确认弹窗",
+      "type": "screenshot",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 500
+      },
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "09-退出确认弹窗"
+      }
+    },
+    {
+      "id": "s48",
+      "name": "点击确定退出",
+      "type": "click",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "target": {
+          "by": "point",
+          "x": 1583,
+          "y": 800
+        }
+      }
+    },
+    {
+      "id": "s49",
+      "name": "等待4s",
+      "type": "wait",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 9000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "mode": "sleep",
+        "ms": 4000
+      }
+    },
+    {
+      "id": "s50",
+      "name": "截图-退出后",
+      "type": "screenshot",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 15000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": {
+        "count": 2,
+        "interval_ms": 500
+      },
+      "on_fail": {
+        "action": "continue"
+      },
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "name": "10-退出后"
+      }
+    },
+    {
+      "id": "s51",
+      "name": "校验游戏进程已退出",
+      "type": "shell",
+      "description": "",
+      "enabled": true,
+      "when": null,
+      "timeout_ms": 20000,
+      "delay_before_ms": 0,
+      "delay_after_ms": 0,
+      "retry": null,
+      "on_fail": null,
+      "screenshot_on_fail": false,
+      "rerun_safety": "safe",
+      "tags": [],
+      "params": {
+        "command": "! pidof com.mten.tgp",
+        "timeout_ms": 15000,
+        "check_exit_code": true
+      }
+    }
+  ]
+}

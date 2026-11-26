@@ -130,9 +130,26 @@ artifacts/recordings/recording_events/reports/settings，索引见 models.py。
 结构校验用 `app.schemas`（Lead 已写，12 类节点 params 见其模型定义）；语义校验（id 唯一、
 goto 目标、sub_script 存在性 warning）用 `schemas.validate_script()`。
 
-- `variables`：`{name: str}`，运行时可被请求 `variables` 覆盖；步骤内字符串字段支持 `{{var}}` 插值（引擎做）。
+- `variables`：`{name: str}`，脚本级默认值；运行时可被请求 `variables` 覆盖（只影响这一次运行）。
+  生效优先级：`sub_script 父上下文` < 脚本 `variables` < 本次运行请求 `variables`；`sub_script` 节点的
+  `variables` 再叠加给子脚本子树。
+  插值（`{{name}}`，变量名 `[A-Za-z0-9_.-]+`，单遍替换不递归）作用范围：
+  - 所有 target 的 `value`（click / long_click / swipe / drag / wait / assert / when 条件）；
+  - `input.text`、`input.target.value`；`app.package|activity`；`shell.command`；`assert.value`；
+    `sub_script.script_id|variables 的值`；`screenshot.name`；`when` 里 app 条件的 package/activity。
+  - **不插值**：target 的 `point.x/y`、`index`、`by`、`key/keycode`、节点 name/description/tags、
+    `on_fail.target_id`、wait 的时长等数字/枚举字段。
+  未知变量（未声明且未覆盖）运行时原样保留并 emit 一条 `log` warn。
+  前端编辑器对上述可插值字段提供「{{ }}」变量选择器（插入到光标处），并在节点用到未声明变量时提示。
 - 节点公共字段：id/name/type/description/enabled/when/timeout_ms/delay_before_ms/delay_after_ms/
   retry/on_fail/screenshot_on_fail/rerun_safety/tags/params。
+- 节点停顿 `delay_before_ms` / `delay_after_ms`：动作之外的节奏停顿，不计入节点超时。
+  **0 = 跟随脚本默认**（`settings.default_delay_before_ms` / `settings.default_delay_after_ms`，默认 0 即不停顿），
+  **非 0 = 该节点自定义**（覆盖默认，不叠加）。录制转换把真实操作间隔还原进节点 `delay_before_ms`
+  （这些值 >0 即自定义），生成脚本的 `settings.default_delay_*` 固定写 0，所以录制回放节奏不受默认停顿影响。
+- 新建脚本初值：`POST /api/scripts` 建空脚本时，`create_script` 会把 `engine.default_delay_before_ms` /
+  `engine.default_delay_after_ms`（设置页 → 执行 → 运行节奏）写进脚本 `settings`；传入的 data 已显式带该字段时
+  （导入/模板/复制）不覆盖。这是**只写一次初值**，运行时不做第三层兜底，所以全局值改动不会影响已有脚本与录制脚本。
 - Target：`{"by": "...", "value": "...", "index": 0}` 或 `{"by": "point", "x": 540, "y": 1200}`。
 - `source` / `origin_recording_id` 是 DB 资源元数据（见 §2.1），不属于脚本 JSON。
 - when：`null` 或一个新的条件树对象；**不接受** v0.1 的 `when.target/state` 结构。
@@ -159,7 +176,15 @@ goto 目标、sub_script 存在性 warning）用 `schemas.validate_script()`。
 - `HierarchyNode`：精简树（class_name/text/resource_id/content_desc/package/bounds/clickable/enabled/visible/children）。
 - `get_driver(serial) -> Driver` 由 `services/device_registry.py` 缓存；`serial=None/"auto"` 取唯一在线设备。
 - `FakeDriver`：内存假设备（假层级树 + 调用记录 + 可编程 shell），供引擎/前端联调与单测，不依赖真机。
-- u2 实现（be-driver 的 u2_driver.py）必须满足同名语义；`clear_text` 用 u2 能力，失败时长按全选删除兜底。
+- u2 实现（be-driver 的 u2_driver.py）必须满足同名语义；`clear_text` 用 adb 批量 keyevent（不等界面空闲）。
+- **文本输入同样 adb first**：ASCII 走 `adb shell input text`（空格转 `%s` + shell 转义）；非 ASCII 用无障碍
+  ACTION_SET_TEXT（u2 `set_text`）。u2 `send_keys` 是「写剪贴板 + 注入 Ctrl+V」，部分机型/游戏输入框上粘贴
+  不生效、Ctrl+V 被当普通按键只输入一个 "v"（实测），不能作为唯一路径。
+- **注入一律 adb first**（click/swipe/long_press/drag/key）：u2 注入 RPC 在 Unity/常驻动画界面上会同步等
+  「界面空闲」约 10s，点击已生效但节点会先被 8s 节点超时判失败；`adb shell input` 不等空闲（实测 ~0.1s），
+  失败才回落 u2。
+- `app_clear` 清完数据会自动 `pm grant` 该应用声明的运行时权限（通知/存储/相机…），避免下次启动弹系统
+  授权框挡住脚本；另有 `app_grant` 驱动方法/`app grant` 节点动作单独授权（不改数据）。
 
 ## 5. 运行事件（run_events.type）
 
@@ -269,6 +294,8 @@ POST /api/scripts/{id}/run {serial,...}（快捷=POST /api/runs）。
 POST /api/runs {script_id,serial?,variables?,debug?}（占用/录制中→409）；
 GET /api/runs?status=&script_id=&limit=&offset=；GET /api/runs/{id}（含 steps + artifacts：
 `[{id,kind,name,path,url,size,created_at}]`，url 为 `/artifacts/<相对 artifacts_dir 路径>`，无直链为 null）；
+运行资源 additive 字段：`variables`（本次请求的覆盖，只含与脚本默认不同的项）与
+`effective_variables`（脚本快照 variables + 覆盖，即本次运行实际生效值），用于回查运行参数；
 DELETE /api/runs/{id}；GET /api/runs/{id}/events?since_seq=&limit=；
 POST /api/runs/{id}/pause；**POST** /api/runs/{id}/resume-check（返回 §7.3 预检字段）；
 POST /api/runs/{id}/resume {ack,resume_kind:"hot"}；POST /api/runs/{id}/stop；
@@ -344,6 +371,13 @@ v0.2.5 手势回放补充：
 
 - 轮询型等待统一 350ms（config engine.poll_interval_ms）；所有等待可被 pause/stop 打断（≥每 350ms 检查）；
 - 节点 timeout_ms（默认 settings.default_timeout_ms，上限 600s）→ StepTimeout；
+- 节点停顿 `delay_before_ms` / `delay_after_ms` 在动作前/后执行，实际值 = 节点值（>0）否则脚本默认
+  `settings.default_delay_*_ms`；停顿同样可被 pause/stop 打断（`sleep_interruptible`），且录制脚本的默认停顿为 0；
+- 节点超时三条规则：① 显式 `timeout_ms` 永远是硬上限；② 未显式设置时，`wait` 节点按
+  「等待时长（sleep 的 ms / until 的 timeout_ms）+ 2s」自动抬升，避免继承的 8s 默认值静默截断；
+  ③ `sub_script` 节点未显式设置时不再用脚本默认 8s 切整段子脚本，最多到 step_max_timeout_ms/总预算
+  （子脚本内部各节点仍有自己的节点超时）。撞到引擎上限时错误信息会写明「等待 X ms 超过节点超时上限
+  Y ms，已按上限截断」；
 - 运行总时长 engine.max_total_ms（默认 30min，**活跃时间**口径，paused 不计）；
 - 步骤总预算 engine.max_steps（默认 2000，含 retry/goto 重跳）；
 - goto 重入重置目标节点及其后的 retry 计数；重跑当前节点清零；
@@ -395,6 +429,7 @@ v0.2.5 手势回放补充：
 优先级：DB(settings 表) > 文件(`$AUTOTEST_CONFIG` 或 `~/.autotest/config.json`) > 代码默认。
 `config.py`（Lead 已写）暴露 effective()/get()/sources()/set_db_overrides()；settings API 只写 DB 层。
 默认值清单见 config.DEFAULTS（engine/scrcpy/recording/capture/retention/security/server）。
+`engine.default_delay_before_ms` / `engine.default_delay_after_ms` 只作为新建脚本的停顿初值（见 §3），不参与运行时兜底。
 
 ## 12. 前端页面（fe-core 与 fe-mirror 边界）
 

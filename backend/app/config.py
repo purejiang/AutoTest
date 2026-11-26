@@ -42,6 +42,10 @@ DEFAULTS: dict[str, Any] = {
     "runtime.artifacts_dir": "",  # 空 = data_dir/artifacts
     "engine.poll_interval_ms": 350,
     "engine.default_timeout_ms": 8000,
+    # 新建脚本的默认停顿初值：只在 create_script 时写入脚本 settings，运行时不兜底
+    # （录制转换/复制的脚本保留自己的值，回放节奏不受影响）。
+    "engine.default_delay_before_ms": 0,
+    "engine.default_delay_after_ms": 0,
     "engine.max_total_ms": 1800_000,
     "engine.max_steps": 2000,
     "engine.step_min_timeout_ms": 100,
@@ -99,6 +103,22 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "min": 500,
         "max": 600000,
         "desc": "节点未单独设置超时时使用",
+    },
+    {
+        "key": "engine.default_delay_before_ms",
+        "type": "int",
+        "title": "新建脚本默认执行前停顿（ms）",
+        "min": 0,
+        "max": 600000,
+        "desc": "只作为新建脚本的初值；节点停顿填 0 时跟随脚本默认，录制脚本不受影响",
+    },
+    {
+        "key": "engine.default_delay_after_ms",
+        "type": "int",
+        "title": "新建脚本默认执行后停顿（ms）",
+        "min": 0,
+        "max": 600000,
+        "desc": "只作为新建脚本的初值；节点停顿填 0 时跟随脚本默认，录制脚本不受影响",
     },
     {
         "key": "engine.max_total_ms",

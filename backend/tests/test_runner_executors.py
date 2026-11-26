@@ -341,6 +341,37 @@ def test_app_restart_stops_then_starts(runner_env):
     assert ops == ["app_stop", "app_start"]
 
 
+def test_input_hide_keyboard_flag_hides_ime(runner_env):
+    script = make_script(
+        [
+            make_step(
+                "s1",
+                "input",
+                {"text": "hello", "target": {"by": "point", "x": 10, "y": 20}, "hide_keyboard": True},
+            )
+        ]
+    )
+    ctx = make_ctx(runner_env, script)
+
+    output = executors.execute_input(ctx, parsed_step(script))
+
+    assert output["keyboard_hidden"] is True
+    assert "hide_keyboard" in runner_env.driver.ops()
+
+
+def test_app_grant_action_returns_permissions(runner_env):
+    script = make_script(
+        [make_step("s1", "app", {"action": "grant", "package": "com.demo.app"})]
+    )
+    ctx = make_ctx(runner_env, script)
+
+    output = executors.execute_app(ctx, parsed_step(script))
+
+    assert output["package"] == "com.demo.app"
+    assert output["granted_permissions"] == ["com.demo.app.permission.FAKE"]
+    assert runner_env.driver.calls_of("app_grant")[-1].kwargs == {"package": "com.demo.app"}
+
+
 def test_shell_success_and_check_exit_code(runner_env):
     runner_env.driver.shell_responses["boom"] = CommandResult(code=1, stdout="", stderr="bad")
     script = make_script(

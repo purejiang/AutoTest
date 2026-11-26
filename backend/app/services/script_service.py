@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
-from .. import schemas
+from .. import config, schemas
 from ..errors import ApiError, not_found
 from ..logs import logger
 from ..models import Recording, Run, Script, now_iso
@@ -191,6 +191,30 @@ def export_script(session: Session, script_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 写入
+_DEFAULT_DELAY_KEYS = ("default_delay_before_ms", "default_delay_after_ms")
+
+
+def _seed_default_delays(payload: dict[str, Any], *, force: bool = False) -> None:
+    """新建脚本时把 App 级默认停顿（设置 → 执行 → 运行节奏）写成脚本初值。
+
+    只影响「新建」：已显式带了这两个字段的 data（导入/模板）保持原样；
+    运行时不做兜底，所以录制转换、复制出来的脚本不会被全局值改变节奏。
+    """
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        settings = {}
+        payload["settings"] = settings
+    for key in _DEFAULT_DELAY_KEYS:
+        # force：新建空脚本时模板里的 0 也要让位给全局初值（模板值不是用户显式设置）。
+        if key in settings and not force:
+            continue
+        try:
+            value = int(config.get(f"engine.{key}", 0) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        settings[key] = max(0, min(600_000, value))
+
+
 def create_script(
     session: Session,
     name: str,
@@ -199,6 +223,7 @@ def create_script(
     source: str = "manual",
 ) -> dict[str, Any]:
     payload = _normalize_payload(data, name=name, notes=notes)
+    _seed_default_delays(payload, force=data is None)
     _ensure_valid(session, payload)
     stamp = now_iso()
     row = Script(

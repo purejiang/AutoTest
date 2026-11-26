@@ -59,6 +59,28 @@ function toggleRetry(checked: boolean): void {
           @update:model-value="patchSettings({ default_timeout_ms: numberOrNull($event) ?? 8000 })"
         />
       </el-form-item>
+      <el-form-item label="默认执行前停顿 (ms)">
+        <el-input-number
+          :model-value="settings.default_delay_before_ms"
+          :min="0"
+          :max="600000"
+          :step="100"
+          controls-position="right"
+          style="width: 100%"
+          @update:model-value="patchSettings({ default_delay_before_ms: numberOrNull($event) ?? 0 })"
+        />
+      </el-form-item>
+      <el-form-item label="默认执行后停顿 (ms)">
+        <el-input-number
+          :model-value="settings.default_delay_after_ms"
+          :min="0"
+          :max="600000"
+          :step="100"
+          controls-position="right"
+          style="width: 100%"
+          @update:model-value="patchSettings({ default_delay_after_ms: numberOrNull($event) ?? 0 })"
+        />
+      </el-form-item>
       <el-form-item label="默认失败策略">
         <el-select
           :model-value="settings.on_fail"
@@ -113,6 +135,10 @@ function toggleRetry(checked: boolean): void {
           <span v-else class="hint">节点未单独配置时不重试</span>
         </div>
       </el-form-item>
+    </div>
+    <div class="hint">
+      默认停顿作用在所有节点上：节点自己的「执行前/后停顿」填 0 时跟随这里的默认值，填非 0 值就是该节点自定义。
+      录制转换生成的脚本默认停顿为 0，节奏由录制时还原的节点间隔决定。
     </div>
   </el-form>
 </template>

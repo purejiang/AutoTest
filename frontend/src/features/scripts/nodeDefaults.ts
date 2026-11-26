@@ -129,6 +129,8 @@ export function createWhen(): When {
 
 const DEFAULT_SETTINGS: ScriptSettings = {
   default_timeout_ms: 8000,
+  default_delay_before_ms: 0,
+  default_delay_after_ms: 0,
   on_fail: 'abort',
   logcat: false,
   retry: null,

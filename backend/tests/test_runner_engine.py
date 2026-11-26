@@ -573,6 +573,150 @@ def test_step_timeout_covers_long_gesture_duration(runner_env) -> None:
     assert engine._step_timeout(ctx, step) >= 12_000
 
 
+def test_step_timeout_covers_wait_sleep_duration(runner_env) -> None:
+    """wait sleep 的时长也是动作耗时：继承的默认节点超时不能把它静默截断。"""
+    script = make_script([wait_step("s1", ms=10_000)])
+    ctx = make_ctx(runner_env, script)
+    step = RunSnapshot.from_data(script).parsed.steps[0]
+    assert engine._step_timeout(ctx, step) >= 12_000
+
+
+def test_step_timeout_covers_wait_until_timeout(runner_env) -> None:
+    """wait until 的等待超时同样要能覆盖继承来的 8s 节点超时。"""
+    script = make_script(
+        [
+            make_step(
+                "s1",
+                "wait",
+                {"mode": "until", "target": {"by": "text", "value": "登录"}, "timeout_ms": 300_000},
+            )
+        ]
+    )
+    ctx = make_ctx(runner_env, script)
+    step = RunSnapshot.from_data(script).parsed.steps[0]
+    assert engine._step_timeout(ctx, step) >= 302_000
+
+
+def test_step_delay_follows_script_default_when_node_unset(runner_env) -> None:
+    """节点停顿填 0 = 跟随脚本 settings 的全节点默认停顿。"""
+    script = make_script(
+        [wait_step("s1", ms=10)],
+        settings={"default_delay_before_ms": 250, "default_delay_after_ms": 120},
+    )
+    ctx = make_ctx(runner_env, script)
+    step = RunSnapshot.from_data(script).parsed.steps[0]
+    assert engine._step_delay_ms(ctx, step, "delay_before_ms") == 250
+    assert engine._step_delay_ms(ctx, step, "delay_after_ms") == 120
+
+
+def test_step_delay_node_value_overrides_script_default(runner_env) -> None:
+    """节点填非 0 值 = 该节点自定义，优先于脚本默认（不是叠加）。"""
+    script = make_script(
+        [click_step("s1", delay_before_ms=0, delay_after_ms=800)],
+        settings={"default_delay_before_ms": 250, "default_delay_after_ms": 120},
+    )
+    ctx = make_ctx(runner_env, script)
+    step = RunSnapshot.from_data(script).parsed.steps[0]
+    assert engine._step_delay_ms(ctx, step, "delay_before_ms") == 250
+    assert engine._step_delay_ms(ctx, step, "delay_after_ms") == 800
+
+
+def test_step_delay_defaults_to_zero_for_legacy_scripts(runner_env) -> None:
+    """旧脚本没有默认停顿字段：解析后按 0 处理，行为与旧版一致。"""
+    script = make_script([click_step("s1")])
+    ctx = make_ctx(runner_env, script)
+    step = RunSnapshot.from_data(script).parsed.steps[0]
+    assert engine._step_delay_ms(ctx, step, "delay_before_ms") == 0
+    assert engine._step_delay_ms(ctx, step, "delay_after_ms") == 0
+
+
+def test_script_default_delay_applied_to_every_node(runner_env, monkeypatch) -> None:
+    """集成回归：默认前后停顿要真正作用到每个节点（不是只写在 JSON 里）。"""
+    install_selectors(monkeypatch)
+    script = make_script(
+        [click_step("s1"), click_step("s2")],
+        settings={"default_delay_before_ms": 150, "default_delay_after_ms": 50},
+    )
+
+    started = time.monotonic()
+    run_id, run = run_script(script)
+    elapsed_ms = (time.monotonic() - started) * 1000
+
+    assert run["status"] == "succeeded", run.get("error")
+    assert {step["status"] for step in get_steps(run_id)} == {"passed"}
+    assert elapsed_ms >= 400  # 2 个节点 × (150 + 50) ms
+    assert len(runner_env.driver.calls_of("click")) == 2
+
+
+def test_step_timeout_keeps_explicit_node_timeout(runner_env) -> None:
+    """显式设置的节点超时仍是硬上限（调试/兜底场景不能被等待时长覆盖）。"""
+    script = make_script([wait_step("s1", ms=10_000, timeout_ms=120)])
+    ctx = make_ctx(runner_env, script)
+    step = RunSnapshot.from_data(script).parsed.steps[0]
+    timeout_ms = engine._step_timeout(ctx, step)
+    assert timeout_ms == 120
+    # 这是用户显式设的硬上限，不是引擎上限截断，错误信息里不该出现“调大 step_max_timeout_ms”的误导
+    assert engine._timeout_clamp_note(ctx, step, timeout_ms) == ""
+
+
+def test_sub_script_inherited_timeout_uses_engine_ceiling(runner_env) -> None:
+    """子脚本节点没显式设超时：不能被脚本默认 8s 把整段子脚本切掉。"""
+    script = make_script([make_step("p1", "sub_script", {"script_id": "child-id"})])
+    ctx = make_ctx(runner_env, script)
+    step = RunSnapshot.from_data(script).parsed.steps[0]
+    assert engine._step_timeout(ctx, step) >= 600_000
+
+
+def test_timeout_clamp_note_explains_truncation(runner_env) -> None:
+    """真正撞到引擎上限时，错误信息要说明「等待 X ms 被上限 Y ms 截断」。"""
+    runner_env.configure({"engine.step_max_timeout_ms": 300_000})
+    script = make_script(
+        [
+            make_step(
+                "s1",
+                "wait",
+                {"mode": "until", "target": {"by": "text", "value": "登录"}, "timeout_ms": 600_000},
+            )
+        ]
+    )
+    ctx = make_ctx(runner_env, script)
+    step = RunSnapshot.from_data(script).parsed.steps[0]
+    timeout_ms = engine._step_timeout(ctx, step)
+    assert timeout_ms == 300_000
+    note = engine._timeout_clamp_note(ctx, step, timeout_ms)
+    assert "等待 600000 ms" in note
+    assert "300000 ms" in note
+
+
+def test_wait_sleep_succeeds_beyond_default_node_timeout(runner_env, monkeypatch) -> None:
+    """集成回归：默认节点超时 300ms 时，sleep 1200ms 的 wait 不能被切失败。"""
+    install_selectors(monkeypatch)
+    runner_env.configure({"engine.default_timeout_ms": 300})
+    script = make_script([wait_step("s1", ms=1200)])
+
+    run_id, run = run_script(script)
+
+    assert run["status"] == "succeeded", run.get("error")
+    steps = get_steps(run_id)
+    assert steps[0]["status"] == "passed"
+
+
+def test_sub_script_not_cut_by_parent_default_timeout(runner_env, monkeypatch) -> None:
+    """集成回归：父脚本默认节点超时 300ms 时，子脚本里的 1200ms wait 仍能跑完。"""
+    install_selectors(monkeypatch)
+    runner_env.configure({"engine.default_timeout_ms": 300})
+    child_id = insert_script(make_script([wait_step("c1", ms=1200)], name="慢子脚本"))
+    parent = make_script(
+        [make_step("p1", "sub_script", {"script_id": child_id})],
+        name="父脚本",
+    )
+
+    run_id, run = run_script(parent, timeout=10)
+
+    assert run["status"] == "succeeded", run.get("error")
+    assert {step["status"] for step in get_steps(run_id)} == {"passed"}
+
+
 # ---------------------------------------------------------------- pause / resume
 def test_pause_then_hot_resume(runner_env, monkeypatch):
     install_selectors(monkeypatch)

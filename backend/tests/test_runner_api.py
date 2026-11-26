@@ -86,6 +86,68 @@ def test_create_run_persists_and_starts(api_client, runner_env, monkeypatch):
         assert row.script_snapshot["name"] == "登录流程"
         assert row.total_steps == 2
 
+    # 运行变量：variables 只放覆盖项，effective_variables = 脚本默认 + 覆盖
+    assert body["variables"] == {"user": "alice"}
+    assert body["effective_variables"] == {"user": "alice"}
+
+
+def test_run_variables_merge_script_defaults_with_overrides(api_client, runner_env, monkeypatch):
+    """运行记录回显：variables 只含覆盖，effective_variables 含脚本默认值。"""
+    script = make_script(
+        [click_step("s1")],
+        name="带变量脚本",
+        variables={"pkg": "com.example.default", "user": "default-user"},
+    )
+    script_id = insert_script(script)
+    monkeypatch.setattr(engine, "start_run", lambda run_id: None)
+
+    created = api_client.post(
+        "/api/runs",
+        json={"script_id": script_id, "serial": "fake-test", "variables": {"pkg": "com.example.override"}},
+    ).json()
+
+    assert created["variables"] == {"pkg": "com.example.override"}
+    assert created["effective_variables"] == {
+        "pkg": "com.example.override",
+        "user": "default-user",
+    }
+
+    detail = api_client.get(f"/api/runs/{created['id']}").json()
+    assert detail["variables"] == {"pkg": "com.example.override"}
+    assert detail["effective_variables"] == {"pkg": "com.example.override", "user": "default-user"}
+
+    listing = api_client.get("/api/runs").json()
+    assert listing["items"][0]["effective_variables"]["pkg"] == "com.example.override"
+
+
+def test_run_variables_interpolate_app_package_on_device(api_client, runner_env):
+    """app.package 支持 {{var}}：请求覆盖值必须真的传给驱动（包名不再写死）。"""
+    script = make_script(
+        [make_step("s1", "app", {"action": "launch", "package": "{{pkg}}"})],
+        name="启动应用",
+        variables={"pkg": "com.example.default"},
+    )
+    script_id = insert_script(script)
+
+    created = api_client.post(
+        "/api/runs",
+        json={
+            "script_id": script_id,
+            "serial": "fake-test",
+            "variables": {"pkg": "com.example.override"},
+        },
+    ).json()
+    wait_until(
+        lambda: (get_run(created["id"]) or {}).get("status") in {"succeeded", "failed"},
+        timeout=5,
+        message="run finished",
+    )
+    detail = api_client.get(f"/api/runs/{created['id']}").json()
+    assert detail["status"] == "succeeded", detail
+    app_calls = [call for call in runner_env.driver.calls if call.op == "app_start"]
+    assert app_calls, runner_env.driver.calls
+    assert app_calls[-1].kwargs["package"] == "com.example.override"
+
 
 def test_create_run_auto_resolves_serial(api_client, runner_env, monkeypatch):
     script_id, _script = _create_script()

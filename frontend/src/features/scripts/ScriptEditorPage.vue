@@ -7,6 +7,13 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 
 import { describeApiError, validationErrorsOf } from '@/api/client'
 import { useScript, useUpdateScript, useValidateScriptData } from '@/api/scripts'
+import { provideScriptVariables } from '@/composables/useScriptVariables'
+import {
+  collectUsedVariables,
+  declaredVariables,
+  missingVariables,
+  validVariableName,
+} from '@/lib/scriptVars'
 import type { NodeType, Script, ScriptData, ScriptValidation, StepNode } from '@/types/api'
 import {
   formatRelative,
@@ -183,6 +190,29 @@ function patchNode(next: StepNode): void {
   if (!data) return
   applyDraft({ ...data, steps: data.steps.map((step) => (step.id === next.id ? next : step)) })
 }
+
+// 变量上下文：节点表单里的「{{ }}」按钮、未声明变量提示都从这里取（随草稿实时变化）。
+const scriptVariables = computed<Record<string, string>>(() => declaredVariables(draft.value?.variables))
+const usedVariables = computed<string[]>(() => collectUsedVariables(draft.value))
+const missingScriptVariables = computed<string[]>(() =>
+  missingVariables(scriptVariables.value, usedVariables.value),
+)
+
+provideScriptVariables({
+  variables: scriptVariables,
+  used: usedVariables,
+  missing: missingScriptVariables,
+  addVariable(name: string): void {
+    const data = draft.value
+    if (!data) return
+    const key = name.trim()
+    if (!validVariableName(key) || key in data.variables) return
+    applyDraft({ ...data, variables: { ...data.variables, [key]: '' } })
+  },
+  openSettings(): void {
+    settingsDrawerOpen.value = true
+  },
+})
 
 function insertStep(step: StepNode): void {
   const data = draft.value
@@ -639,6 +669,8 @@ function jumpToPath(path: string): void {
               :default-on-fail="draft.settings.on_fail"
               :default-retry="draft.defaults.retry ?? draft.settings.retry"
               :default-timeout-ms="draft.settings.default_timeout_ms"
+              :default-delay-before-ms="draft.settings.default_delay_before_ms"
+              :default-delay-after-ms="draft.settings.default_delay_after_ms"
               @change="patchNode"
               @delete="deleteSelected"
             />

@@ -6,6 +6,8 @@
 #   sh scripts/start.sh --port 9000
 #   sh scripts/start.sh --rebuild  # 强制重新构建前端
 #   sh scripts/start.sh --react    # 回滚到冻结的 React 前端（构建产物仍放 frontend/dist）
+#   sh scripts/start.sh --reload   # 开发用：后端 .py 改动自动重启（uvicorn --reload）
+#                                  # 跑批/演示请勿开启：重启会中断正在执行的运行任务
 #
 # 首次运行会自动：安装后端依赖(uv sync) → 安装前端依赖(npm install) → 构建前端 → 下载 scrcpy-server。
 set -euo pipefail
@@ -17,11 +19,13 @@ PORT="${AUTOTEST_PORT:-8787}"
 HOST="${AUTOTEST_HOST:-127.0.0.1}"
 OPEN_BROWSER=0
 REBUILD=0
+RELOAD="${AUTOTEST_RELOAD:-0}"
 FRONTEND_IMPL="${AUTOTEST_FRONTEND:-vue}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --open) OPEN_BROWSER=1 ;;
     --rebuild) REBUILD=1 ;;
+    --reload) RELOAD=1 ;;
     --react) FRONTEND_IMPL=react ;;
     --vue) FRONTEND_IMPL=vue ;;
     --frontend) shift; FRONTEND_IMPL="$1" ;;
@@ -119,6 +123,9 @@ if [ -n "$ADB_BIN" ]; then
 else
   warn "未找到 adb：请安装 platform-tools 或在「设置」里填写 adb 绝对路径（不影响先打开界面）"
 fi
+if [ "$RELOAD" = "1" ]; then
+  warn "reload 模式：后端 .py 改动会自动重启；正在跑的测试任务会被中断，跑批时请勿改后端代码"
+fi
 say "启动 AutoTest → $URL   （API 文档 $URL/docs，Ctrl+C 退出）"
 say "另开终端停止：sh scripts/stop.sh$([ "$PORT" != "8787" ] && printf ' --port %s' "$PORT")"
 if [ "${DEV_COUNT:-0}" = "0" ]; then
@@ -130,8 +137,10 @@ if [ "$OPEN_BROWSER" = "1" ]; then
 fi
 
 cd backend
+RELOAD_ARG=""
+[ "$RELOAD" = "1" ] && RELOAD_ARG="--reload"
 # 优先用项目自带 venv，避免 uv 全局缓存权限异常（如 ~/.cache/uv 被 root 占用）导致启动失败。
 if [ -x ".venv/bin/python" ]; then
-  exec .venv/bin/python -m uvicorn app.main:app --host "$HOST" --port "$PORT" --ws-per-message-deflate false
+  exec .venv/bin/python -m uvicorn app.main:app --host "$HOST" --port "$PORT" --ws-per-message-deflate false $RELOAD_ARG
 fi
-exec uv run uvicorn app.main:app --host "$HOST" --port "$PORT" --ws-per-message-deflate false
+exec uv run uvicorn app.main:app --host "$HOST" --port "$PORT" --ws-per-message-deflate false $RELOAD_ARG

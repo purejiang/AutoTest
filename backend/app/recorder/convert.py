@@ -807,6 +807,9 @@ def events_to_script(
         "variables": {},
         "settings": {
             "default_timeout_ms": 8000,
+            # 录制脚本不额外加默认停顿：节奏由事件时间间隔还原到节点的 delay_before_ms。
+            "default_delay_before_ms": 0,
+            "default_delay_after_ms": 0,
             "on_fail": "abort",
             "logcat": False,
             "retry": None,

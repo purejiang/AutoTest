@@ -6,15 +6,21 @@ import { ElMessage } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { describeApiError } from '@/api/client'
+import { describeApiError, get } from '@/api/client'
 import { isActiveRun, runKeys, useStartRun } from '@/api/runs'
 import { useScripts } from '@/api/scripts'
 import type { Device, Script } from '@/types/api'
 import { runStatusMeta, safeParseJson } from '@/lib/format'
+import {
+  collectUsedVariables,
+  declaredVariables,
+  loadRememberedRunVars,
+} from '@/lib/scriptVars'
 import { useUiStore } from '@/stores/ui'
 import StatusTag from '@/components/StatusTag.vue'
 
 import RunMonitor from './RunMonitor.vue'
+import RunParamsDialog from './RunParamsDialog.vue'
 
 const props = defineProps<{
   serial: string | null
@@ -59,30 +65,72 @@ function openScript(script: Script): void {
   void router.push(`/scripts/${encodeURIComponent(script.id)}`)
 }
 
-// ---------------------------------------------------------------- 变量面板
+// ---------------------------------------------------------------- 变量面板（默认覆盖）
 const varsOpen = ref(false)
 const variablesText = ref('')
-const varsError = ref('')
 
-function parseVariables(): Record<string, string> | null {
-  varsError.value = ''
-  const trimmed = variablesText.value.trim()
-  if (!trimmed) return {}
+interface VarsParseOk {
+  ok: true
+  value: Record<string, string>
+}
+interface VarsParseFail {
+  ok: false
+  error: string
+}
+
+/** 全局面板 JSON -> 默认覆盖值；留空 = 不覆盖。 */
+function parseGlobalVariables(text: string): VarsParseOk | VarsParseFail {
+  const trimmed = text.trim()
+  if (!trimmed) return { ok: true, value: {} }
   const parsed = safeParseJson<unknown>(trimmed)
-  if (!parsed.ok) {
-    varsError.value = 'JSON 解析失败，请检查变量面板中的内容。'
-    return null
-  }
+  if (!parsed.ok) return { ok: false, error: 'JSON 解析失败，请检查变量面板中的内容。' }
   const value = parsed.value
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    varsError.value = '变量必须是 JSON 对象，例如 {"user": "alice"}。'
-    return null
+    return { ok: false, error: '变量必须是 JSON 对象，例如 {"user": "alice"}。' }
   }
   const result: Record<string, string> = {}
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
     result[key] = typeof item === 'string' ? item : String(item)
   }
-  return result
+  return { ok: true, value: result }
+}
+
+const globalParse = computed(() => parseGlobalVariables(variablesText.value))
+const globalVariables = computed<Record<string, string>>(() =>
+  globalParse.value.ok ? globalParse.value.value : {},
+)
+const varsError = computed(() => (globalParse.value.ok ? '' : globalParse.value.error))
+
+// ---------------------------------------------------------------- 运行参数弹窗
+const paramsOpen = ref(false)
+const paramsScript = ref<Script | null>(null)
+const paramsStarting = ref(false)
+
+/** 脚本有默认变量 / 用到 {{x}} / 有上次记住的覆盖 / 有全局默认覆盖 -> 先弹运行参数。 */
+function needsRunParams(script: Script, global: Record<string, string>): boolean {
+  const defaults = declaredVariables(script.data?.variables)
+  const used = collectUsedVariables(script.data)
+  const remembered = loadRememberedRunVars(script.id)
+  return (
+    Object.keys(defaults).length > 0 ||
+    used.length > 0 ||
+    Object.keys(remembered).length > 0 ||
+    Object.keys(global).length > 0
+  )
+}
+
+function openRunParams(script: Script): void {
+  paramsScript.value = script
+  paramsOpen.value = true
+}
+
+async function fetchScript(scriptId: string): Promise<Script | null> {
+  try {
+    return await get<Script>(`/scripts/${encodeURIComponent(scriptId)}`)
+  } catch (error) {
+    ElMessage.error(describeApiError(error))
+    return null
+  }
 }
 
 // ---------------------------------------------------------------- 运行
@@ -107,7 +155,7 @@ function refreshRunData(): void {
   void queryClient.invalidateQueries({ queryKey: runKeys.all })
 }
 
-async function startScript(scriptId: string): Promise<boolean> {
+async function startScript(scriptId: string, variables: Record<string, string>): Promise<boolean> {
   if (!props.serial) {
     ElMessage.warning('请先在控制台选择一台设备')
     return false
@@ -115,12 +163,6 @@ async function startScript(scriptId: string): Promise<boolean> {
   if (runId.value !== null && isActiveRun(runStatus.value)) {
     ElMessage.warning('已有运行进行中，请先停止或等待其结束。')
     monitorVisible.value = true
-    return false
-  }
-  const variables = parseVariables()
-  if (variables === null) {
-    varsOpen.value = true
-    ElMessage.error(varsError.value || '变量格式不正确')
     return false
   }
   const hasVariables = Object.keys(variables).length > 0
@@ -147,8 +189,35 @@ async function startScript(scriptId: string): Promise<boolean> {
   }
 }
 
-function runScript(script: Script): void {
-  void startScript(script.id)
+/** 点「运行」：需要参数就弹窗，否则直接用当前默认覆盖启动。 */
+async function requestRun(script: Script): Promise<boolean> {
+  const parsed = globalParse.value
+  if (!parsed.ok) {
+    varsOpen.value = true
+    ElMessage.error(parsed.error)
+    return false
+  }
+  if (needsRunParams(script, parsed.value)) {
+    openRunParams(script)
+    return true
+  }
+  return startScript(script.id, parsed.value)
+}
+
+async function runScript(script: Script): Promise<void> {
+  await requestRun(script)
+}
+
+async function startFromParams(overrides: Record<string, string>): Promise<void> {
+  const script = paramsScript.value
+  if (!script) return
+  paramsStarting.value = true
+  try {
+    const started = await startScript(script.id, overrides)
+    if (started) paramsOpen.value = false
+  } finally {
+    paramsStarting.value = false
+  }
 }
 
 function handleRunStatusChange(status: string): void {
@@ -163,7 +232,7 @@ function backToList(): void {
 
 /**
  * 脚本页/编辑器带来的待运行 id：有设备才启动；无设备时保留 pending，
- * 等用户在控制台选中设备、serial 变化后自动启动。
+ * 等用户在控制台选中设备、serial 变化后自动启动。需要参数的脚本会先弹运行参数。
  */
 watch(
   () => [ui.pendingRunScriptId, props.serial, props.devicesReady] as const,
@@ -184,8 +253,10 @@ watch(
     if (startingPending.value) return
     startingPending.value = true
     try {
-      const started = await startScript(scriptId)
-      if (started) ui.setPendingRunScriptId(null)
+      const script = scripts.value.find((item) => item.id === scriptId) ?? (await fetchScript(scriptId))
+      ui.setPendingRunScriptId(null)
+      if (!script) return
+      await requestRun(script)
     } finally {
       startingPending.value = false
     }
@@ -235,7 +306,9 @@ watch(
           class="code-text"
           placeholder='{ "user": "alice" }'
         />
-        <div class="hint">运行前覆盖脚本 variables；留空使用脚本默认值，所有值会按字符串发送。</div>
+        <div class="hint">
+          默认覆盖：对所有脚本生效；运行参数弹窗会基于它预填并允许逐次修改。留空表示不覆盖，值按字符串发送。
+        </div>
         <div v-if="varsError" class="vars-error">{{ varsError }}</div>
       </div>
 
@@ -269,6 +342,15 @@ watch(
             {{ script.name || script.id }}
           </button>
           <el-button
+            class="run-params-btn"
+            text
+            size="small"
+            title="带变量运行：打开运行参数"
+            @click="openRunParams(script)"
+          >
+            参数
+          </el-button>
+          <el-button
             class="run-script"
             type="primary"
             size="small"
@@ -300,7 +382,9 @@ watch(
         </div>
       </div>
 
-      <div class="hint auto-foot">点击脚本标题进入编辑器；点击「运行」在当前控制台设备上直接开始。</div>
+      <div class="hint auto-foot">
+        点击脚本标题进入编辑器；点「运行」直接用当前参数开始，需要换值时用「参数」或运行前弹窗。
+      </div>
     </div>
 
     <RunMonitor
@@ -310,6 +394,16 @@ watch(
       :script-id="runScriptId"
       @back="backToList"
       @status-change="handleRunStatusChange"
+    />
+
+    <RunParamsDialog
+      :open="paramsOpen"
+      :script="paramsScript"
+      :device-serial="serial"
+      :global-variables="globalVariables"
+      :starting="paramsStarting"
+      @close="paramsOpen = false"
+      @start="startFromParams"
     />
   </div>
 </template>
@@ -454,6 +548,11 @@ watch(
 
 .run-script {
   flex: none;
+}
+
+.run-params-btn {
+  flex: none;
+  color: var(--muted-2);
 }
 
 .ai-card {

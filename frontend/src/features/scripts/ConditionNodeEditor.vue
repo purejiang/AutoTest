@@ -19,6 +19,7 @@ import type {
   ConditionTime,
   Target,
 } from '@/types/api'
+import VariableField from '@/components/VariableField.vue'
 
 import TargetEditor from './TargetEditor.vue'
 
@@ -227,14 +228,14 @@ function toggleDay(day: number): void {
       <!-- 应用 -->
       <template v-else-if="node.type === 'app'">
         <div class="condition-inline">
-          <el-input
+          <VariableField
             :model-value="node.package ?? ''"
             size="small"
             placeholder="package，例如 com.android.settings"
             style="width: 240px"
             @update:model-value="updateAppField('package', $event)"
           />
-          <el-input
+          <VariableField
             :model-value="node.activity ?? ''"
             size="small"
             placeholder="activity（可选）"

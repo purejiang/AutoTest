@@ -444,7 +444,23 @@ def _unlink_artifact(path: str) -> None:
         logger.warning("failed to remove artifact file: %s", path)
 
 
+def _variables_of(run: Run) -> tuple[dict[str, str], dict[str, str]]:
+    """返回 (本次覆盖 variables, 生效 effective_variables)。
+
+    生效值 = 运行快照里的脚本 variables + 本次请求覆盖；只有覆盖项才是“这次运行改了什么”，
+    前端用它回显运行参数，避免把脚本默认值误当成覆盖。
+    """
+    snapshot = run.script_snapshot if isinstance(run.script_snapshot, dict) else {}
+    raw_defaults = snapshot.get("variables")
+    defaults: dict[str, str] = {}
+    if isinstance(raw_defaults, dict):
+        defaults = {str(key): str(value) for key, value in raw_defaults.items()}
+    overrides = {str(key): str(value) for key, value in (run.variables or {}).items()}
+    return overrides, {**defaults, **overrides}
+
+
 def _run_dict(run: Run) -> dict[str, Any]:
+    overrides, effective = _variables_of(run)
     return {
         "id": int(run.id),
         "script_id": run.script_id,
@@ -460,6 +476,8 @@ def _run_dict(run: Run) -> dict[str, Any]:
         "summary": run.summary,
         "created_at": run.created_at,
         "debug": run.debug,
+        "variables": overrides,
+        "effective_variables": effective,
     }
 
 

@@ -197,6 +197,10 @@ export interface StepNode {
 
 export interface ScriptSettings {
   default_timeout_ms: number
+  /** 全节点默认执行前停顿；节点 delay_before_ms=0 时生效（0 = 不停顿） */
+  default_delay_before_ms: number
+  /** 全节点默认执行后停顿；节点 delay_after_ms=0 时生效（0 = 不停顿） */
+  default_delay_after_ms: number
   on_fail: 'abort' | 'continue'
   logcat: boolean
   retry: Retry | null
@@ -318,6 +322,10 @@ export interface Run {
   } | null
   created_at: string
   debug?: { step_mode?: boolean; breakpoints?: string[] } | null
+  /** 本次运行的变量覆盖（只含与脚本默认值不同的项）。 */
+  variables?: Record<string, string>
+  /** 本次运行实际生效的变量（脚本默认 + 覆盖）。 */
+  effective_variables?: Record<string, string>
 }
 
 /** 条件求值结果（后端字段未完全冻结时兼容多种落点，仅用于展示）。 */

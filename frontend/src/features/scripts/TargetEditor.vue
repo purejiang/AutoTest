@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { Aim } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
 
+import VariableField from '@/components/VariableField.vue'
+import TargetPickerDialog from '@/features/devices/TargetPickerDialog.vue'
 import type { Target, TargetBy } from '@/types/api'
 import { numberOrNull } from '@/lib/format'
 
@@ -40,8 +43,27 @@ const PLACEHOLDERS: Record<TargetBy, string> = {
 }
 
 const enabled = computed(() => !props.allowNull || (props.value !== null && props.value !== undefined))
+const pickerOpen = ref(false)
+// 懒挂载：条件编辑器里可能有几十个 TargetEditor，没点过按钮就不挂弹窗（避免创建一堆闲置查询）。
+const pickerMounted = ref(false)
+
+function openPicker(): void {
+  pickerMounted.value = true
+  pickerOpen.value = true
+}
+
+/** 从截图拾取的元素/坐标直接覆盖当前 Target（index 已按文档顺序算好）。 */
+function onPicked(target: Target): void {
+  emitTarget(target)
+  pickerOpen.value = false
+}
 const target = computed<Target>(() => props.value ?? { by: 'text', value: '', index: 0 })
 const isPoint = computed(() => target.value.by === 'point')
+// 非坐标定位必须填值（后端 Target 校验：by=text/resource_id/... requires value），
+// 提前在表单里提示，避免点保存才被拦。
+const emptyValue = computed(
+  () => enabled.value && !isPoint.value && !String(target.value.value ?? '').trim(),
+)
 
 function emitTarget(next: Target): void {
   emit('update:value', next)
@@ -100,7 +122,12 @@ function toggleEnabled(checked: boolean): void {
         :disabled="disabled"
         @update:model-value="changeBy($event as TargetBy)"
       >
-        <el-option v-for="option in options" :key="option.value" :value="option.value" :label="option.label" />
+        <el-option
+          v-for="option in options"
+          :key="option.value"
+          :value="option.value"
+          :label="option.label"
+        />
       </el-select>
       <template v-if="isPoint">
         <el-input-number
@@ -127,7 +154,7 @@ function toggleEnabled(checked: boolean): void {
         </el-input-number>
       </template>
       <template v-else>
-        <el-input
+        <VariableField
           :model-value="target.value ?? ''"
           class="target-value"
           size="small"
@@ -149,5 +176,38 @@ function toggleEnabled(checked: boolean): void {
       </template>
     </template>
     <span v-else class="hint">未指定目标（可为空）</span>
+    <el-button
+      v-if="enabled"
+      class="target-pick"
+      size="small"
+      :icon="Aim"
+      :disabled="disabled"
+      title="从当前屏幕截图里选择坐标或元素"
+      @click="openPicker"
+    >
+      从截图选择
+    </el-button>
   </div>
+  <div v-if="emptyValue" class="hint target-empty">
+    定位值不能为空：保存会被校验拦截（填上目标值，或把定位方式改成坐标 point）
+  </div>
+
+  <TargetPickerDialog
+    v-if="pickerMounted"
+    :open="pickerOpen"
+    :allow-point="allowPoint"
+    @close="pickerOpen = false"
+    @pick="onPicked"
+  />
 </template>
+
+<style scoped>
+.target-pick {
+  flex: none;
+}
+
+.target-empty {
+  margin-top: 4px;
+  color: var(--el-color-warning);
+}
+</style>

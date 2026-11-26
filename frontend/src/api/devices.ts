@@ -1,6 +1,15 @@
 // 设备与手动控制 API hooks（契约 §7.1）
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { computed, toValue, type MaybeRefOrGetter } from 'vue'
+import {
+  computed,
+  onScopeDispose,
+  ref,
+  toValue,
+  watch,
+  type ComputedRef,
+  type MaybeRefOrGetter,
+  type Ref,
+} from 'vue'
 
 import type { Device, HierarchyNode } from '@/types/api'
 
@@ -133,7 +142,8 @@ export const deviceKeys = {
   info: (serial: string) => [...deviceKeys.all, serial, 'info'] as const,
   hierarchy: (serial: string, raw: boolean) => [...deviceKeys.all, serial, 'hierarchy', raw] as const,
   logcat: (serial: string, lines: number) => [...deviceKeys.all, serial, 'logcat', lines] as const,
-  apps: (serial: string, keyword: string, type: string) => [...deviceKeys.all, serial, 'apps', keyword, type] as const,
+  apps: (serial: string, keyword: string, type: string) =>
+    [...deviceKeys.all, serial, 'apps', keyword, type] as const,
   screenshot: (serial: string, nonce: number) => [...deviceKeys.all, serial, 'screenshot', nonce] as const,
   mirror: (serial: string) => [...deviceKeys.all, serial, 'mirror'] as const,
   screenrecord: (serial: string) => [...deviceKeys.all, serial, 'screenrecord'] as const,
@@ -172,7 +182,11 @@ export function useDeviceInfo(serial: MaybeRefOrGetter<string | null | undefined
 /** 层级树：后端返回 {node, raw?}；兼容根节点或 {root|tree} 包装。 */
 export function useDeviceHierarchy(
   serial: MaybeRefOrGetter<string | null | undefined>,
-  options: { raw?: MaybeRefOrGetter<boolean>; enabled?: MaybeRefOrGetter<boolean> } = {},
+  options: {
+    raw?: MaybeRefOrGetter<boolean>
+    enabled?: MaybeRefOrGetter<boolean>
+    suppressError?: boolean
+  } = {},
 ) {
   const resolved = computed(() => toValue(serial))
   const raw = computed(() => Boolean(toValue(options.raw ?? false)))
@@ -188,6 +202,7 @@ export function useDeviceHierarchy(
     enabled: computed(() => Boolean(resolved.value) && toValue(options.enabled ?? true)),
     staleTime: 0,
     retry: false,
+    meta: { suppressError: options.suppressError },
   })
 }
 
@@ -266,7 +281,11 @@ function parseLogcat(text: string): string[] {
 
 export function useDeviceApps(
   serial: MaybeRefOrGetter<string | null | undefined>,
-  params: { keyword?: MaybeRefOrGetter<string>; type?: MaybeRefOrGetter<string>; enabled?: MaybeRefOrGetter<boolean> } = {},
+  params: {
+    keyword?: MaybeRefOrGetter<string>
+    type?: MaybeRefOrGetter<string>
+    enabled?: MaybeRefOrGetter<boolean>
+  } = {},
 ) {
   const resolved = computed(() => toValue(serial))
   const keyword = computed(() => toValue(params.keyword ?? ''))
@@ -290,7 +309,11 @@ export function useDeviceApps(
 /** 截图是二进制 PNG，返回 Blob 由调用方转 objectURL。 */
 export function useDeviceScreenshot(
   serial: MaybeRefOrGetter<string | null | undefined>,
-  options: { enabled?: MaybeRefOrGetter<boolean>; nonce?: MaybeRefOrGetter<number> } = {},
+  options: {
+    enabled?: MaybeRefOrGetter<boolean>
+    nonce?: MaybeRefOrGetter<number>
+    suppressError?: boolean
+  } = {},
 ) {
   const resolved = computed(() => toValue(serial))
   const nonce = computed(() => toValue(options.nonce ?? 0))
@@ -300,14 +323,95 @@ export function useDeviceScreenshot(
     enabled: computed(() => Boolean(resolved.value) && toValue(options.enabled ?? true)),
     staleTime: 0,
     retry: false,
+    meta: { suppressError: options.suppressError },
   })
 }
 
-export function useMirrorStatus(serial: MaybeRefOrGetter<string | null | undefined>, enabled: MaybeRefOrGetter<boolean> = true) {
+// ---------------------------------------------------------------- 截图 + 层级快照
+
+export interface DeviceSnapshot {
+  /** 层级树（含 raw XML，若开启）。 */
+  hierarchy: ComputedRef<HierarchyResponse | null>
+  /** 截图 objectURL；调用方不需要 revoke（组合式函数负责生命周期）。 */
+  imageUrl: Ref<string | null>
+  isFetching: ComputedRef<boolean>
+  isLoading: ComputedRef<boolean>
+  /** 截图与层级两个查询里第一个错误（调用方自己展示，不走全局 toast）。 */
+  error: ComputedRef<unknown>
+  refetch: () => Promise<void>
+}
+
+/**
+ * 同时取「当前屏幕截图 + 层级树」的快照：两者坐标系一致（screencap / uiautomator 同源），
+ * 供元素拾取与层级叠加检查器使用。截图失败不影响层级（反之亦然），错误由调用方展示。
+ *
+ * `nonce` 变化时重新截屏；层级每次都重新 dump（staleTime 0），所以刷新一次即可同步两者。
+ */
+export function useDeviceSnapshot(
+  serial: MaybeRefOrGetter<string | null | undefined>,
+  options: {
+    enabled?: MaybeRefOrGetter<boolean>
+    /** 只看原始 XML 时可以关掉截图，省一次 2MB 拉取。 */
+    screenshotEnabled?: MaybeRefOrGetter<boolean>
+    nonce?: MaybeRefOrGetter<number>
+    raw?: MaybeRefOrGetter<boolean>
+  } = {},
+): DeviceSnapshot {
+  const screenshotQuery = useDeviceScreenshot(serial, {
+    enabled: options.screenshotEnabled ?? options.enabled,
+    nonce: options.nonce,
+    suppressError: true,
+  })
+  const hierarchyQuery = useDeviceHierarchy(serial, {
+    enabled: options.enabled,
+    raw: options.raw,
+    suppressError: true,
+  })
+
+  const imageUrl = ref<string | null>(null)
+  watch(
+    () => screenshotQuery.data.value,
+    (blob) => {
+      if (imageUrl.value) {
+        URL.revokeObjectURL(imageUrl.value)
+        imageUrl.value = null
+      }
+      if (blob) imageUrl.value = URL.createObjectURL(blob)
+    },
+    { immediate: true },
+  )
+  onScopeDispose(() => {
+    if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
+    imageUrl.value = null
+  })
+
+  const isFetching = computed(() => screenshotQuery.isFetching.value || hierarchyQuery.isFetching.value)
+  const isLoading = computed(() => screenshotQuery.isLoading.value || hierarchyQuery.isLoading.value)
+  const error = computed(() => screenshotQuery.error.value ?? hierarchyQuery.error.value)
+
+  async function refetch(): Promise<void> {
+    await Promise.all([screenshotQuery.refetch(), hierarchyQuery.refetch()])
+  }
+
+  return {
+    hierarchy: computed(() => hierarchyQuery.data.value ?? null),
+    imageUrl,
+    isFetching,
+    isLoading,
+    error,
+    refetch,
+  }
+}
+
+export function useMirrorStatus(
+  serial: MaybeRefOrGetter<string | null | undefined>,
+  enabled: MaybeRefOrGetter<boolean> = true,
+) {
   const resolved = computed(() => toValue(serial))
   return useQuery({
     queryKey: computed(() => deviceKeys.mirror(resolved.value ?? '')),
-    queryFn: ({ signal }) => get<MirrorStatusInfo>(`${base(resolved.value as string)}/mirror/status`, { signal }),
+    queryFn: ({ signal }) =>
+      get<MirrorStatusInfo>(`${base(resolved.value as string)}/mirror/status`, { signal }),
     enabled: computed(() => Boolean(resolved.value) && toValue(enabled)),
     refetchInterval: 5000,
     retry: false,
@@ -343,11 +447,15 @@ export function useDeviceTap(serial: string) {
 }
 
 export function useDeviceLongPress(serial: string) {
-  return useMutation({ mutationFn: (payload: LongPressPayload) => post<unknown>(`${base(serial)}/long_press`, payload) })
+  return useMutation({
+    mutationFn: (payload: LongPressPayload) => post<unknown>(`${base(serial)}/long_press`, payload),
+  })
 }
 
 export function useDeviceSwipe(serial: string) {
-  return useMutation({ mutationFn: (payload: SwipePayload) => post<unknown>(`${base(serial)}/swipe`, payload) })
+  return useMutation({
+    mutationFn: (payload: SwipePayload) => post<unknown>(`${base(serial)}/swipe`, payload),
+  })
 }
 
 export function useDeviceKey(serial: string) {
@@ -369,7 +477,9 @@ export function useDeviceAppAction(serial: string) {
 }
 
 export function useDeviceShell(serial: string) {
-  return useMutation({ mutationFn: (payload: ShellPayload) => post<unknown>(`${base(serial)}/shell`, payload) })
+  return useMutation({
+    mutationFn: (payload: ShellPayload) => post<unknown>(`${base(serial)}/shell`, payload),
+  })
 }
 
 // ---------------------------------------------------------------- 录屏 / 镜像

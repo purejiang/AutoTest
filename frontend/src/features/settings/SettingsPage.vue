@@ -124,7 +124,14 @@ type KeyGroup = 'adb' | 'scrcpyJar' | 'engine' | 'recording' | 'capture' | 'secu
 const GROUP_KEYS: Record<KeyGroup, string[]> = {
   adb: ['adb.path', 'adb.connect_timeout_s'],
   scrcpyJar: ['scrcpy.jar'],
-  engine: ['engine.poll_interval_ms', 'engine.default_timeout_ms', 'engine.max_total_ms', 'engine.max_steps'],
+  engine: [
+    'engine.poll_interval_ms',
+    'engine.default_timeout_ms',
+    'engine.default_delay_before_ms',
+    'engine.default_delay_after_ms',
+    'engine.max_total_ms',
+    'engine.max_steps',
+  ],
   recording: ['recording.click_dump', 'recording.confirm_before_save', 'recording.target_mode'],
   capture: ['capture.logcat_auto_attach', 'capture.network.mode', 'capture.network.port'],
   security: ['security.token'],
@@ -605,7 +612,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
             <section class="card exec-card">
               <div class="card-head">
                 <h2>运行节奏</h2>
-                <span class="card-hint" title="轮询间隔、默认超时、单次运行上限与最大步数。">轮询 · 超时 · 步数</span>
+                <span class="card-hint" title="轮询间隔、默认超时/停顿、单次运行上限与最大步数。停顿只作为新建脚本的初值。">轮询 · 超时 · 停顿 · 步数</span>
               </div>
               <div class="card-body">
                 <div class="field-row">

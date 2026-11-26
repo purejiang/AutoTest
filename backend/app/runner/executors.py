@@ -415,6 +415,10 @@ def execute_input(ctx: RunContext, step: Any) -> dict[str, Any]:
         output["cleared"] = True
     ctx.ensure_actionable()
     ctx.driver.input_text(str(text))
+    if getattr(params, "hide_keyboard", False):
+        ctx.ensure_actionable()
+        ctx.driver.hide_keyboard()
+        output["keyboard_hidden"] = True
     return output
 
 
@@ -465,6 +469,9 @@ def execute_app(ctx: RunContext, step: Any) -> dict[str, Any]:
         ctx.driver.app_stop(package)
     elif action == "clear":
         ctx.driver.app_clear(package)
+    elif action == "grant":
+        granted = list(ctx.driver.app_grant(package) or [])
+        return {"action": action, "package": package, "activity": activity, "granted_permissions": granted}
     else:  # restart
         ctx.driver.app_stop(package)
         ctx.sleep_interruptible(300)

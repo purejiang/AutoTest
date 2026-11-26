@@ -2532,6 +2532,35 @@ pre,
   vertical-align: top;
 }
 
+.run-vars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.run-var {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+
+.run-var.override {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.run-var-eq {
+  color: var(--muted-2);
+}
+
 .mini-table td:first-child {
   width: 92px;
   color: var(--muted);

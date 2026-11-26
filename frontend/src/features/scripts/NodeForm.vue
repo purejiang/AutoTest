@@ -3,7 +3,9 @@ import { computed, ref } from 'vue'
 import { Delete } from '@element-plus/icons-vue'
 
 import type { OnFail, Retry, StepNode } from '@/types/api'
+import { useScriptVariables } from '@/composables/useScriptVariables'
 import { numberOrNull } from '@/lib/format'
+import { collectUsedVariables, missingVariables } from '@/lib/scriptVars'
 
 import { NODE_TYPE_META } from './nodeDefaults'
 import ParamsEditor from './ParamsEditor.vue'
@@ -16,6 +18,8 @@ const props = defineProps<{
   steps: StepNode[]
   defaultOnFail: 'abort' | 'continue'
   defaultTimeoutMs: number
+  defaultDelayBeforeMs: number
+  defaultDelayAfterMs: number
   defaultRetry: Retry | null
 }>()
 
@@ -27,6 +31,19 @@ const emit = defineEmits<{
 const advancedOpen = ref<string[]>([])
 const meta = computed(() => NODE_TYPE_META[props.node.type])
 const otherSteps = computed(() => props.steps.filter((step) => step.id !== props.node.id))
+
+// 当前节点 params/when 里用到、但脚本 variables 没声明的变量：运行时会原样保留，提前提示。
+const scriptVariables = useScriptVariables()
+const nodeUsedVariables = computed(() =>
+  collectUsedVariables({ params: props.node.params, when: props.node.when }),
+)
+const nodeMissingVariables = computed(() =>
+  scriptVariables ? missingVariables(scriptVariables.variables.value, nodeUsedVariables.value) : [],
+)
+
+function declareNodeVariable(name: string): void {
+  scriptVariables?.addVariable(name)
+}
 const onFailAction = computed(() => props.node.on_fail?.action ?? 'none')
 
 const RERUN_SAFETY_OPTIONS = [
@@ -62,6 +79,12 @@ function setOnFail(value: string): void {
 
 function setWhen(value: StepNode['when']): void {
   patch({ when: value })
+}
+
+/** 节点停顿的继承说明：0 = 跟随脚本默认，>0 = 该节点自定义。 */
+function delayHint(value: number, defaultValue: number): string {
+  if (value > 0) return defaultValue > 0 ? `自定义 ${value} ms（覆盖脚本默认 ${defaultValue} ms）` : `自定义 ${value} ms`
+  return defaultValue > 0 ? `0 = 跟随脚本默认 ${defaultValue} ms` : '0 = 该节点不停顿'
 }
 </script>
 
@@ -106,6 +129,30 @@ function setWhen(value: StepNode['when']): void {
     <el-form class="node-editor-form" label-position="top" size="small" @submit.prevent>
       <div class="section-label">动作参数</div>
       <ParamsEditor :type="node.type" :params="node.params" @change="patch({ params: $event })" />
+      <el-alert
+        v-if="nodeMissingVariables.length > 0"
+        class="node-var-warning"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="当前节点使用了未声明的脚本变量"
+      >
+        <div class="row wrap node-var-warning-body">
+          <span class="hint">
+            运行时若没有覆盖，<code class="code-text" v-pre>{{var}}</code> 会原样传给设备：
+          </span>
+          <el-button
+            v-for="name in nodeMissingVariables"
+            :key="name"
+            size="small"
+            text
+            type="primary"
+            @click="declareNodeVariable(name)"
+          >
+            {{ name }} · 声明
+          </el-button>
+        </div>
+      </el-alert>
 
       <div class="form-grid" style="margin-top: 6px">
         <el-form-item label="描述" class="full">
@@ -247,28 +294,35 @@ function setWhen(value: StepNode['when']): void {
               />
             </el-form-item>
             <el-form-item label="执行前停顿（ms）">
-              <el-input-number
-                :model-value="node.delay_before_ms"
-                :min="0"
-                :max="600000"
-                controls-position="right"
-                style="width: 100%"
-                @update:model-value="patch({ delay_before_ms: numberOrNull($event) ?? 0 })"
-              />
+              <div style="width: 100%">
+                <el-input-number
+                  :model-value="node.delay_before_ms"
+                  :min="0"
+                  :max="600000"
+                  controls-position="right"
+                  style="width: 100%"
+                  @update:model-value="patch({ delay_before_ms: numberOrNull($event) ?? 0 })"
+                />
+                <div class="hint" style="margin-top: 4px">{{ delayHint(node.delay_before_ms, defaultDelayBeforeMs) }}</div>
+              </div>
             </el-form-item>
             <el-form-item label="执行后停顿（ms）">
-              <el-input-number
-                :model-value="node.delay_after_ms"
-                :min="0"
-                :max="600000"
-                controls-position="right"
-                style="width: 100%"
-                @update:model-value="patch({ delay_after_ms: numberOrNull($event) ?? 0 })"
-              />
+              <div style="width: 100%">
+                <el-input-number
+                  :model-value="node.delay_after_ms"
+                  :min="0"
+                  :max="600000"
+                  controls-position="right"
+                  style="width: 100%"
+                  @update:model-value="patch({ delay_after_ms: numberOrNull($event) ?? 0 })"
+                />
+                <div class="hint" style="margin-top: 4px">{{ delayHint(node.delay_after_ms, defaultDelayAfterMs) }}</div>
+              </div>
             </el-form-item>
           </div>
           <div class="hint">
-            停顿位于节点动作之外，只影响节奏；真正等待界面变化时使用 wait 节点或执行条件。
+            停顿位于节点动作之外，只影响节奏；填 0 表示跟随脚本设置里的默认停顿，填非 0 值即该节点自定义。
+            真正等待界面变化时使用 wait 节点或执行条件。
           </div>
         </el-collapse-item>
       </el-collapse>
@@ -280,5 +334,14 @@ function setWhen(value: StepNode['when']): void {
 .node-head-actions .node-delete {
   width: auto;
   padding: 0 6px;
+}
+
+.node-var-warning {
+  margin: 0 0 8px;
+}
+
+.node-var-warning-body {
+  gap: 4px;
+  margin-top: 3px;
 }
 </style>

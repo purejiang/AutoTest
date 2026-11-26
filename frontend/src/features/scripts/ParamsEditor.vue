@@ -5,6 +5,8 @@ import { useScripts } from '@/api/scripts'
 import type { NodeType, Target } from '@/types/api'
 import { numberOrNull } from '@/lib/format'
 
+import VariableField from '@/components/VariableField.vue'
+
 import KeyValueEditor from './KeyValueEditor.vue'
 import TargetEditor from './TargetEditor.vue'
 
@@ -37,6 +39,7 @@ const APP_ACTIONS = [
   { value: 'stop', label: '停止 stop' },
   { value: 'clear', label: '清除数据 clear' },
   { value: 'restart', label: '重启 restart' },
+  { value: 'grant', label: '授权 grant' },
 ]
 
 const ASSERT_KINDS = [
@@ -119,9 +122,9 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
   <!-- input -->
   <template v-else-if="type === 'input'">
     <el-form-item label="输入文本" required>
-      <el-input
+      <VariableField
         :model-value="p.text ?? ''"
-        type="textarea"
+        multiline
         :rows="2"
         placeholder="支持 {{var}} 变量插值"
         @update:model-value="patch({ text: $event })"
@@ -138,6 +141,16 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
           @update:model-value="patch({ clear_first: Boolean($event) })"
         />
         <span class="small">输入前清空输入框</span>
+      </div>
+    </el-form-item>
+    <el-form-item>
+      <div class="row">
+        <el-switch
+          :model-value="Boolean(p.hide_keyboard)"
+          size="small"
+          @update:model-value="patch({ hide_keyboard: Boolean($event) })"
+        />
+        <span class="small">输入后收起键盘（避免键盘盖住下面的按钮，点击落到键盘上）</span>
       </div>
     </el-form-item>
   </template>
@@ -234,6 +247,9 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
         @update:model-value="patch({ ms: numberOrNull($event) ?? 1000 })"
       />
     </el-form-item>
+    <div class="hint" style="margin-top: -2px">
+      节点超时不够时引擎会自动抬到「等待时长 + 2s」（上限 600000ms）；显式设置的「节点超时」仍是硬上限。
+    </div>
   </template>
 
   <!-- app -->
@@ -249,19 +265,23 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
       </el-select>
     </el-form-item>
     <el-form-item label="package">
-      <el-input
+      <VariableField
         :model-value="p.package ?? ''"
         size="small"
-        placeholder="com.example.app"
+        placeholder="com.example.app，或 {{package}}"
         style="max-width: 360px"
         @update:model-value="patch({ package: $event || null })"
       />
     </el-form-item>
     <div v-if="p.action === 'clear'" class="hint" style="margin: -2px 0 8px">
       清除数据会清空该应用的全部数据，属于破坏性操作；建议把「重跑安全性」设为 destructive。
+      清理后平台会自动重新授予该应用声明的运行时权限（避免启动时系统授权框挡住脚本）。
+    </div>
+    <div v-if="p.action === 'grant'" class="hint" style="margin: -2px 0 8px">
+      补齐该应用声明的全部运行时权限（通知/存储/相机等）。不想清数据、但启动后弹系统授权框时可单独加这一步。
     </div>
     <el-form-item v-if="(p.action ?? 'launch') === 'launch' || p.action === 'restart'" label="activity（可选）">
-      <el-input
+      <VariableField
         :model-value="p.activity ?? ''"
         size="small"
         placeholder=".MainActivity（留空用 launcher activity）"
@@ -274,9 +294,9 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
   <!-- shell -->
   <template v-else-if="type === 'shell'">
     <el-form-item label="命令" required>
-      <el-input
+      <VariableField
         :model-value="p.command ?? ''"
-        type="textarea"
+        multiline
         :rows="3"
         placeholder="adb shell 命令（不含 adb shell 前缀），支持 {{var}}"
         @update:model-value="patch({ command: $event })"
@@ -319,10 +339,10 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
       <TargetEditor :value="p.target as Target" @update:value="setTarget('target', $event)" />
     </el-form-item>
     <el-form-item v-if="needsAssertValue" :label="p.kind === 'foreground' ? '前台包名' : '包含文本'" required>
-      <el-input
+      <VariableField
         :model-value="p.value ?? ''"
         size="small"
-        :placeholder="p.kind === 'foreground' ? 'com.example.app' : '期望包含的文本'"
+        :placeholder="p.kind === 'foreground' ? 'com.example.app，或 {{package}}' : '期望包含的文本'"
         style="max-width: 360px"
         @update:model-value="patch({ value: $event || null })"
       />
@@ -347,19 +367,21 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
     <el-form-item label="变量覆盖（可选）">
       <KeyValueEditor
         :value="p.variables ?? {}"
+        variable-picker
         empty-hint="暂无变量覆盖，子脚本使用自身 variables"
         @update:value="patch({ variables: $event })"
       />
     </el-form-item>
+    <div class="hint">整段子脚本受本节点「节点超时」限制；没显式设置时不再按脚本默认 8s 截断（最多到引擎上限/总预算），长流程建议显式设置。</div>
   </template>
 
   <!-- screenshot -->
   <template v-else-if="type === 'screenshot'">
     <el-form-item label="截图名称（可选）">
-      <el-input
+      <VariableField
         :model-value="p.name ?? ''"
         size="small"
-        placeholder="留空自动命名"
+        placeholder="留空自动命名，或 {{name}}"
         style="max-width: 360px"
         @update:model-value="patch({ name: $event || null })"
       />

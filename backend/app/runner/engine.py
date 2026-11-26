@@ -479,7 +479,7 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                         details=when_error.get("details"),
                     )
 
-            ctx.sleep_interruptible(int(getattr(step, "delay_before_ms", 0) or 0))
+            ctx.sleep_interruptible(_step_delay_ms(ctx, step, "delay_before_ms"))
 
             retry_count, retry_interval = _retry_policy(ctx, step)
             attempts = 0
@@ -579,7 +579,7 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                 else:
                     step_duration = max(0, ctx.active_elapsed_ms() - started_active)
                     retry_used[step.id] = 0
-                    ctx.sleep_interruptible(int(getattr(step, "delay_after_ms", 0) or 0))
+                    ctx.sleep_interruptible(_step_delay_ms(ctx, step, "delay_after_ms"))
                     _record_attempt(
                         ctx,
                         step,
@@ -724,7 +724,63 @@ def _retry_policy(ctx: RunContext, step: Any) -> tuple[int, int]:
     return max(0, int(retry.count)), max(0, int(retry.interval_ms))
 
 
+WAIT_TIMEOUT_BUFFER_MS = 2000
+
+
+def _wait_duration_ms(step: Any) -> int | None:
+    """wait 节点自身的等待时长（sleep 的 ms / until 的 timeout_ms）；非 wait 或未配置返回 None。"""
+    if str(getattr(step, "type", "") or "") != "wait":
+        return None
+    params = getattr(step, "params", None)
+    if params is None:
+        return None
+    if str(getattr(params, "mode", "") or "") == "sleep":
+        duration = getattr(params, "ms", None)
+    else:
+        duration = getattr(params, "timeout_ms", None)
+    if isinstance(duration, int) and duration > 0:
+        return duration
+    return None
+
+
+def _timeout_clamp_note(ctx: RunContext, step: Any, timeout_ms: int) -> str:
+    """仅当「等待时长被引擎节点超时上限截断」时给排查说明；其他情况返回空串。"""
+    requested = _wait_duration_ms(step)
+    if requested is None or requested + WAIT_TIMEOUT_BUFFER_MS <= timeout_ms:
+        return ""
+    high = min(int(ctx.limits.get("step_max_timeout_ms", 600_000) or 600_000), 600_000)
+    if timeout_ms < high:
+        # 被显式节点超时（或继承默认）限制，不是引擎上限截断，不误导用户去调设置。
+        return ""
+    return (
+        f"（等待 {requested} ms 超过引擎节点超时上限 {timeout_ms} ms，已按上限截断；"
+        f"可在设置里调大 engine.step_max_timeout_ms，最大 600000 ms）"
+    )
+
+
+_SCRIPT_DELAY_ATTR = {
+    "delay_before_ms": "default_delay_before_ms",
+    "delay_after_ms": "default_delay_after_ms",
+}
+
+
+def _step_delay_ms(ctx: RunContext, step: Any, attr: str) -> int:
+    """节点停顿：节点值 >0 即该节点自定义；0 = 跟随脚本 settings 的全节点默认。
+
+    默认值为 0 时行为与旧版完全一致（不停顿）。录制转换把真实操作间隔写进
+    delay_before_ms（>0），这些值本身就是自定义，不会被脚本默认覆盖或叠加；
+    录制脚本自身的 settings 默认停顿也是 0，所以「录制还原的节奏」不受影响。
+    """
+    value = int(getattr(step, attr, 0) or 0)
+    if value > 0:
+        return value
+    settings = getattr(ctx.script.parsed, "settings", None)
+    default = getattr(settings, _SCRIPT_DELAY_ATTR[attr], 0) if settings is not None else 0
+    return max(0, int(default or 0))
+
+
 def _step_timeout(ctx: RunContext, step: Any) -> int:
+    explicit = getattr(step, "timeout_ms", None) is not None
     raw = getattr(step, "timeout_ms", None)
     if raw is None:
         raw = ctx.script.parsed.settings.default_timeout_ms
@@ -737,6 +793,16 @@ def _step_timeout(ctx: RunContext, step: Any) -> int:
     duration = getattr(getattr(step, "params", None), "duration_ms", None)
     if isinstance(duration, int) and duration > 0:
         raw = max(int(raw), duration + 2000)
+    # 只有「继承脚本默认」的节点超时才自动让位：显式设置的节点超时始终是硬上限。
+    if not explicit:
+        wait_duration = _wait_duration_ms(step)
+        if wait_duration is not None:
+            # wait 的等待时长同样是动作耗时，不能让继承来的默认 8s 静默截断。
+            raw = max(int(raw), wait_duration + WAIT_TIMEOUT_BUFFER_MS)
+        elif str(getattr(step, "type", "") or "") == "sub_script":
+            # 子脚本总耗时无法预估：继承的默认值不能把整段子脚本切成 8s；
+            # 子脚本内部各节点仍有自己的节点超时，总预算由 engine.max_total_ms 兜底。
+            raw = max(int(raw), high)
     return max(low, min(int(raw), high))
 
 
@@ -805,9 +871,12 @@ def _execute_step_with_timeout(
                 # 执行线程还卡在设备调用里：拒绝重试，避免同一节点两个并发执行
                 raise StepAbandoned(
                     f"step {getattr(step, 'id', '?')} timed out after {timeout_ms} ms "
-                    "(worker still running; retry suppressed)"
+                    f"(worker still running; retry suppressed){_timeout_clamp_note(ctx, step, timeout_ms)}"
                 )
-            raise StepTimeout(f"step {getattr(step, 'id', '?')} timed out after {timeout_ms} ms")
+            raise StepTimeout(
+                f"step {getattr(step, 'id', '?')} timed out after {timeout_ms} ms"
+                f"{_timeout_clamp_note(ctx, step, timeout_ms)}"
+            )
     error = box.get("error")
     if error is not None:
         raise error
