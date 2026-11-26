@@ -224,14 +224,11 @@ def test_events_to_script_and_delete(api) -> None:
     assert removed == {"deleted": True, "id": recording_id}
     assert api.client.get(f"/api/recordings/{recording_id}").status_code == 404
     # 删除录制保留脚本 source/origin（软关联）
-    from app.db import session_scope
-    from app.models import Script
+    from app.services import script_service
 
-    with session_scope() as db:
-        script = db.get(Script, payload["script_id"])
-        assert script is not None
-        assert script.source == "mirror"
-        assert script.origin_recording_id == recording_id
+    script = script_service.read_record(payload["script_id"])
+    assert script["source"] == "mirror"
+    assert script["origin_recording_id"] == recording_id
 
 
 # ---------------------------------------------------------------- 批量删除

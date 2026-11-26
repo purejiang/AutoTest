@@ -30,6 +30,7 @@ _BOOTSTRAP_LOCKED: dict[str, tuple[Any, str]] | None = None
 ENV_MAP: dict[str, str] = {
     "AUTOTEST_DATA_DIR": "runtime.data_dir",
     "AUTOTEST_ARTIFACTS_DIR": "runtime.artifacts_dir",
+    "AUTOTEST_SCRIPTS_DIR": "runtime.scripts_dir",
     "AUTOTEST_ADB": "adb.path",
     "AUTOTEST_HOST": "server.host",
     "AUTOTEST_PORT": "server.port",
@@ -45,6 +46,7 @@ BOOTSTRAP_KEYS: frozenset[str] = frozenset(
     {
         "runtime.data_dir",
         "runtime.artifacts_dir",
+        "runtime.scripts_dir",
         "runtime.frontend_dir",
         "server.host",
         "server.port",
@@ -74,6 +76,7 @@ DEFAULTS: dict[str, Any] = {
     "runtime.data_dir": "",
     "runtime.frontend_dir": "",
     "runtime.artifacts_dir": "",  # 空 = data_dir/artifacts
+    "runtime.scripts_dir": "",  # 空 = ~/.autotest/scripts（脚本 JSON 文件的家）
     "engine.poll_interval_ms": 350,
     "engine.default_timeout_ms": 8000,
     # 新建脚本的默认停顿初值：只在 create_script 时写入脚本 settings，运行时不兜底
@@ -547,6 +550,13 @@ def data_dir() -> Path:
 
 def artifacts_dir() -> Path:
     path = _expand(str(get("runtime.artifacts_dir") or ""), data_dir() / "artifacts")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def scripts_dir() -> Path:
+    """脚本 JSON 的存放目录；默认放在 ~/.autotest/scripts（用户资产，不跟 data_dir 混）。"""
+    path = _expand(str(get("runtime.scripts_dir") or ""), home_dir() / "scripts")
     path.mkdir(parents=True, exist_ok=True)
     return path
 

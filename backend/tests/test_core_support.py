@@ -22,7 +22,7 @@ from app.recorder import hooks
 from app.services import device_registry
 
 BASE_FILE_LAYER: dict[str, Any] = {
-    "runtime": {"data_dir": ""},  # 由夹具填成 tmp_path/data
+    "runtime": {"data_dir": "", "scripts_dir": ""},  # 由夹具填成 tmp_path 下的目录
     "engine": {"poll_interval_ms": 300},  # 文件层值（DB 层覆盖测试用）
     "recording": {"click_dump": True},
 }
@@ -60,6 +60,7 @@ def _deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
 def write_config_file(tmp_path: Path, extra: dict[str, Any] | None = None) -> Path:
     layer = json.loads(json.dumps(BASE_FILE_LAYER))
     layer["runtime"]["data_dir"] = str(tmp_path / "data")
+    layer["runtime"]["scripts_dir"] = str(tmp_path / "scripts")
     if extra:
         _deep_merge(layer, extra)
     path = tmp_path / "config.json"

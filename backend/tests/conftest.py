@@ -20,6 +20,8 @@ def isolated_data_dir(tmp_path, monkeypatch):
     默认目录现在在工作区之外（也符合真实默认 ~/.autotest/data），必须显式隔离。
     """
     monkeypatch.setenv("AUTOTEST_DATA_DIR", str(tmp_path / "data"))
+    # 脚本是 JSON 文件：测试绝不能读写 ~/.autotest/scripts
+    monkeypatch.setenv("AUTOTEST_SCRIPTS_DIR", str(tmp_path / "scripts"))
     config.reset_to_defaults()
     yield
 

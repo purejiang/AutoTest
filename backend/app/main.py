@@ -28,7 +28,7 @@ from starlette.types import Scope
 
 from . import __version__, config, db, errors, logs
 from .logs import logger
-from .services import settings_service
+from .services import script_service, settings_service
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = BACKEND_ROOT / "static"
@@ -88,8 +88,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     db.init_db()
     try:
         settings_service.migrate_db_settings_to_file()
-    except Exception:  # 配置迁移失败也要能起服务，前端可看到 /api/health 的 degraded
-        logger.exception("failed to migrate legacy db settings to config file")
+        script_service.migrate_db_scripts_to_files()
+    except Exception:  # 迁移失败也要能起服务，前端可看到 /api/health 的 degraded
+        logger.exception("failed to migrate legacy db rows to files")
     logger.info("AutoTest backend ready (version %s, data_dir=%s)", __version__, config.data_dir())
     yield
     logger.info("AutoTest backend stopped")
@@ -238,8 +239,9 @@ def _run_server() -> None:
     db.init_db()
     try:
         settings_service.migrate_db_settings_to_file()
+        script_service.migrate_db_scripts_to_files()
     except Exception:  # pragma: no cover - 与 lifespan 同口径
-        logger.exception("failed to migrate legacy db settings to config file")
+        logger.exception("failed to migrate legacy db rows to files")
     host = str(config.get("server.host") or "127.0.0.1")
     port = int(config.get("server.port") or 8787)
     logger.info("starting uvicorn on http://%s:%s", host, port)

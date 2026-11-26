@@ -34,8 +34,9 @@ from ..android.driver import KEY_CODES, resolve_key
 from ..db import session_scope
 from ..errors import ApiError
 from ..logs import logger
-from ..models import Recording, RecordingEvent, Script, now_iso
+from ..models import Recording, RecordingEvent, now_iso
 from ..schemas import validate_script
+from ..services import script_service
 from . import convert, hooks
 
 DriverGetter = Callable[[str], Any]
@@ -1203,20 +1204,18 @@ def to_script(
     # Recording.mode=web -> source=mirror；physical -> source=physical。
     # origin_recording_id 是软关联（无 FK），删除录制后仍保留来源信息。
     source = "physical" if recording_mode == "physical" else "mirror"
+    # 脚本以 JSON 文件为准（v0.2.9）；DB 只保留 recording.script_id 软关联。
+    script_service.create_script_record(
+        None,
+        script,
+        name=script_name,
+        notes=script["notes"],
+        source=source,
+        origin_recording_id=recording_id,
+        script_id=script_id,
+        created_at=timestamp,
+    )
     with session_scope() as db:
-        db.add(
-            Script(
-                id=script_id,
-                name=script_name,
-                notes=script["notes"],
-                schema_version=1,
-                data=script,
-                source=source,
-                origin_recording_id=recording_id,
-                created_at=timestamp,
-                updated_at=timestamp,
-            )
-        )
         recorder = db.get(Recording, recording_id)
         if recorder is not None:
             recorder.script_id = script_id

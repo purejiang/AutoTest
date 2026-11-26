@@ -268,11 +268,63 @@ def test_delete_script_clears_recording_link_only(core_client) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "id": script["id"]}
+    from app import config
+
+    assert not (config.scripts_dir() / f"{script['id']}.json").exists()
     with db.session_scope() as session:
-        assert session.get(models.Script, script["id"]) is None
         recording = session.get(models.Recording, "rec-link")
         assert recording is not None  # 录制本身保留
         assert recording.script_id is None  # 只清空引用
+
+
+def test_script_is_stored_as_json_file(core_client) -> None:
+    """脚本以 JSON 文件为准：创建写文件、DB 不再有 scripts 行、删除删文件。"""
+    from app import config
+    from app.services import script_service
+
+    created = _create(core_client, name="文件脚本")
+    path = config.scripts_dir() / f"{created['id']}.json"
+    assert path.exists()
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["id"] == created["id"]
+    assert record["name"] == "文件脚本"
+    assert record["data"]["name"] == "文件脚本"
+    assert script_service.read_record(created["id"])["id"] == created["id"]
+
+    with db.session_scope() as session:
+        assert session.get(models.Script, created["id"]) is None
+
+    assert core_client.delete(f"/api/scripts/{created['id']}").status_code == 200
+    assert not path.exists()
+
+
+def test_migrate_db_scripts_to_files(core_client) -> None:
+    """旧 scripts 表一次性迁到 JSON 文件：文件出现、DB 行清空、接口能读到。"""
+    from app import config
+    from app.services import script_service
+
+    with db.session_scope() as session:
+        session.add(
+            models.Script(
+                id="legacy-script-1",
+                name="旧库脚本",
+                notes="迁移",
+                schema_version=1,
+                data=json.loads(json.dumps(THREE_STEPS)),
+                source="manual",
+            )
+        )
+    migrated = script_service.migrate_db_scripts_to_files()
+    assert migrated >= 1
+    path = config.scripts_dir() / "legacy-script-1.json"
+    assert path.exists()
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["name"] == "旧库脚本"
+    with db.session_scope() as session:
+        assert session.get(models.Script, "legacy-script-1") is None
+    detail = core_client.get("/api/scripts/legacy-script-1")
+    assert detail.status_code == 200
+    assert detail.json()["data"]["steps"]
 
 
 def test_duplicate_without_body_uses_suffix(core_client) -> None:

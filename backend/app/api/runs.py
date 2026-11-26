@@ -19,10 +19,11 @@ from ..db import session_scope
 from ..errors import ApiError
 from ..events import RunEventBus
 from ..logs import logger
-from ..models import Artifact, Run, RunEvent, Script, StepResult
+from ..models import Artifact, Run, RunEvent, StepResult
 from ..runner import controls, engine
 from ..runner.engine import TERMINAL_STATUSES
 from ..schemas import validate_script
+from ..services import script_service
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -325,11 +326,17 @@ def debug_run(run_id: int, payload: RunDebugRequest) -> dict[str, Any]:
 
 # ================================================================ 内部工具
 def _load_script(script_id: str) -> dict[str, Any]:
-    with session_scope() as session:
-        row = session.get(Script, str(script_id))
-        if row is None:
-            raise ApiError("NOT_FOUND", f"script not found: {script_id}", {"script_id": script_id})
-        return {"id": row.id, "name": row.name, "data": dict(row.data or {})}
+    try:
+        record = script_service.read_record(str(script_id))
+    except ApiError:
+        raise ApiError(
+            "NOT_FOUND", f"script not found: {script_id}", {"script_id": script_id}
+        ) from None
+    return {
+        "id": str(record["id"]),
+        "name": str(record.get("name") or ""),
+        "data": dict(record.get("data") or {}),
+    }
 
 
 def _resolve_serial(serial: str | None) -> str:

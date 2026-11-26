@@ -17,9 +17,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..db import session_scope
+from ..errors import ApiError
 from ..logs import logger
-from ..models import Script
 from .context import (
     MAX_SUB_DEPTH,
     NonRetryableError,
@@ -548,11 +547,12 @@ def execute_sub_script(ctx: RunContext, step: Any) -> dict[str, Any]:
         raise SubScriptDepthExceeded(
             f"sub_script nesting exceeds {MAX_SUB_DEPTH} levels (script={script_id})"
         )
-    with session_scope() as session:
-        row = session.get(Script, script_id)
-        data = dict(row.data) if row is not None and row.data else None
-    if data is None:
-        raise NonRetryableError(f"sub script not found: {script_id}")
+    from ..services import script_service  # 延迟导入，避免 runner <-> services 循环
+
+    try:
+        data = script_service.read_script_data(script_id)
+    except ApiError:
+        raise NonRetryableError(f"sub script not found: {script_id}") from None
     try:
         snapshot = RunSnapshot.from_data(data, script_id=script_id)
     except Exception as exc:  # 子脚本快照非法：确定性错误，不重试

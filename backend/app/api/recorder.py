@@ -24,9 +24,10 @@ from ..api_schemas import (
 from ..db import session_scope
 from ..errors import ApiError, not_found
 from ..logs import logger
-from ..models import Recording, RecordingEvent, Script, now_iso
+from ..models import Recording, RecordingEvent, now_iso
 from ..recorder import session as recorder_session
 from ..recorder.session import RecordingEventBus
+from ..services import script_service
 
 router = APIRouter(tags=["recordings"])
 
@@ -56,18 +57,14 @@ def _recording_dict(
 def _script_name_for(db: Any, script_id: str | None) -> str | None:
     if not script_id:
         return None
-    value = db.scalar(select(Script.name).where(Script.id == str(script_id)))
-    return str(value) if value is not None else None
+    return script_service.script_names({str(script_id)}).get(str(script_id))
 
 
 def _script_names(db: Any, script_ids: set[str]) -> dict[str, str]:
-    """列表批量查脚本名，避免 N+1。"""
+    """脚本名来自 JSON 文件（脚本不再存 DB）。"""
     if not script_ids:
         return {}
-    rows = db.execute(
-        select(Script.id, Script.name).where(Script.id.in_(sorted(script_ids)))
-    ).all()
-    return {str(row[0]): str(row[1]) for row in rows}
+    return script_service.script_names(script_ids)
 
 
 def _event_dict(event: RecordingEvent) -> dict[str, Any]:

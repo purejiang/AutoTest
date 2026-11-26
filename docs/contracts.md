@@ -100,8 +100,15 @@ frontend/src/
 ## 2. DB 表（SQLite，WAL，短事务，busy_timeout=5000）
 
 时间字段统一 ISO8601 UTC 字符串，写库用 `models.now_iso()`。
-表结构以 `backend/app/models.py`（Lead 已写）为准——scripts/runs/step_results/run_events/
-artifacts/recordings/recording_events/reports/settings，索引见 models.py。
+表结构以 `backend/app/models.py` 为准——runs/step_results/run_events/artifacts/recordings/
+recording_events/reports，索引见 models.py。
+
+**v0.2.9 起脚本与配置不存 DB：**
+- 脚本 = `<scripts_dir>/<id>.json`（默认 `~/.autotest/scripts`，`runtime.scripts_dir` / `AUTOTEST_SCRIPTS_DIR` 可改），
+  文件内容 `{id,name,notes,source,origin_recording_id,schema_version,created_at,updated_at,data}`；
+- 配置 = `~/.autotest/config.json`（见 §11）；
+- `scripts` / `settings` 两张表只作为旧库迁移来源：启动时 `migrate_db_scripts_to_files()` /
+  `migrate_db_settings_to_file()` 写入文件后清空表；文件已存在时不覆盖。
 状态枚举：
 - run.status：`queued|running|paused|stopping|succeeded|failed|aborted|stopped|interrupted`
 - step_results.status：`passed|failed|skipped|error`
@@ -141,6 +148,8 @@ goto 目标、sub_script 存在性 warning）用 `schemas.validate_script()`。
     `on_fail.target_id`、wait 的时长等数字/枚举字段。
   未知变量（未声明且未覆盖）运行时原样保留并 emit 一条 `log` warn。
   前端编辑器对上述可插值字段提供「{{ }}」变量选择器（插入到光标处），并在节点用到未声明变量时提示。
+- 存储位置：脚本 JSON（含 steps）是**文件**，`<scripts_dir>/<id>.json`；DB 只存运行记录和
+  `runs.script_snapshot`（运行时的脚本快照，改脚本不影响历史记录）。
 - 节点公共字段：id/name/type/description/enabled/when/timeout_ms/delay_before_ms/delay_after_ms/
   retry/on_fail/screenshot_on_fail/rerun_safety/tags/params。
 - 节点停顿 `delay_before_ms` / `delay_after_ms`：动作之外的节奏停顿，不计入节点超时。

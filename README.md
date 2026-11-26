@@ -17,7 +17,7 @@
 | 12 类节点 | click / long_click / swipe / drag / input / key / wait / app / shell / assert / sub_script / screenshot |
 | 脚本录制 | **镜像网页操作录制（主）** + 真机操作录制（辅助，getevent）；支持暂停、计时、事件数；录制草稿可一键转脚本/重新生成；脚本可作为节点嵌入其他脚本 |
 | 视频录制 | **浏览器端录制镜像画面**（可叠加点击/滑动特效），支持暂停/继续、计时、停止后预览/拖动/下载；设备端 screenrecord 保留为「设备录屏」可选模式 |
-| 持久化 | 脚本、运行记录、步骤结果、事件流、产物、报告全部存 SQLite（WAL），带 CRUD |
+| 持久化 | 脚本是 `~/.autotest/scripts/*.json`（可直接进 git / 拷贝 / 手改），配置是 `~/.autotest/config.json`；运行记录、步骤结果、事件流、产物、报告存 SQLite（WAL），带 CRUD |
 | 报告 | 一键生成 zip（HTML 汇总 + JUnit XML + 失败截图），支持逐节点耗时与失败原因 |
 | 调试 | 断点、单步、从指定节点重跑；暂停后解锁手动控制（干预留痕） |
 | 治理 | 30 天保留策略、清理统计、报告体积上限（不含视频） |
@@ -263,6 +263,7 @@ scripts/          setup / dev / build / start / release / 环境自检 / scrcpy 
   设置页只读，改配置文件/环境变量后重启
 - 数据库只存运行数据：运行记录、步骤结果、事件、产物索引、报告；配置是文件
 - 数据目录：`~/.autotest/data`（`runtime.data_dir` 可改），含 DB、artifacts、reports、日志
+- 脚本目录：`~/.autotest/scripts/*.json`（`runtime.scripts_dir` / `AUTOTEST_SCRIPTS_DIR` 可改），一个脚本一个文件
 
 ## 版本管理（本地 git + GitHub 远端）
 

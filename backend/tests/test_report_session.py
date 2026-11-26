@@ -177,12 +177,12 @@ def test_web_session_to_script_creates_mirror_script(temp_db, driver_getter) -> 
     assert all(step["when"] is None for step in result["data"]["steps"])
     assert isinstance(result["warnings"], list)
 
-    with session_scope() as db:
-        script = db.get(Script, result["id"])
-        assert script is not None
-        assert script.source == "mirror"
-        assert script.origin_recording_id == recording_id
-        assert script.name == "录制脚本A"
+    from app.services import script_service
+
+    script = script_service.read_record(result["id"])
+    assert script["source"] == "mirror"
+    assert script["origin_recording_id"] == recording_id
+    assert script["name"] == "录制脚本A"
     assert read_recording(recording_id).script_id == result["id"]
 
     # 事件被排除后只剩一个节点
@@ -220,11 +220,12 @@ def test_physical_recording_to_script_maps_source(temp_db) -> None:
     assert result["source"] == "physical"
     assert result["origin_recording_id"] == recording_id
     assert all(step["when"] is None for step in result["data"]["steps"])
+    from app.services import script_service
+
+    script = script_service.read_record(result["id"])
+    assert script["source"] == "physical"
+    assert script["origin_recording_id"] == recording_id
     with session_scope() as db:
-        script = db.get(Script, result["id"])
-        assert script is not None
-        assert script.source == "physical"
-        assert script.origin_recording_id == recording_id
         assert db.get(Recording, recording_id).script_id == result["id"]
 
 

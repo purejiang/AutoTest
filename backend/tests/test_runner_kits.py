@@ -82,9 +82,16 @@ def make_script(
 
 # ---------------------------------------------------------------- DB 构造
 def insert_script(data: dict[str, Any], script_id: str | None = None) -> str:
+    """脚本以 JSON 文件存储（与生产一致），返回 id；目录由测试夹具隔离到 tmp。"""
+    from app.services import script_service
+
     script_id = script_id or f"script-{uuid.uuid4().hex[:8]}"
-    with db.session_scope() as session:
-        session.add(models.Script(id=script_id, name=str(data.get("name") or script_id), data=data))
+    script_service.create_script_record(
+        None,
+        data,
+        name=str(data.get("name") or script_id),
+        script_id=script_id,
+    )
     return script_id
 
 
