@@ -9,7 +9,7 @@ withDefaults(
   defineProps<{
     entry: SettingEntry
     modelValue: any
-    source: 'default' | 'file' | 'db' | 'env'
+    source: 'default' | 'file' | 'env'
     /** 启动项（bootstrap）：只读，改配置文件/环境变量后重启 */
     readonly?: boolean
     /** 配置文件路径，启动项提示用 */
@@ -27,9 +27,8 @@ function update(value: unknown): void {
   emit('update:modelValue', value)
 }
 
-function sourceTitle(source: 'default' | 'file' | 'db' | 'env'): string {
-  if (source === 'db') return '来自数据库覆盖，可点右侧 ↺ 删除；删除后按优先级回到文件/默认值'
-  if (source === 'file') return '来自配置文件，优先级高于数据库/默认值；需修改配置文件后重启'
+function sourceTitle(source: 'default' | 'file' | 'env'): string {
+  if (source === 'file') return '来自配置文件；点右侧 ↺ 可把该项从配置文件移除（回到默认/环境变量）'
   if (source === 'env') return '来自环境变量，优先级最高；需取消环境变量并重启进程'
   return '当前使用代码默认值'
 }
@@ -67,11 +66,11 @@ function defaultLabel(entry: SettingEntry): string | null {
         {{ settingSourceMeta(source).label }}
       </StatusTag>
       <el-button
-        v-if="source === 'db'"
+        v-if="source === 'file'"
         size="small"
         text
         :icon="RefreshLeft"
-        title="删除数据库覆盖，按优先级回到配置文件/默认值"
+        title="从配置文件移除该项，回到默认值/环境变量"
         @click="emit('clear')"
       />
     </div>

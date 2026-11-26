@@ -19,6 +19,7 @@ import {
   useDeleteSettingOverride,
   useHealth,
   useMaintenanceStats,
+  useReloadSettings,
   useResetSettings,
   useSettings,
   useUpdateSettings,
@@ -43,6 +44,7 @@ const settingsQuery = useSettings()
 const updateMutation = useUpdateSettings()
 const resetMutation = useResetSettings()
 const deleteOverrideMutation = useDeleteSettingOverride()
+const reloadMutation = useReloadSettings()
 const healthQuery = useHealth()
 const statsQuery = useMaintenanceStats()
 const cleanupMutation = useCleanup()
@@ -181,15 +183,15 @@ const overrideCount = computed(
 )
 const hasOverrides = computed(() => overrideCount.value > 0)
 const overrideTooltip = computed(() => {
-  const counts: Record<string, number> = { db: 0, file: 0, env: 0 }
+  const counts: Record<string, number> = { file: 0, env: 0 }
   for (const source of Object.values(sources.value)) {
     if (source in counts) counts[source] += 1
   }
   return [
-    `有 ${overrideCount.value} 项设置不是代码默认值：数据库覆盖 ${counts.db} 项 · 配置文件 ${counts.file} 项 · 环境变量 ${counts.env} 项。`,
-    '行为/偏好项优先级：默认值 < 配置文件 < 数据库 < 环境变量；每项标题旁的来源标签显示具体来源。',
-    '启动项（数据目录、端口等，打开数据库前就要确定）只认 默认 < 配置文件 < 环境变量，不存数据库，页面只读：改配置文件或环境变量后重启。',
-    '只有「数据库覆盖」可以在页面上点 ↺ 删除，文件/环境变量需要修改配置或重启进程。',
+    `有 ${overrideCount.value} 项设置不是代码默认值：配置文件 ${counts.file} 项 · 环境变量 ${counts.env} 项。`,
+    '优先级：默认值 < 配置文件 < 环境变量——配置只存文件，不再写数据库。',
+    '设置页保存 = 原子写 config.json 并立即重载；手改文件后可点「重新载入配置文件」。',
+    '启动项（数据目录、端口等，打开数据库前就要确定）运行中不能切换，改了需重启。',
   ].join('\n')
 })
 
@@ -217,7 +219,7 @@ const cleanupSummary = computed(() => {
   return parts.join(' · ')
 })
 
-function sourceOf(entry: SettingEntry): 'default' | 'file' | 'db' | 'env' {
+function sourceOf(entry: SettingEntry): 'default' | 'file' | 'env' {
   return sources.value[entry.key] ?? 'default'
 }
 
@@ -227,9 +229,9 @@ function onMirrorChange(key: string, value: unknown): void {
 
 async function confirmDeleteOverride(key: string, title: string): Promise<void> {
   try {
-    await ElMessageBox.confirm(`删除「${title}」的覆盖，回到默认值？`, '删除覆盖', {
+    await ElMessageBox.confirm(`从配置文件移除「${title}」，回到默认值/环境变量？`, '移除配置项', {
       type: 'warning',
-      confirmButtonText: '删除',
+      confirmButtonText: '移除',
       cancelButtonText: '取消',
     })
   } catch {
@@ -237,7 +239,7 @@ async function confirmDeleteOverride(key: string, title: string): Promise<void> 
   }
   try {
     await deleteOverrideMutation.mutateAsync(key)
-    ElMessage.success('已删除覆盖')
+    ElMessage.success('已从配置文件移除')
   } catch {
     // 全局错误提示
   }
@@ -263,7 +265,10 @@ async function saveSettings(): Promise<void> {
   for (const key of changedKeys.value) payload[key] = values[key]
   try {
     await updateMutation.mutateAsync(payload)
-    ElMessage.success(`已保存 ${count} 项设置${mirrorTouched ? ' · 镜像参数需停止并重新启动镜像生效' : ''}`)
+    const file = settings.value?.config_file ?? 'config.json'
+    ElMessage.success(
+      `已写入 ${file}（${count} 项）${mirrorTouched ? ' · 镜像参数需停止并重新启动镜像生效' : ''}`,
+    )
   } catch {
     // 全局错误提示
   }
@@ -353,15 +358,25 @@ async function reloadSettings(): Promise<void> {
   if (changedKeys.value.length > 0) {
     try {
       await ElMessageBox.confirm(
-        `有 ${changedKeys.value.length} 项未保存的改动，重新加载会丢弃这些改动。`,
-        '重新加载设置',
-        { type: 'warning', confirmButtonText: '重新加载', cancelButtonText: '取消' },
+        `有 ${changedKeys.value.length} 项未保存的改动，重新载入会丢弃这些改动。`,
+        '重新载入配置文件',
+        { type: 'warning', confirmButtonText: '重新载入', cancelButtonText: '取消' },
       )
     } catch {
       return
     }
   }
-  await settingsQuery.refetch()
+  try {
+    const result = await reloadMutation.mutateAsync()
+    const pending = result.restart_required ?? []
+    if (pending.length > 0) {
+      ElMessage.warning(`已重新载入；${pending.join('、')} 是启动项，需重启 AutoTest 才生效`)
+    } else {
+      ElMessage.success('已重新载入配置文件')
+    }
+  } catch {
+    // 全局错误提示
+  }
 }
 
 async function runCleanup(): Promise<void> {
@@ -420,7 +435,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
             <el-dropdown-item command="reset" :icon="RefreshLeft" :disabled="resetMutation.isPending.value">
               恢复默认
             </el-dropdown-item>
-            <el-dropdown-item command="reload" :icon="Refresh">重新加载</el-dropdown-item>
+            <el-dropdown-item command="reload" :icon="Refresh">重新载入配置文件</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -927,7 +942,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
                 size="small"
                 class="savebar-more"
                 :icon="MoreFilled"
-                title="更多：恢复默认 / 重新加载"
+                title="更多：恢复默认 / 重新载入配置文件"
                 aria-label="更多设置操作"
               />
               <template #dropdown>
@@ -939,7 +954,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   >
                     恢复默认
                   </el-dropdown-item>
-                  <el-dropdown-item command="reload" :icon="Refresh">重新加载</el-dropdown-item>
+                  <el-dropdown-item command="reload" :icon="Refresh">重新载入配置文件</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>

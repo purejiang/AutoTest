@@ -87,9 +87,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     config.ensure_dirs()
     db.init_db()
     try:
-        settings_service.load_into_config()
-    except Exception:  # DB 坏了也要能起服务，前端可看到 /api/health 的 degraded
-        logger.exception("failed to load settings from db; fallback to file/default layer")
+        settings_service.migrate_db_settings_to_file()
+    except Exception:  # 配置迁移失败也要能起服务，前端可看到 /api/health 的 degraded
+        logger.exception("failed to migrate legacy db settings to config file")
     logger.info("AutoTest backend ready (version %s, data_dir=%s)", __version__, config.data_dir())
     yield
     logger.info("AutoTest backend stopped")
@@ -237,9 +237,9 @@ def _run_server() -> None:
     config.ensure_dirs()
     db.init_db()
     try:
-        settings_service.load_into_config()
+        settings_service.migrate_db_settings_to_file()
     except Exception:  # pragma: no cover - 与 lifespan 同口径
-        logger.exception("failed to load settings from db")
+        logger.exception("failed to migrate legacy db settings to config file")
     host = str(config.get("server.host") or "127.0.0.1")
     port = int(config.get("server.port") or 8787)
     logger.info("starting uvicorn on http://%s:%s", host, port)

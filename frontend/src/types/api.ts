@@ -478,9 +478,11 @@ export interface SettingEntry {
 
 export interface SettingsResponse {
   effective: Record<string, unknown>
-  sources: Record<string, 'default' | 'file' | 'db' | 'env'>
+  sources: Record<string, 'default' | 'file' | 'env'>
   /** 配置文件路径（启动项提示用，additive 字段） */
   config_file?: string
+  /** POST /api/settings/reload 时：改了但需要重启才生效的启动项 */
+  restart_required?: string[]
   schema: SettingEntry[]
 }
 

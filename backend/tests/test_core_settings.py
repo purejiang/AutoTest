@@ -1,19 +1,25 @@
-"""设置三级优先级 / 读写 / 校验（契约 §7.6、§11）。"""
+"""设置文件化：优先级（default < file < env）/ 写入 config.json / 校验 / 旧 DB 迁移。"""
 
 from __future__ import annotations
 
+import json
+
 import tests.test_core_support as support
-from app import db, models
+from app import config, db, models
 from app.services import settings_service
 
 core_client = support.core_client
+
+
+def _config_json() -> dict:
+    return json.loads(config.config_file_path().read_text(encoding="utf-8"))
 
 
 def test_default_response_shape(core_client) -> None:
     response = core_client.get("/api/settings")
     assert response.status_code == 200
     body = response.json()
-    assert {"effective", "sources", "schema"} <= set(body)
+    assert {"effective", "sources", "schema", "config_file"} <= set(body)
     assert body["sources"]["engine.poll_interval_ms"] == "file"  # 文件层
     assert body["effective"]["engine.poll_interval_ms"] == 300
     assert body["sources"]["engine.default_timeout_ms"] == "default"
@@ -27,6 +33,7 @@ def test_default_response_shape(core_client) -> None:
     assert {"adb.connect_timeout_s", "scrcpy.jar"} <= keys
     assert body["effective"]["adb.connect_timeout_s"] == 20
     assert body["effective"]["scrcpy.jar"] == ""
+    assert "db" not in set(body["sources"].values())
 
 
 def test_default_delay_settings_exposed(core_client) -> None:
@@ -42,17 +49,19 @@ def test_default_delay_settings_exposed(core_client) -> None:
 
 
 def test_network_mode_migrates_old_switches(core_client) -> None:
+    """旧版 DB 开关（enabled/auto_attach）迁移成 capture.network.mode，再整体迁到文件。"""
     with db.session_scope() as session:
         session.add(models.Setting(key="capture.network.enabled", value=True))
         session.add(models.Setting(key="capture.network.auto_attach", value=True))
-    settings_service.load_into_config()
+    migrated = settings_service.migrate_db_settings_to_file()
 
+    assert migrated["capture.network.mode"] == "run"
     body = core_client.get("/api/settings").json()
     assert body["effective"]["capture.network.mode"] == "run"
+    assert body["sources"]["capture.network.mode"] == "file"
+    assert _config_json()["capture"]["network"]["mode"] == "run"
     with db.session_scope() as session:
-        assert session.get(models.Setting, "capture.network.mode").value == "run"
-        assert session.get(models.Setting, "capture.network.enabled") is None
-        assert session.get(models.Setting, "capture.network.auto_attach") is None
+        assert session.get(models.Setting, "capture.network.mode") is None
 
 
 def test_new_toolchain_keys_are_editable(core_client) -> None:
@@ -64,15 +73,18 @@ def test_new_toolchain_keys_are_editable(core_client) -> None:
     body = response.json()
     assert body["effective"]["adb.connect_timeout_s"] == 45
     assert body["effective"]["scrcpy.jar"] == "/tmp/scrcpy-server.jar"
-    assert body["sources"]["adb.connect_timeout_s"] == "db"
-    assert body["sources"]["scrcpy.jar"] == "db"
+    assert body["sources"]["adb.connect_timeout_s"] == "file"
+    assert body["sources"]["scrcpy.jar"] == "file"
+    saved = _config_json()
+    assert saved["adb"]["connect_timeout_s"] == 45
+    assert saved["scrcpy"]["jar"] == "/tmp/scrcpy-server.jar"
 
     out_of_range = core_client.put("/api/settings", json={"values": {"adb.connect_timeout_s": 999}})
     assert out_of_range.status_code == 422
 
 
 def test_bootstrap_keys_are_readonly(core_client) -> None:
-    """启动项（数据目录/端口）只认 文件/环境变量：schema 标 layer，API 写入直接拒绝。"""
+    """启动项（数据目录/端口）不能通过设置页写：schema 标 bootstrap，API 直接拒绝。"""
     body = core_client.get("/api/settings").json()
     schema = {item["key"]: item for item in body["schema"]}
     entry = schema["runtime.data_dir"]
@@ -92,70 +104,124 @@ def test_bootstrap_keys_are_readonly(core_client) -> None:
     assert "启动项" in error["message"]
     assert "AUTOTEST_DATA_DIR" in error["message"]
     assert core_client.delete("/api/settings/runtime.data_dir").status_code == 400
-    # server.host/port 不在设置页展示，但同样是启动项，不能写库
+    # server.host/port 不在设置页展示，但同样是启动项，不能通过 API 写
     assert (
         core_client.put("/api/settings", json={"values": {"server.port": 9000}}).status_code == 400
     )
 
 
-def test_legacy_bootstrap_db_row_is_ignored(core_client) -> None:
-    """旧版本把 data_dir 存进 DB：只忽略（并告警），不能改变生效目录，否则 DB/产物会分裂。"""
+def test_legacy_db_rows_migrate_to_file(core_client) -> None:
+    """旧库里的配置行：运行项迁进 config.json，启动项只告警不迁移。"""
     with db.session_scope() as session:
+        session.add(models.Setting(key="engine.max_steps", value=123))
         session.add(models.Setting(key="runtime.data_dir", value="/tmp/legacy-data-dir"))
-    values = settings_service.load_into_config()
-    assert "runtime.data_dir" not in values
+    migrated = settings_service.migrate_db_settings_to_file()
 
+    assert migrated == {"engine.max_steps": 123}
     body = core_client.get("/api/settings").json()
+    assert body["effective"]["engine.max_steps"] == 123
+    assert body["sources"]["engine.max_steps"] == "file"
     assert body["effective"]["runtime.data_dir"] != "/tmp/legacy-data-dir"
-    assert body["sources"]["runtime.data_dir"] == "file"
+    assert _config_json()["engine"]["max_steps"] == 123
+    with db.session_scope() as session:
+        assert session.get(models.Setting, "engine.max_steps") is None
+        assert session.get(models.Setting, "runtime.data_dir") is None
 
 
 def test_scrcpy_max_fps_zero_is_editable(core_client) -> None:
-    """scrcpy.max_fps 存成 0（不限，即 scrcpy 默认值）：保存不能把 0 当成空值，镜像启动要原样透传。"""
+    """scrcpy.max_fps 存成 0（不限，即 scrcpy 默认值）：保存不能把 0 当成空值。"""
     from app.android import scrcpy
 
     response = core_client.put("/api/settings", json={"values": {"scrcpy.max_fps": 0}})
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["effective"]["scrcpy.max_fps"] == 0
-    assert body["sources"]["scrcpy.max_fps"] == "db"
+    assert body["sources"]["scrcpy.max_fps"] == "file"
+    assert _config_json()["scrcpy"]["max_fps"] == 0
     assert core_client.get("/api/settings").json()["effective"]["scrcpy.max_fps"] == 0
     cfg = scrcpy.ServerConfig.from_settings()
     assert cfg.max_fps == 0
     assert "max_fps=0" in " ".join(scrcpy.build_server_args(cfg, "raw"))
-    # 删除覆盖后回到默认 0（不限，与 scrcpy 一致）
+    # 从配置文件移除后回到默认 0（不限，与 scrcpy 一致）
     assert core_client.delete("/api/settings/scrcpy.max_fps").status_code == 200
+    assert "max_fps" not in _config_json().get("scrcpy", {})  # 空对象会被一起删掉
     assert scrcpy.ServerConfig.from_settings().max_fps == 0
 
 
-def test_db_layer_overrides_file_layer(core_client) -> None:
+def test_save_writes_config_file_and_takes_effect(core_client) -> None:
+    """设置页保存 = 写 config.json + 立即 reload：不重启也生效。"""
     response = core_client.put("/api/settings", json={"values": {"engine.poll_interval_ms": 500}})
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["effective"]["engine.poll_interval_ms"] == 500
-    assert body["sources"]["engine.poll_interval_ms"] == "db"
+    assert body["sources"]["engine.poll_interval_ms"] == "file"
+    assert _config_json()["engine"]["poll_interval_ms"] == 500
+    # 其他文件层内容不能被覆盖（runtime.data_dir 等仍在）
+    assert _config_json()["runtime"]["data_dir"]
 
     again = core_client.get("/api/settings").json()
     assert again["effective"]["engine.poll_interval_ms"] == 500
-    assert again["sources"]["engine.poll_interval_ms"] == "db"
+    assert again["sources"]["engine.poll_interval_ms"] == "file"
 
 
-def test_put_null_removes_db_override(core_client) -> None:
+def test_put_null_removes_key_from_file(core_client) -> None:
     core_client.put("/api/settings", json={"values": {"engine.poll_interval_ms": 500}})
     response = core_client.put("/api/settings", json={"values": {"engine.poll_interval_ms": None}})
     assert response.status_code == 200
     body = response.json()
-    assert body["sources"]["engine.poll_interval_ms"] == "file"
-    assert body["effective"]["engine.poll_interval_ms"] == 300
+    assert "poll_interval_ms" not in _config_json().get("engine", {})
+    # 文件里的 300 已被覆盖再删除 -> 回到代码默认 350
+    assert body["effective"]["engine.poll_interval_ms"] == 350
+    assert body["sources"]["engine.poll_interval_ms"] == "default"
 
 
-def test_delete_setting_falls_back_to_file(core_client) -> None:
+def test_delete_setting_falls_back_to_default(core_client) -> None:
     core_client.put("/api/settings", json={"values": {"engine.poll_interval_ms": 500}})
     response = core_client.delete("/api/settings/engine.poll_interval_ms")
     assert response.status_code == 200
     body = response.json()
-    assert body["effective"]["engine.poll_interval_ms"] == 300
-    assert body["sources"]["engine.poll_interval_ms"] == "file"
+    assert body["effective"]["engine.poll_interval_ms"] == 350
+    assert body["sources"]["engine.poll_interval_ms"] == "default"
+
+
+def test_reload_picks_up_manual_file_edit(core_client) -> None:
+    """手改 config.json 后 POST /api/settings/reload 即可生效（不用重启）。"""
+    path = config.config_file_path()
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw.setdefault("engine", {})["default_timeout_ms"] = 4321
+    path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    before = core_client.get("/api/settings").json()
+    assert before["effective"]["engine.default_timeout_ms"] == 8000  # 还没 reload
+
+    body = core_client.post("/api/settings/reload").json()
+    assert body["effective"]["engine.default_timeout_ms"] == 4321
+    assert body["sources"]["engine.default_timeout_ms"] == "file"
+    assert body["restart_required"] == []
+
+
+def test_reload_does_not_switch_bootstrap_at_runtime(core_client) -> None:
+    """运行中改 data_dir 只提示需重启：绝不能把 effective 目录切走（DB 还在原地）。"""
+    old_dir = config.data_dir()
+    path = config.config_file_path()
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw.setdefault("runtime", {})["data_dir"] = str(path.parent / "another-data-dir")
+    path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    body = core_client.post("/api/settings/reload").json()
+    assert "runtime.data_dir" in body["restart_required"]
+    assert config.data_dir() == old_dir
+    assert str(body["effective"]["runtime.data_dir"]) == str(old_dir)
+
+
+def test_invalid_config_json_is_not_overwritten(core_client) -> None:
+    """配置文件被手改成非法 JSON 时：保存必须报错，不能把用户文件清空重写。"""
+    path = config.config_file_path()
+    path.write_text("{ not-json", encoding="utf-8")
+    response = core_client.put("/api/settings", json={"values": {"engine.max_steps": 10}})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert path.read_text(encoding="utf-8") == "{ not-json"
 
 
 def test_unknown_key_is_invalid_argument(core_client) -> None:
@@ -185,10 +251,11 @@ def test_bool_coercion_from_string(core_client) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["effective"]["recording.click_dump"] is False
-    assert body["sources"]["recording.click_dump"] == "db"
+    assert body["sources"]["recording.click_dump"] == "file"
+    assert _config_json()["recording"]["click_dump"] is False
 
 
-def test_reset_clears_db_layer(core_client) -> None:
+def test_reset_clears_file_overrides(core_client) -> None:
     core_client.put(
         "/api/settings",
         json={"values": {"engine.poll_interval_ms": 600, "engine.max_steps": 10}},
@@ -196,9 +263,11 @@ def test_reset_clears_db_layer(core_client) -> None:
     response = core_client.post("/api/settings/reset")
     assert response.status_code == 200
     body = response.json()
-    assert body["sources"]["engine.poll_interval_ms"] == "file"
     assert body["effective"]["engine.max_steps"] == 2000
-    assert "db" not in set(body["sources"].values())
+    assert body["sources"]["engine.max_steps"] == "default"
+    saved = _config_json()
+    assert "poll_interval_ms" not in saved.get("engine", {})
+    assert saved["runtime"]["data_dir"]  # 启动项不能被 reset 动
 
 
 def test_scrcpy_options(core_client) -> None:

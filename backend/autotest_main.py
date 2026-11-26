@@ -32,7 +32,7 @@ def main() -> None:
         os.environ["AUTOTEST_HOST"] = args.host
     if args.port:
         os.environ["AUTOTEST_PORT"] = str(args.port)
-    config.set_db_overrides({})  # 清缓存，确保读到环境变量层
+    config.reload_file_layer()  # 清缓存并加载文件层，确保读到环境变量层
 
     host = str(config.get("server.host") or "127.0.0.1")
     port = int(config.get("server.port") or 8787)

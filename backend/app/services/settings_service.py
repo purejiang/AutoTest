@@ -1,13 +1,10 @@
-"""设置服务（契约 §7.6 / §11）：DB 层读写 + 四层配置合并（default < file < db < env）。
+"""设置服务（契约 §7.6 / §11）：配置文件读写（default < file < env），不再用数据库存配置。
 
-分层规则：
-- runtime 项（行为/偏好）：允许写 settings 表，DB 优先级高于文件（用户显式操作应生效）；
-- bootstrap 项（启动项：数据目录/端口/host 等）：**不进 DB**，只支持 文件/环境变量；
-  设置页只读展示，API 写入直接 INVALID_ARGUMENT，避免「数据库不在配置值指向的目录」的分裂状态。
-
-- 只有本服务写 DB settings 表；写完立即 `config.set_db_overrides()` 重载，保证 effective 实时；
-- 值校验按 `config.SETTINGS_SCHEMA`（type/min/max），未知 key 直接 INVALID_ARGUMENT；
-- `PUT /api/settings {values}` 中 value=None 表示删除该 key 的 DB 覆盖。
+- 设置页保存 = 原子写 `config.json` + 立即 reload，所以保存后照样「即时生效」；
+- 手改配置文件后可以调 `POST /api/settings/reload` 重载，或重启；
+- 启动项（BOOTSTRAP_KEYS：data_dir / artifacts_dir / frontend_dir / host / port）不能通过 API 写：
+  它们在启动时被冻结，改了必须重启（config.reload_file_layer() 会忽略并告警）；
+- 旧版本存在 `settings` 表里的配置由 `migrate_db_settings_to_file()` 一次性迁到文件。
 """
 
 from __future__ import annotations
@@ -108,68 +105,54 @@ def _migrate_network_mode(session: Session) -> None:
     session.flush()
 
 
-def load_into_config(session: Session | None = None) -> dict[str, Any]:
-    """读 settings 表 -> config.set_db_overrides()。启动时与每次写入后调用。
+def migrate_db_settings_to_file() -> dict[str, Any]:
+    """一次性迁移：旧版把配置存在 settings 表，v0.2.9 起配置只认 config.json。
 
-    bootstrap 项即使旧库里还有行也不会进入 effective（只告警一次），
-    因为它们在打开数据库之前就已确定，DB 覆盖会造成目录/端口分裂。
+    - 旧 DB 行是用户显式保存过的（曾经优先级最高），迁移时写入文件、保持生效值不变；
+    - 启动项行不迁移（它们本来就只支持文件/环境变量），只告警；
+    - 写文件成功后才删除行；失败则保留，下次启动重试，绝不让生效值丢失。
     """
-    if session is not None:
+    with db.session_scope() as session:
         _migrate_network_mode(session)
         rows = session.execute(select(Setting)).scalars().all()
-    else:
-        with db.session_scope() as own:
-            _migrate_network_mode(own)
-            rows = own.execute(select(Setting)).scalars().all()
-    values: dict[str, Any] = {}
-    ignored: list[tuple[str, Any]] = []
-    for row in rows:
-        if row.key not in config.DEFAULTS or row.value is None:
-            continue
-        if row.key in config.BOOTSTRAP_KEYS:
-            ignored.append((row.key, row.value))
-            continue
-        values[row.key] = row.value
-    if ignored:
-        logger.warning(
-            "settings 表里有启动项覆盖，已忽略（启动项只支持配置文件/环境变量，见 docs/contracts.md §11）：%s",
-            ", ".join(f"{key}={value!r}" for key, value in ignored),
-        )
-    config.set_db_overrides(values)
-    return values
-
-
-def _db_values(session: Session) -> dict[str, Any]:
-    rows = session.execute(select(Setting)).scalars().all()
-    return {row.key: row.value for row in rows}
-
-
-def _upsert(session: Session, key: str, value: Any) -> None:
-    row = session.get(Setting, key)
-    stamp = now_iso()
-    if row is None:
-        session.add(Setting(key=key, value=value, updated_at=stamp))
-    else:
-        row.value = value
-        row.updated_at = stamp
-
-
-def _delete_rows(session: Session, keys: list[str]) -> None:
-    if not keys:
-        return
-    for key in keys:
-        row = session.get(Setting, key)
-        if row is not None:
+        if not rows:
+            return {}
+        updates: dict[str, Any] = {}
+        ignored: list[str] = []
+        for row in rows:
+            if row.value is None or row.key not in config.DEFAULTS:
+                continue
+            if row.key in config.BOOTSTRAP_KEYS:
+                ignored.append(f"{row.key}={row.value!r}")
+                continue
+            updates[row.key] = row.value
+        if updates:
+            try:
+                config.write_file_values(updates)
+            except (OSError, ValueError) as exc:
+                logger.error(
+                    "旧 DB 配置迁移到 %s 失败（settings 表保留，下次启动重试）：%s",
+                    config.config_file_path(),
+                    exc,
+                )
+                return {}
+        for row in rows:
             session.delete(row)
+        session.flush()
+    logger.warning(
+        "已把 %d 条 DB 设置迁移到 %s 并清空 settings 表（v0.2.9 起配置只存文件）%s",
+        len(updates),
+        config.config_file_path(),
+        f"；忽略启动项：{', '.join(ignored)}" if ignored else "",
+    )
+    return updates
 
 
-# ---------------------------------------------------------------- 对外 API
 def response() -> dict[str, Any]:
-    """GET /api/settings 响应：{effective, sources, schema}。
+    """GET /api/settings 响应：{effective, sources, schema, config_file}。
 
     schema 每项额外带 `default`（代码默认值）、`layer`（bootstrap/runtime）、
-    `writable`（是否可写数据库）、`env`（对应环境变量名，供设置页提示）；
-    这些是 additive 字段，不影响已有消费方。
+    `writable`（能否通过设置页保存）、`env`（对应环境变量名）；都是 additive 字段。
     """
     schema = [
         {
@@ -190,7 +173,7 @@ def response() -> dict[str, Any]:
 
 
 def _ensure_runtime_key(key: str) -> None:
-    """启动项不允许写数据库：给出明确的替代路径（配置文件/环境变量 + 重启）。"""
+    """启动项不能通过设置页（写文件 + reload）改：只能手改配置文件/环境变量后重启。"""
     if key not in config.BOOTSTRAP_KEYS:
         return
     env_name = config.env_var_for(key)
@@ -199,7 +182,7 @@ def _ensure_runtime_key(key: str) -> None:
         hint += f" 或设置环境变量 {env_name}"
     raise ApiError(
         "INVALID_ARGUMENT",
-        f"{key} 是启动项（打开数据库前就要确定），不能存数据库；{hint}，然后重启 AutoTest",
+        f"{key} 是启动项（打开数据库前就要确定，运行中切换会造成目录/端口分裂）；{hint}，然后重启 AutoTest",
         {
             "key": key,
             "layer": "bootstrap",
@@ -210,7 +193,7 @@ def _ensure_runtime_key(key: str) -> None:
 
 
 def update(session: Session, values: dict[str, Any]) -> dict[str, Any]:
-    """PUT /api/settings：value=None -> 删除该层覆盖；校验失败 -> VALIDATION_ERROR。"""
+    """PUT /api/settings：写配置文件；value=None -> 从文件删除该项（回到默认/环境变量）。"""
     if not isinstance(values, dict):
         raise ApiError("INVALID_ARGUMENT", "values must be an object", {"values": type(values).__name__})
     coerced: dict[str, Any] = {}
@@ -229,34 +212,62 @@ def update(session: Session, values: dict[str, Any]) -> dict[str, Any]:
             errors.append({"path": key, "code": "invalid_value", "message": str(exc)})
     if errors:
         raise ApiError("VALIDATION_ERROR", "invalid setting value", {"errors": errors})
-    existing = _db_values(session)
-    for key, value in coerced.items():
-        _upsert(session, key, value)
-    _delete_rows(session, [key for key in deletes if key in existing])
-    session.flush()
-    load_into_config(session)
+    changes: dict[str, Any] = {**coerced, **{key: None for key in deletes}}
+    # 纯删除且配置文件不存在时无需创建空文件
+    if changes and (coerced or config.config_file_path().exists()):
+        _write_config(changes)
     return response()
 
 
 def delete(session: Session, key: str) -> dict[str, Any]:
-    """DELETE /api/settings/{key}：只删 DB 层覆盖（file/default 生效）。"""
+    """DELETE /api/settings/{key}：把该项从配置文件里移除（回到默认/环境变量）。"""
     if key not in config.DEFAULTS:
         raise ApiError("INVALID_ARGUMENT", f"unknown setting: {key}", {"key": key})
     _ensure_runtime_key(key)
-    _delete_rows(session, [key])
-    session.flush()
-    load_into_config(session)
+    if config.config_file_path().exists():
+        _write_config({key: None})
     return response()
 
 
 def reset(session: Session) -> dict[str, Any]:
-    """POST /api/settings/reset：清空 DB 层（file 层仍生效）。"""
-    rows = session.execute(select(Setting)).scalars().all()
-    for row in rows:
-        session.delete(row)
-    session.flush()
-    load_into_config(session)
+    """POST /api/settings/reset：移除配置文件里所有由设置页管理的项（回到代码默认）。"""
+    current = config.load_file_layer()
+    updates = {
+        key: None
+        for key in current
+        if key in config.DEFAULTS and key not in config.BOOTSTRAP_KEYS
+    }
+    if updates:
+        _write_config(updates)
     return response()
+
+
+def reload() -> dict[str, Any]:
+    """POST /api/settings/reload：重新读取配置文件（手改 config.json 后不用重启）。
+
+    启动项（数据目录/端口）运行中不可切换：若有改动，会出现在返回的 restart_required 里。
+    """
+    config.reload_file_layer()
+    body = response()
+    body["restart_required"] = config.bootstrap_pending_changes()
+    return body
+
+
+def _write_config(changes: dict[str, Any]) -> None:
+    try:
+        config.write_file_values(changes)
+    except ValueError as exc:
+        raise ApiError(
+            "INVALID_ARGUMENT",
+            str(exc),
+            {"config_file": str(config.config_file_path())},
+        ) from exc
+    except OSError as exc:
+        raise ApiError(
+            "INVALID_ARGUMENT",
+            f"写入配置文件失败：{exc}",
+            {"config_file": str(config.config_file_path())},
+        ) from exc
 
 
 def scrcpy_options() -> dict[str, Any]:
@@ -285,7 +296,8 @@ def scrcpy_options() -> dict[str, Any]:
 __all__ = [
     "SCRCPY_SERVER_VERSION",
     "delete",
-    "load_into_config",
+    "migrate_db_settings_to_file",
+    "reload",
     "reset",
     "response",
     "scrcpy_options",

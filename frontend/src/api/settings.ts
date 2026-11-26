@@ -53,6 +53,18 @@ export function useResetSettings() {
   })
 }
 
+export function useReloadSettings() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => post<SettingsResponse>('/settings/reload'),
+    onSuccess: (data) => {
+      queryClient.setQueryData(settingsKeys.detail(), data)
+      void queryClient.invalidateQueries({ queryKey: settingsKeys.all })
+      void queryClient.invalidateQueries({ queryKey: settingsKeys.health })
+    },
+  })
+}
+
 export function useDeleteSettingOverride() {
   const queryClient = useQueryClient()
   return useMutation({

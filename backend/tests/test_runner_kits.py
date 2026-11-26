@@ -338,7 +338,7 @@ class RunnerEnv:
     def configure(self, updates: dict[str, Any]) -> None:
         values = dict(self._base_config)
         values.update(updates)
-        config.set_db_overrides(values)
+        config.set_file_layer(values)
 
 
 @pytest.fixture()
@@ -356,7 +356,7 @@ def runner_env(temp_db, tmp_path, monkeypatch):
         "engine.pause_abandon_grace_s": 1,
         "engine.step_min_timeout_ms": 50,
     }
-    config.set_db_overrides(base_config)
+    config.set_file_layer(base_config)
     env = RunnerEnv(FakeDriver(serial="fake-test"), data_dir, base_config)
 
     def _get_driver(serial: Any = None):

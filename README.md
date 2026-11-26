@@ -252,15 +252,16 @@ scripts/          setup / dev / build / start / release / 环境自检 / scrcpy 
 - **镜像**：scrcpy-server 版本与 SHA256 锁定；`--no-audio`；unique localabstract；背压丢帧到下一 IDR 并通知前端 flush；旋转/参数变化重配解码器。
 - **契约冻结**：`docs/contracts.md` 是唯一事实来源，改动需先改文档再改代码。
 
-## 配置（四层：默认 < 配置文件 < 数据库 < 环境变量）
+## 配置（三层：默认 < 配置文件 < 环境变量，只存文件）
 
-- 配置文件：`~/.autotest/config.json`（或 `AUTOTEST_CONFIG` 指定），JSON 按点号展平，例如
-  `{"server": {"port": 8787}, "scrcpy": {"max_size": 1200}}`；**只在启动时读**，改完重启生效
-- 数据库层：设置页写入，写入即时生效（`engine.*` 下一次运行、`scrcpy.*` 重启镜像）
+- 配置文件：`~/.autotest/config.json`（或 `AUTOTEST_CONFIG` 指定），嵌套 JSON，按点号读写，例如
+  `{"engine": {"default_timeout_ms": 5000}, "scrcpy": {"max_size": 1200}}`
+- 设置页保存 = 原子写这个文件并立即重载，**不写数据库**；手改文件后可点「重新载入配置文件」或重启
 - 环境变量层：`AUTOTEST_DATA_DIR` / `AUTOTEST_ARTIFACTS_DIR` / `AUTOTEST_ADB` / `AUTOTEST_HOST` /
   `AUTOTEST_PORT` / `AUTOTEST_TOKEN` / `AUTOTEST_SCRCPY_JAR`，优先级最高
-- **启动项例外**（打开数据库前就要确定：数据目录、产物目录、前端目录、host、port）：只认 默认 < 配置文件 < 环境变量，
-  **不存数据库**，设置页只读；要改请编辑 `~/.autotest/config.json` 或设置环境变量后重启
+- **启动项**（数据目录、产物目录、前端目录、host、port）：打开数据库前就要确定，运行中改了必须重启；
+  设置页只读，改配置文件/环境变量后重启
+- 数据库只存运行数据：运行记录、步骤结果、事件、产物索引、报告；配置是文件
 - 数据目录：`~/.autotest/data`（`runtime.data_dir` 可改），含 DB、artifacts、reports、日志
 
 ## 版本管理（本地 git + GitHub 远端）

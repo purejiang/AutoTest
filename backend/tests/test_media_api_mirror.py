@@ -348,7 +348,7 @@ def test_ws_without_device_sends_error_frame(client, monkeypatch) -> None:
 
 
 def test_ws_rejects_bad_token(client) -> None:
-    config.set_db_overrides({"security.token": "secret-token"})
+    config.set_file_layer({"security.token": "secret-token"})
     try:
         with client.websocket_connect("/ws/mirror/ghost?token=wrong") as ws:
             error = wait_kind(ws, "error")
@@ -358,7 +358,7 @@ def test_ws_rejects_bad_token(client) -> None:
 
 
 def test_ws_accepts_valid_token(client, monkeypatch) -> None:
-    config.set_db_overrides({"security.token": "secret-token"})
+    config.set_file_layer({"security.token": "secret-token"})
     serial = "fake-ws-token"
     server = FakeServer()
     real_start = mirror_module.start_session  # 先保存原函数，避免 monkeypatch 递归

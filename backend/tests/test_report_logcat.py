@@ -20,7 +20,7 @@ from app.models import Artifact, Run
 def logcat_env(tmp_path, temp_db):
     config.reset_to_defaults()
     data_dir = tmp_path / "data"
-    config.set_db_overrides({"runtime.data_dir": str(data_dir)})
+    config.set_file_layer({"runtime.data_dir": str(data_dir)})
     yield data_dir
     logcat.shutdown_all()
     logcat._ACTIVE.clear()
@@ -157,7 +157,7 @@ def test_attach_if_needed_respects_config_and_script_settings(logcat_env, monkey
     # 默认 capture.logcat_auto_attach=false -> 不采集
     assert logcat.attach_if_needed(1, {"logcat": True}) is None
 
-    config.set_db_overrides({"runtime.data_dir": data_dir, "capture.logcat_auto_attach": True})
+    config.set_file_layer({"runtime.data_dir": data_dir, "capture.logcat_auto_attach": True})
     assert logcat.attach_if_needed(1, {"logcat": False}) is None
     capture = logcat.attach_if_needed(1, {"logcat": True})
     assert capture is not None

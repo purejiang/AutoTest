@@ -33,7 +33,7 @@ core_client = support.core_client
 @pytest.fixture()
 def net_env(tmp_path, temp_db):
     config.reset_to_defaults()
-    config.set_db_overrides({"runtime.data_dir": str(tmp_path / "data")})
+    config.set_file_layer({"runtime.data_dir": str(tmp_path / "data")})
     yield tmp_path
     network.shutdown_all()
     network._ACTIVE.clear()
@@ -42,8 +42,8 @@ def net_env(tmp_path, temp_db):
 
 
 def _enable(port: int = 0, mode: str = "manual") -> None:
-    # 保留夹具设置的数据目录，只覆盖抓包模式（set_db_overrides 是整层替换）。
-    config.set_db_overrides(
+    # 保留夹具设置的数据目录，只覆盖抓包模式（set_file_layer 是整层替换）。
+    config.set_file_layer(
         {
             "runtime.data_dir": str(config.data_dir()),
             "capture.network.mode": mode,
@@ -240,7 +240,7 @@ def test_artifact_run_id_links_when_provided(net_env, monkeypatch) -> None:
 
 def test_attach_if_needed_links_run(net_env, monkeypatch) -> None:
     _enable()
-    config.set_db_overrides(
+    config.set_file_layer(
         {
             "runtime.data_dir": str(config.data_dir()),
             "capture.network.mode": "run",
@@ -274,7 +274,7 @@ def test_attach_if_needed_links_run(net_env, monkeypatch) -> None:
 
 def test_attach_if_needed_skips_manual_capture(net_env, monkeypatch) -> None:
     _enable()
-    config.set_db_overrides(
+    config.set_file_layer(
         {
             "runtime.data_dir": str(config.data_dir()),
             "capture.network.mode": "run",
@@ -519,7 +519,7 @@ def test_status_without_capture(net_env) -> None:
 
 
 def _core_net_enable() -> None:
-    config.set_db_overrides({"capture.network.mode": "manual", "capture.network.port": 0})
+    config.set_file_layer({"capture.network.mode": "manual", "capture.network.port": 0})
 
 
 @pytest.fixture()

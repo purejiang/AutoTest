@@ -331,9 +331,11 @@ GET /api/maintenance/stats；POST /api/maintenance/cleanup {retention_days?,dry_
 
 ### 7.6 设置（be-core）
 GET /api/settings → {effective, sources, schema, config_file}
-  （schema 每项含 additive `default` 代码默认值 / `layer`(bootstrap|runtime) / `writable` / `env`）；
-PUT /api/settings {values}（null=删该层覆盖；bootstrap 项 → 400 INVALID_ARGUMENT）；
-DELETE /api/settings/{key}（bootstrap 项 → 400）；POST /api/settings/reset（只清 DB 层，文件/环境变量仍生效）；
+  （schema 每项含 additive `default` / `layer`(bootstrap|runtime) / `writable` / `env`）；
+PUT /api/settings {values}（写 config.json；null=从文件移除该项；bootstrap 项 → 400 INVALID_ARGUMENT）；
+DELETE /api/settings/{key}（从文件移除；bootstrap 项 → 400）；
+POST /api/settings/reset（移除文件里所有设置页管理的项，启动项不动）；
+POST /api/settings/reload（重新读取 config.json；返回 restart_required 列出需重启的启动项）；
 GET /api/settings/scrcpy/options（白名单+校验，渲染表单用）；
 GET /api/health → {status,version,db,adb:{path,version,devices},data_dir}。
 
@@ -427,35 +429,36 @@ v0.2.5 手势回放补充：
 
 ## 11. 配置分层（be-core）
 
-四层，从低到高：**代码默认 < 配置文件 < 数据库(settings 表) < 环境变量**。
+配置**只存文件**，三层，从低到高：**代码默认 < 配置文件 < 环境变量**。数据库只存运行数据
+（runs/step_results/run_events/artifacts/reports 等），不再有 settings 表这一层。
 
-- 配置文件：`$AUTOTEST_CONFIG` 或 `~/.autotest/config.json`；JSON 按点号展平
-  （`{"engine":{"default_timeout_ms":5000}}` → `engine.default_timeout_ms`）。**只在启动时读**
-  （`reload_file_layer()`），改完需重启。
-- 数据库：设置页写入；启动时与每次写操作后 `settings_service.load_into_config()` 重载。
-  生效时机：`engine.*` 下一次运行；`scrcpy.*` 停止并重启镜像；`server.host/port` 重启进程。
+- 配置文件：`$AUTOTEST_CONFIG` 或 `~/.autotest/config.json`；嵌套 JSON，按点号读写
+  （`{"engine":{"default_timeout_ms":5000}}` ↔ `engine.default_timeout_ms`）。
+- 设置页保存 = **原子写配置文件 + 立即 `reload_file_layer()`**（临时文件 + `os.replace`），
+  所以保存后即时生效；其余 key 的生效时机见 §9/§12.1（engine 下一次运行、scrcpy 重启镜像）。
+- 手改配置文件后：`POST /api/settings/reload` 重载，或重启；非法 JSON 时保存接口直接 400，
+  **绝不覆盖用户手写的文件**。
 - 环境变量：`ENV_MAP` 白名单（`AUTOTEST_DATA_DIR` / `AUTOTEST_ARTIFACTS_DIR` / `AUTOTEST_ADB` /
   `AUTOTEST_HOST` / `AUTOTEST_PORT` / `AUTOTEST_TOKEN` / `AUTOTEST_SCRCPY_JAR`），优先级最高；
   `AUTOTEST_CONFIG` 只用于选配置文件路径，不参与值合并。
-- `config.py` 暴露 effective()/get()/sources()/layer_of()/db_writable()/env_var_for()；settings API 只写 DB 层。
 
-**分层按 key 分类，不按层一刀切：**
+**启动项（bootstrap，`config.BOOTSTRAP_KEYS`）**：打开数据库之前就要确定的值——
+`runtime.data_dir`、`runtime.artifacts_dir`、`runtime.frontend_dir`、`server.host`、`server.port`。
 
-- **启动项（bootstrap，`config.BOOTSTRAP_KEYS`）**：打开数据库之前就要确定的值——
-  `runtime.data_dir`、`runtime.artifacts_dir`、`runtime.frontend_dir`、`server.host`、`server.port`。
-  只允许 代码默认 < 配置文件 < 环境变量；**settings 表里即使有行也会被忽略并告警**，设置页只读，
-  `PUT/DELETE /api/settings` 返回 `INVALID_ARGUMENT`（details 里给出配置文件路径与环境变量名）。
-  原因：`data_dir` 里就放着数据库文件本身，允许 DB 覆盖会出现「DB 在旧目录、artifacts 在新目录」的分裂状态，
-  且重启不会自愈（覆盖值就存在那个旧库里）。
-- **运行项（runtime）**：其余 key（engine/scrcpy/recording/capture/retention/security/adb 等）可写数据库，
-  遵循上面四层优先级。设置页用来源标签（默认/配置文件/数据库覆盖/环境变量）展示每项实际来源。
+- 首次载入时**冻结**（`_BOOTSTRAP_LOCKED`）：运行中 reload 文件不会改变它们，只记 warning；
+  `POST /api/settings/reload` 返回 `restart_required` 列出"改了但要重启"的启动项。
+- 设置页只读展示；`PUT/DELETE /api/settings` 对它们返回 `INVALID_ARGUMENT`（details 带配置文件路径与环境变量名）。
+- 原因：`data_dir` 里就放着数据库文件，运行中切换会出现「DB 在旧目录、artifacts 在新目录」的分裂状态。
 
-默认值清单见 config.DEFAULTS（engine/scrcpy/recording/capture/retention/security/server）。
-`engine.default_delay_before_ms` / `engine.default_delay_after_ms` 只作为新建脚本的停顿初值（见 §3），不参与运行时兜底。
+**旧库迁移**：v0.2.9 起配置不再写 `settings` 表；启动时 `migrate_db_settings_to_file()` 把旧行一次性写入
+配置文件（启动项行忽略并告警），写成功后才删除 DB 行，失败则保留待下次重试。
 
-日志：文件 handler 在 `create_app()` 载入配置文件层之后才挂（`logs.configure_file_logging()`），
-路径取自生效的 `data_dir`；测试通过 `logs.disable_file_logging()` 关闭文件日志，避免污染真实数据目录。
+`GET /api/settings` 每项附带 additive 字段 `default` / `layer`(bootstrap|runtime) / `writable` / `env`，
+响应顶层附 `config_file`。`config.py` 暴露 effective()/get()/sources()/layer_of()/db_writable()/env_var_for()/
+write_file_values()/bootstrap_pending_changes()。
 
+旧 note：`engine.default_delay_before_ms` / `engine.default_delay_after_ms` 只作为新建脚本的停顿初值（见 §3），
+不参与运行时兜底。
 ## 12. 前端页面（fe-core 与 fe-mirror 边界）
 
 v0.2.5 路由与导航：

@@ -54,6 +54,12 @@ def reset_settings(session: Session = Depends(get_db)) -> dict[str, Any]:
     return settings_service.reset(session)
 
 
+@router.post("/settings/reload")
+def reload_settings() -> dict[str, Any]:
+    """重新读取 config.json（手改文件后不用重启；启动项改动会进 restart_required）。"""
+    return settings_service.reload()
+
+
 @router.get("/settings/scrcpy/options")
 def scrcpy_options() -> dict[str, Any]:
     """镜像参数白名单 + 当前 effective 值（渲染表单用）。"""

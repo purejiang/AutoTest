@@ -11,7 +11,7 @@ import { numberOrNull, settingSourceMeta } from '@/lib/format'
 import StatusTag from '@/components/StatusTag.vue'
 import RestartHint from './RestartHint.vue'
 
-type SettingSource = 'default' | 'file' | 'db' | 'env'
+type SettingSource = 'default' | 'file' | 'env'
 
 const props = withDefaults(
   defineProps<{
@@ -221,8 +221,7 @@ function sourceMeta(key: string) {
 
 function sourceTitle(key: string): string {
   const source = sourceOf(key)
-  if (source === 'db') return '来自数据库覆盖，可点 ↺ 删除；删除后按优先级回到文件/默认值'
-  if (source === 'file') return '来自配置文件，优先级高于默认值；需修改配置文件后重新加载'
+  if (source === 'file') return '来自配置文件；点 ↺ 可把该项从配置文件移除（回到默认值/环境变量）'
   if (source === 'env') return '来自环境变量，优先级最高；需取消环境变量并重启进程'
   return '当前使用代码默认值'
 }
@@ -307,11 +306,11 @@ function defaultLabel(key: string): string {
             {{ sourceMeta('scrcpy.max_fps').label }}
           </StatusTag>
           <el-button
-            v-if="sourceOf('scrcpy.max_fps') === 'db'"
+            v-if="sourceOf('scrcpy.max_fps') === 'file'"
             size="small"
             text
             :icon="RefreshLeft"
-            title="删除数据库覆盖，按优先级回到配置文件/默认值"
+            title="从配置文件移除该项，回到默认值"
             @click="emit('clear', 'scrcpy.max_fps')"
           />
         </span>
@@ -355,11 +354,11 @@ function defaultLabel(key: string): string {
               {{ sourceMeta('scrcpy.scale').label }}
             </StatusTag>
             <el-button
-              v-if="sourceOf('scrcpy.scale') === 'db'"
+              v-if="sourceOf('scrcpy.scale') === 'file'"
               size="small"
               text
               :icon="RefreshLeft"
-              title="删除数据库覆盖，按优先级回到配置文件/默认值"
+              title="从配置文件移除该项，回到默认值"
               @click="emit('clear', 'scrcpy.scale')"
             />
           </span>
@@ -390,11 +389,11 @@ function defaultLabel(key: string): string {
               {{ sourceMeta('scrcpy.max_size').label }}
             </StatusTag>
             <el-button
-              v-if="sourceOf('scrcpy.max_size') === 'db'"
+              v-if="sourceOf('scrcpy.max_size') === 'file'"
               size="small"
               text
               :icon="RefreshLeft"
-              title="删除数据库覆盖，按优先级回到配置文件/默认值"
+              title="从配置文件移除该项，回到默认值"
               @click="emit('clear', 'scrcpy.max_size')"
             />
           </span>
@@ -426,11 +425,11 @@ function defaultLabel(key: string): string {
               {{ sourceMeta('scrcpy.video_bit_rate').label }}
             </StatusTag>
             <el-button
-              v-if="sourceOf('scrcpy.video_bit_rate') === 'db'"
+              v-if="sourceOf('scrcpy.video_bit_rate') === 'file'"
               size="small"
               text
               :icon="RefreshLeft"
-              title="删除数据库覆盖，按优先级回到配置文件/默认值"
+              title="从配置文件移除该项，回到默认值"
               @click="emit('clear', 'scrcpy.video_bit_rate')"
             />
           </span>
@@ -461,11 +460,11 @@ function defaultLabel(key: string): string {
               {{ sourceMeta('scrcpy.crop').label }}
             </StatusTag>
             <el-button
-              v-if="sourceOf('scrcpy.crop') === 'db'"
+              v-if="sourceOf('scrcpy.crop') === 'file'"
               size="small"
               text
               :icon="RefreshLeft"
-              title="删除数据库覆盖，按优先级回到配置文件/默认值"
+              title="从配置文件移除该项，回到默认值"
               @click="emit('clear', 'scrcpy.crop')"
             />
           </span>

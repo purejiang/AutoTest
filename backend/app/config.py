@@ -1,15 +1,18 @@
-"""三级配置解析：代码默认 < 配置文件 < DB settings。
+"""配置解析：代码默认 < 配置文件 < 环境变量（文件优先，DB 只存运行数据）。
 
 设计要点：
 - 全平台单一实现，不按操作系统分支；
 - 值全部为"参数/开关"，不做实现切换；
-- effective 结果缓存在模块内，任一层的写操作后由调用方触发失效（set_* 会清缓存）；
-- DB 层由 settings 服务在启动与写入后通过 `set_db_overrides()` 注入（避免 config 直接依赖 ORM）。
+- effective 结果缓存在模块内，写配置文件（write_file_values）或 reload 后失效重算；
+- 不存数据库：配置是"人写、要 diff/备份/进 git"的东西，写进 settings 表会变成黑盒；
+- 启动项（BOOTSTRAP_KEYS，如数据目录/端口）本就只能在打开数据库前确定，天然属于文件/环境变量；
+  它们在首次载入时被冻结，运行中 reload 文件不会改变它们（改了要重启），避免 DB/产物目录分裂。
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import shutil
@@ -19,8 +22,9 @@ from typing import Any
 
 _LOCK = threading.RLock()
 _FILE_LAYER: dict[str, Any] = {}
-_DB_LAYER: dict[str, Any] = {}
 _EFFECTIVE: dict[str, Any] | None = None
+# 启动项在「首次载入」时冻结：(值, 来源)。运行中 reload 不改它们，改了也等重启。
+_BOOTSTRAP_LOCKED: dict[str, tuple[Any, str]] | None = None
 
 # 环境变量层（优先级最高，运维/CI/测试隔离用）
 ENV_MAP: dict[str, str] = {
@@ -350,27 +354,129 @@ def _coerce(key: str, value: Any) -> Any:
     return value
 
 
-def set_db_overrides(values: dict[str, Any]) -> None:
-    with _LOCK:
-        global _DB_LAYER, _EFFECTIVE
-        # 启动项永远不从 DB 层进入 effective：即使旧库里有行也忽略（防分裂状态）。
-        _DB_LAYER = {
-            k: v
-            for k, v in values.items()
-            if v is not None and k not in BOOTSTRAP_KEYS
-        }
-        _EFFECTIVE = None
-
-
 def set_file_layer(values: dict[str, Any]) -> None:
+    """测试/嵌入用：整层替换文件层（不落盘）。生产写配置走 write_file_values()。"""
     with _LOCK:
         global _FILE_LAYER, _EFFECTIVE
         _FILE_LAYER = dict(values)
         _EFFECTIVE = None
 
 
+def _read_config_raw() -> dict[str, Any]:
+    """严格读取配置文件（嵌套 JSON）。文件缺失 -> {}；非法 JSON -> ValueError。
+
+    写配置前必须严格读：宁可报错拒绝保存，也不能把用户手写的文件覆盖成一片空白。
+    """
+    path = config_file_path()
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"配置文件不是合法 JSON：{path}（{exc}）") from exc
+    if not isinstance(raw, dict):
+        raise ValueError(f"配置文件顶层必须是 JSON 对象：{path}")
+    return raw
+
+
+def _set_dotted(raw: dict[str, Any], key: str, value: Any) -> None:
+    parts = key.split(".")
+    node = raw
+    for part in parts[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            node[part] = child
+        node = child
+    node[parts[-1]] = value
+
+
+def _delete_dotted(raw: dict[str, Any], key: str) -> None:
+    parts = key.split(".")
+    stack: list[tuple[dict[str, Any], str]] = []
+    node = raw
+    for part in parts[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            return
+        stack.append((node, part))
+        node = child
+    node.pop(parts[-1], None)
+    # 删掉因为这次删除而变空的面包屑对象（{"engine": {}} 这类残留）
+    for parent, part in reversed(stack):
+        if isinstance(parent.get(part), dict) and not parent[part]:
+            parent.pop(part, None)
+        else:
+            break
+
+
+def write_file_values(values: dict[str, Any]) -> Path:
+    """把「点号 key -> 值」写进配置文件：None 表示删除该项；原子写 + 立即 reload。
+
+    返回写入的配置文件路径。非法 JSON 抛 ValueError（由 API 层转成 400）。
+    """
+    with _LOCK:
+        raw = _read_config_raw()
+        for key, value in values.items():
+            if value is None:
+                _delete_dotted(raw, key)
+            else:
+                _set_dotted(raw, key, value)
+        path = config_file_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    reload_file_layer()
+    return path
+
+
+def _bootstrap_state(layer: dict[str, Any], env: dict[str, Any]) -> dict[str, tuple[Any, str]]:
+    state: dict[str, tuple[Any, str]] = {}
+    for key in BOOTSTRAP_KEYS:
+        if key in env:
+            state[key] = (_coerce(key, env[key]), "env")
+        elif key in layer:
+            state[key] = (_coerce(key, layer[key]), "file")
+        else:
+            state[key] = (DEFAULTS.get(key), "default")
+    return state
+
+
 def reload_file_layer() -> None:
-    set_file_layer(load_file_layer())
+    """重新读取配置文件。
+
+    启动项（数据目录/端口/host…）在第一次载入时冻结：运行中改它们的文件值不会生效
+    （只打一条 warning），否则会出现「DB 还在旧目录、artifacts 已经切到新目录」的分裂状态。
+    """
+    global _FILE_LAYER, _EFFECTIVE, _BOOTSTRAP_LOCKED
+    with _LOCK:
+        layer = load_file_layer()
+        env = _env_layer()
+        state = _bootstrap_state(layer, env)
+        if _BOOTSTRAP_LOCKED is None:
+            _BOOTSTRAP_LOCKED = state
+        else:
+            changed = [key for key, (value, _src) in state.items() if value != _BOOTSTRAP_LOCKED[key][0]]
+            if changed:
+                logging.getLogger("autotest").warning(
+                    "检测到启动项变化（%s）：运行中不生效，重启 AutoTest 后生效",
+                    ", ".join(sorted(changed)),
+                )
+            for key in changed:
+                state.pop(key, None)
+            _BOOTSTRAP_LOCKED.update(state)
+        _FILE_LAYER = layer
+        _EFFECTIVE = None
+
+
+def bootstrap_pending_changes() -> list[str]:
+    """配置文件/环境变量里的启动项与启动时冻结值不一致的 key（需重启才生效）。"""
+    locked = _BOOTSTRAP_LOCKED
+    if locked is None:
+        return []
+    state = _bootstrap_state(load_file_layer(), _env_layer())
+    return sorted(key for key, (value, _src) in state.items() if value != locked.get(key, (None, ""))[0])
 
 
 def _env_layer() -> dict[str, Any]:
@@ -387,10 +493,13 @@ def effective() -> dict[str, Any]:
         global _EFFECTIVE
         if _EFFECTIVE is None:
             merged: dict[str, Any] = dict(DEFAULTS)
-            # 优先级：defaults < file < db < env
-            for layer in (_FILE_LAYER, _DB_LAYER, _env_layer()):
+            # 优先级：defaults < file < env
+            for layer in (_FILE_LAYER, _env_layer()):
                 for key, value in layer.items():
                     merged[key] = _coerce(key, value) if key in DEFAULTS else value
+            # 启动项用启动时冻结的值覆盖（运行中 reload 不得改变它们）
+            for key, (value, _source) in (_BOOTSTRAP_LOCKED or {}).items():
+                merged[key] = value
             _EFFECTIVE = merged
         return dict(_EFFECTIVE)
 
@@ -400,10 +509,11 @@ def get(key: str, default: Any = None) -> Any:
 
 
 def source_of(key: str) -> str:
+    locked = _BOOTSTRAP_LOCKED
+    if key in BOOTSTRAP_KEYS and locked is not None:
+        return locked.get(key, (None, "default"))[1]
     if key in _env_layer():
         return "env"
-    if key in _DB_LAYER:
-        return "db"
     if key in _FILE_LAYER:
         return "file"
     return "default"
@@ -414,11 +524,12 @@ def sources() -> dict[str, str]:
 
 
 def reset_to_defaults() -> None:
+    """清空内存层与启动项冻结（测试用）；不改磁盘上的配置文件。"""
     with _LOCK:
-        global _FILE_LAYER, _DB_LAYER, _EFFECTIVE
+        global _FILE_LAYER, _EFFECTIVE, _BOOTSTRAP_LOCKED
         _FILE_LAYER = {}
-        _DB_LAYER = {}
         _EFFECTIVE = None
+        _BOOTSTRAP_LOCKED = None
 
 
 # ---------------------------------------------------------------- paths

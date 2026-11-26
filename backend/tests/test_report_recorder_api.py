@@ -21,7 +21,7 @@ from app.recorder import session as rec
 @pytest.fixture()
 def api(monkeypatch, tmp_path, temp_db):
     config.reset_to_defaults()
-    config.set_db_overrides({"runtime.data_dir": str(tmp_path / "data")})
+    config.set_file_layer({"runtime.data_dir": str(tmp_path / "data")})
     drivers: dict[str, FakeDriver] = {}
     acquired: list[tuple[str, str]] = []
     released: list[tuple[str, str]] = []

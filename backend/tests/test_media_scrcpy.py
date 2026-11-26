@@ -432,11 +432,11 @@ def test_max_fps_zero_means_unlimited(tmp_path, monkeypatch) -> None:
 
     from app import config
 
-    monkeypatch.setattr(config, "_DB_LAYER", {"scrcpy.max_fps": 0})
+    monkeypatch.setattr(config, "_FILE_LAYER", {"scrcpy.max_fps": 0})
     monkeypatch.setattr(config, "_EFFECTIVE", None)
     assert scrcpy.ServerConfig.from_settings().max_fps == 0
     # 未配置时默认 0 = 不限（与 scrcpy --max-fps 默认一致）
-    monkeypatch.setattr(config, "_DB_LAYER", {})
+    monkeypatch.setattr(config, "_FILE_LAYER", {})
     monkeypatch.setattr(config, "_EFFECTIVE", None)
     assert scrcpy.ServerConfig.from_settings().max_fps == 0
 

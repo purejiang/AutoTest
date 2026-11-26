@@ -28,7 +28,7 @@ RUN_ID = 11
 def report_env(tmp_path, temp_db):
     config.reset_to_defaults()
     data_dir = tmp_path / "data"
-    config.set_db_overrides({"runtime.data_dir": str(data_dir)})
+    config.set_file_layer({"runtime.data_dir": str(data_dir)})
     yield data_dir
     config.reset_to_defaults()
 
@@ -192,7 +192,7 @@ def test_build_report_video_excluded_by_default_but_includable(report_env, tmp_p
 
 def test_build_report_size_limit_deletes_file_and_raises(report_env, tmp_path) -> None:
     seed = _seed_run(tmp_path, run_id=12, failed_screenshot=False, video_bytes=2 * 1024 * 1024)
-    config.set_db_overrides(
+    config.set_file_layer(
         {"runtime.data_dir": str(config.get("runtime.data_dir")), "retention.report_max_mb": 1}
     )
     with pytest.raises(ApiError) as excinfo:

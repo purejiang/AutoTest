@@ -88,7 +88,7 @@ def _wait_for(predicate, timeout: float = 2.0, message: str = "condition"):
 def logcat_env(tmp_path, temp_db):
     config.reset_to_defaults()
     data_dir = tmp_path / "data"
-    config.set_db_overrides({"runtime.data_dir": str(data_dir)})
+    config.set_file_layer({"runtime.data_dir": str(data_dir)})
     logcat.shutdown_all()
     logcat._ACTIVE.clear()
     logcat._LAST.clear()
@@ -216,7 +216,7 @@ def test_logcat_api_start_rejects_offline_device(api_client) -> None:
 
 # ---------------------------------------------------------------- 归属 / 幂等
 def test_attach_is_idempotent_and_stop_only_own_run(logcat_env, monkeypatch) -> None:
-    config.set_db_overrides(
+    config.set_file_layer(
         {"runtime.data_dir": str(logcat_env), "capture.logcat_auto_attach": True}
     )
     process = _FakeProcess(["attached"])
