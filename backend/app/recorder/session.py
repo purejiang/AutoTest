@@ -1204,7 +1204,7 @@ def to_script(
     # Recording.mode=web -> source=mirror；physical -> source=physical。
     # origin_recording_id 是软关联（无 FK），删除录制后仍保留来源信息。
     source = "physical" if recording_mode == "physical" else "mirror"
-    # 脚本以 JSON 文件为准（v0.2.9）；DB 只保留 recording.script_id 软关联。
+    # 脚本以 JSON 文件为准（v0.2.8）；DB 只保留 recording.script_id 软关联。
     script_service.create_script_record(
         None,
         script,

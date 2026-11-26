@@ -103,7 +103,7 @@ frontend/src/
 表结构以 `backend/app/models.py` 为准——runs/step_results/run_events/artifacts/recordings/
 recording_events/reports，索引见 models.py。
 
-**v0.2.9 起脚本与配置不存 DB：**
+**v0.2.8 起脚本与配置不存 DB：**
 - 脚本 = `<scripts_dir>/<id>.json`（默认 `~/.autotest/scripts`，`runtime.scripts_dir` / `AUTOTEST_SCRIPTS_DIR` 可改），
   文件内容 `{id,name,notes,source,origin_recording_id,schema_version,created_at,updated_at,data}`；
 - 配置 = `~/.autotest/config.json`（见 §11）；
@@ -459,7 +459,7 @@ v0.2.5 手势回放补充：
 - 设置页只读展示；`PUT/DELETE /api/settings` 对它们返回 `INVALID_ARGUMENT`（details 带配置文件路径与环境变量名）。
 - 原因：`data_dir` 里就放着数据库文件，运行中切换会出现「DB 在旧目录、artifacts 在新目录」的分裂状态。
 
-**旧库迁移**：v0.2.9 起配置不再写 `settings` 表；启动时 `migrate_db_settings_to_file()` 把旧行一次性写入
+**旧库迁移**：v0.2.8 起配置不再写 `settings` 表；启动时 `migrate_db_settings_to_file()` 把旧行一次性写入
 配置文件（启动项行忽略并告警），写成功后才删除 DB 行，失败则保留待下次重试。
 
 `GET /api/settings` 每项附带 additive 字段 `default` / `layer`(bootstrap|runtime) / `writable` / `env`，

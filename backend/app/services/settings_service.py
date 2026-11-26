@@ -106,7 +106,7 @@ def _migrate_network_mode(session: Session) -> None:
 
 
 def migrate_db_settings_to_file() -> dict[str, Any]:
-    """一次性迁移：旧版把配置存在 settings 表，v0.2.9 起配置只认 config.json。
+    """一次性迁移：旧版把配置存在 settings 表，v0.2.8 起配置只认 config.json。
 
     - 旧 DB 行是用户显式保存过的（曾经优先级最高），迁移时写入文件、保持生效值不变；
     - 启动项行不迁移（它们本来就只支持文件/环境变量），只告警；
@@ -140,7 +140,7 @@ def migrate_db_settings_to_file() -> dict[str, Any]:
             session.delete(row)
         session.flush()
     logger.warning(
-        "已把 %d 条 DB 设置迁移到 %s 并清空 settings 表（v0.2.9 起配置只存文件）%s",
+        "已把 %d 条 DB 设置迁移到 %s 并清空 settings 表（v0.2.8 起配置只存文件）%s",
         len(updates),
         config.config_file_path(),
         f"；忽略启动项：{', '.join(ignored)}" if ignored else "",
