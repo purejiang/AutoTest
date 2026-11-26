@@ -250,8 +250,6 @@ export function sourceMeta(source?: ScriptSource | string | null): StatusMeta {
 
 export function settingSourceMeta(source?: string | null): StatusMeta {
   switch (source) {
-    case 'db':
-      return { label: '数据库覆盖', tone: 'green' }
     case 'file':
       return { label: '配置文件', tone: 'blue' }
     case 'env':

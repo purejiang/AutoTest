@@ -43,8 +43,10 @@ const healthLines = computed<string[]>(() => {
     `状态：${data.status}`,
     `后端版本：${data.version} · 提交 ${data.build?.commit ?? '未知'}${data.build?.dirty ? ' (+未提交改动)' : ''}`,
     `前端版本：${APP_VERSION} · 提交 ${APP_COMMIT} · 构建 ${frontendBuild}`,
-    `数据库：${data.db}`,
+    `存储：${data.db}`,
     `adb：${data.adb?.path ?? '—'} ${data.adb?.version ?? ''}`,
+    `配置文件：${data.config_file ?? '—'}`,
+    `脚本目录：${data.scripts_dir ?? '—'}`,
     `数据目录：${data.data_dir}`,
   ]
 })

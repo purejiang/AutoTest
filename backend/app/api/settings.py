@@ -120,6 +120,8 @@ def health() -> dict[str, Any]:
         "db": db_state,
         "adb": _adb_health(),
         "data_dir": str(config.data_dir()),
+        "scripts_dir": str(config.scripts_dir()),
+        "config_file": str(config.config_file_path()),
     }
     if db_error:
         payload["db_error"] = db_error

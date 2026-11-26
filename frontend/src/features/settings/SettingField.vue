@@ -76,7 +76,7 @@ function defaultLabel(entry: SettingEntry): string | null {
     </div>
     <div v-if="entry.desc" class="field-desc">{{ entry.desc }}</div>
     <div v-if="readonly" class="setting-readonly">
-      启动项（打开数据库前就要确定，不存数据库）：改
+      启动项（启动时确定，运行中不能切换；只存配置文件/环境变量）：改
       <code class="code-text">{{ configFile || '~/.autotest/config.json' }}</code>
       <span v-if="entry.env"> 或设置环境变量 <code class="code-text">{{ entry.env }}</code></span>
       ，然后重启 AutoTest。

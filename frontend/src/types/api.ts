@@ -468,9 +468,9 @@ export interface SettingEntry {
   options?: Array<{ label: string; value: string }>
   /** 代码默认值（GET /api/settings 的 additive 字段） */
   default?: unknown
-  /** bootstrap = 启动项（只读，改配置文件/环境变量）；runtime = 可写数据库 */
+  /** bootstrap = 启动项（只读，改配置文件/环境变量）；runtime = 设置页可保存 */
   layer?: 'bootstrap' | 'runtime'
-  /** 是否允许写数据库（启动项为 false） */
+  /** 是否允许在设置页保存（启动项为 false） */
   writable?: boolean
   /** 对应环境变量名（没有映射时为 null） */
   env?: string | null
@@ -492,6 +492,10 @@ export interface HealthResponse {
   db: string
   adb: { path: string; version: string; devices: number }
   data_dir: string
+  /** 脚本 JSON 目录（additive） */
+  scripts_dir?: string
+  /** 配置文件路径（additive） */
+  config_file?: string
   /** 后端运行代码的构建元信息（源码运行时由 git 推断） */
   build?: { commit: string | null; dirty: boolean | null; built_at: string | null }
 }

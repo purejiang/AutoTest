@@ -346,7 +346,7 @@ DELETE /api/settings/{key}（从文件移除；bootstrap 项 → 400）；
 POST /api/settings/reset（移除文件里所有设置页管理的项，启动项不动）；
 POST /api/settings/reload（重新读取 config.json；返回 restart_required 列出需重启的启动项）；
 GET /api/settings/scrcpy/options（白名单+校验，渲染表单用）；
-GET /api/health → {status,version,db,adb:{path,version,devices},data_dir}。
+GET /api/health → {status,version,db,adb:{path,version,devices},data_dir,scripts_dir,config_file}。
 
 v0.2.5 起 `SETTINGS_SCHEMA` 补充两个 `DEFAULTS` 已有但未展示的 key：
 `adb.connect_timeout_s`（int，1..120，工具链 → ADB）、`scrcpy.jar`（string，工具链 → scrcpy-server，留空用 vendor 内置 jar）。

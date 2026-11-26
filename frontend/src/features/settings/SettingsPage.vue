@@ -138,7 +138,6 @@ const GROUP_KEYS: Record<KeyGroup, string[]> = {
   capture: ['capture.logcat_auto_attach', 'capture.network.mode', 'capture.network.port'],
   security: ['security.token'],
   storage: [
-    'runtime.data_dir',
     'retention.days',
     'retention.report_exclude_video',
     'retention.report_max_mb',
@@ -189,9 +188,9 @@ const overrideTooltip = computed(() => {
   }
   return [
     `有 ${overrideCount.value} 项设置不是代码默认值：配置文件 ${counts.file} 项 · 环境变量 ${counts.env} 项。`,
-    '优先级：默认值 < 配置文件 < 环境变量——配置只存文件，不再写数据库。',
+    '优先级：默认值 < 配置文件 < 环境变量。',
     '设置页保存 = 原子写 config.json 并立即重载；手改文件后可点「重新载入配置文件」。',
-    '启动项（数据目录、端口等，打开数据库前就要确定）运行中不能切换，改了需重启。',
+    '启动项（数据目录、端口等）启动时确定，运行中不能切换，改了需重启。',
   ].join('\n')
 })
 
@@ -411,7 +410,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
   <div class="page">
     <h1 class="visually-hidden">设置</h1>
     <div class="settings-actions">
-      <span class="settings-priority">配置优先级：默认 &lt; 文件 &lt; 数据库 &lt; 环境变量</span>
+      <span class="settings-priority">配置优先级：默认 &lt; 配置文件 &lt; 环境变量</span>
       <span class="spacer" />
       <StatusTag v-if="showSavedTag" tone="green" dot>已保存</StatusTag>
       <el-tooltip
@@ -467,7 +466,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
         >
           {{ tab.label }}
         </button>
-        <div class="settings-note" title="配置优先级：默认 &lt; 文件 &lt; 数据库 &lt; 环境变量">
+        <div class="settings-note" title="配置优先级：默认 &lt; 配置文件 &lt; 环境变量">
           外观仅本机 · 其余保存后生效
         </div>
       </aside>
@@ -722,8 +721,34 @@ function applyThemeChoice(choice: ThemeChoice): void {
         <div v-else-if="activeTab === 'storage'" class="settings-pane">
           <section class="card settings-card">
             <div class="card-head">
-              <h2>存储设置</h2>
-              <RestartHint detail="修改数据目录/前端目录后需要重启后端；SQLite 不会热切换，产物挂载按新目录动态解析。" />
+              <h2>数据位置</h2>
+              <span class="card-hint" title="配置与脚本都是文件，可直接备份或纳入版本管理；改数据目录后重启生效。">
+                配置文件 · 脚本 · 数据
+              </span>
+            </div>
+            <div class="card-body">
+              <div class="kv-grid">
+                <div class="kv">
+                  <span>配置文件</span><strong class="code-text">{{ settings?.config_file ?? '—' }}</strong>
+                </div>
+                <div class="kv">
+                  <span>脚本目录</span><strong class="code-text">{{ health?.scripts_dir ?? '—' }}</strong>
+                </div>
+                <div class="kv">
+                  <span>数据目录</span><strong class="code-text">{{ health?.data_dir ?? '—' }}</strong>
+                </div>
+              </div>
+              <div class="settings-note">
+                配置和脚本都是普通文件（可直接备份 / 进 git）。数据目录是启动项：要改请编辑配置文件或设置
+                <code class="code-text">AUTOTEST_DATA_DIR</code> 后重启。
+              </div>
+            </div>
+          </section>
+
+          <section class="card settings-card">
+            <div class="card-head">
+              <h2>保留策略</h2>
+              <span class="card-hint" title="运行记录与产物的保留天数、报告体积上限。">保留天数 · 报告体积</span>
             </div>
             <div class="card-body">
               <div class="settings-grid">
@@ -745,7 +770,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
           <section class="card">
             <div class="card-head">
               <h2>存储统计</h2>
-              <span class="card-hint" title="统计数据库与产物占用，并清理过期运行。">运行/产物体积 · 清理</span>
+              <span class="card-hint" title="统计运行记录与产物占用，并清理过期运行。">运行/产物体积 · 清理</span>
               <el-button
                 size="small"
                 :icon="Refresh"
@@ -768,7 +793,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
               <template v-else-if="stats">
                 <div class="kv-grid">
                   <div class="kv">
-                    <span>数据库体积</span><strong>{{ formatBytes(stats.db_size) }}</strong>
+                    <span>运行记录体积</span><strong>{{ formatBytes(stats.db_size) }}</strong>
                   </div>
                   <div class="kv">
                     <span>产物总大小</span><strong>{{ formatBytes(stats.artifacts_size) }}</strong>
@@ -849,7 +874,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   <span>数据目录</span><strong class="code-text">{{ health?.data_dir ?? '—' }}</strong>
                 </div>
                 <div class="kv">
-                  <span>配置优先级</span><strong>默认 &lt; 文件 &lt; 数据库 &lt; 环境变量</strong>
+                  <span>配置优先级</span><strong>默认 &lt; 配置文件 &lt; 环境变量</strong>
                 </div>
               </div>
             </div>
@@ -885,7 +910,7 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   </StatusTag>
                 </el-descriptions-item>
                 <el-descriptions-item label="版本">{{ health.version }}</el-descriptions-item>
-                <el-descriptions-item label="数据库">
+                <el-descriptions-item label="存储状态">
                   <span class="code-text">{{ health.db }}</span>
                 </el-descriptions-item>
                 <el-descriptions-item label="adb">

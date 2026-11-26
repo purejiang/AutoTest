@@ -262,7 +262,7 @@ scripts/          setup / dev / build / start / release / 环境自检 / scrcpy 
 - **启动项**（数据目录、产物目录、前端目录、host、port）：打开数据库前就要确定，运行中改了必须重启；
   设置页只读，改配置文件/环境变量后重启
 - 数据库只存运行数据：运行记录、步骤结果、事件、产物索引、报告；配置是文件
-- 数据目录：`~/.autotest/data`（`runtime.data_dir` 可改），含 DB、artifacts、reports、日志
+- 数据目录：`~/.autotest/data`（`runtime.data_dir` 可改），放运行记录、产物、报告和日志
 - 脚本目录：`~/.autotest/scripts/*.json`（`runtime.scripts_dir` / `AUTOTEST_SCRIPTS_DIR` 可改），一个脚本一个文件
 
 ## 版本管理（本地 git + GitHub 远端）
