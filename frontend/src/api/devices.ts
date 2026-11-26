@@ -132,6 +132,10 @@ export interface HierarchyResponse {
   node: HierarchyNode | null
   raw: string | null
   rawUnavailable?: string
+  /** 后端 dump 耗时（additive，用于显示"慢在哪"） */
+  elapsedMs?: number | null
+  /** 后端统计的节点数（additive） */
+  nodeCount?: number | null
 }
 
 const base = (serial: string): string => `/devices/${encodeURIComponent(serial)}`
@@ -223,6 +227,8 @@ function normalizeHierarchyResponse(data: unknown): HierarchyResponse {
     node,
     raw: typeof record.raw === 'string' ? record.raw : null,
     rawUnavailable: typeof record.raw_unavailable === 'string' ? record.raw_unavailable : undefined,
+    elapsedMs: typeof record.elapsed_ms === 'number' ? record.elapsed_ms : null,
+    nodeCount: typeof record.node_count === 'number' ? record.node_count : null,
   }
 }
 

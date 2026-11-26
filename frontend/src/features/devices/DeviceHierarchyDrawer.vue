@@ -32,8 +32,12 @@ const rawXml = computed(() => hierarchy.value?.raw ?? null)
 const rawUnavailable = computed(() => hierarchy.value?.rawUnavailable ?? null)
 const errorText = computed(() => (error.value ? describeApiError(error.value) : null))
 
+const lastRefreshMs = ref<number | null>(null)
+
 async function refresh(): Promise<void> {
+  const started = performance.now()
   await snapshot.refetch()
+  lastRefreshMs.value = Math.round(performance.now() - started)
 }
 
 function onRawChange(value: string | number | boolean): void {
@@ -63,6 +67,11 @@ function onRawChange(value: string | number | boolean): void {
       <span class="hint">原始 XML</span>
       <el-switch :model-value="raw" size="small" @update:model-value="onRawChange" />
       <el-button size="small" :loading="isFetching" @click="refresh">刷新</el-button>
+      <span v-if="lastRefreshMs !== null" class="hint">
+        上次刷新 {{ lastRefreshMs }}ms<template v-if="hierarchy?.elapsedMs != null">
+          · 层级 {{ hierarchy.elapsedMs }}ms</template
+        >
+      </span>
     </div>
 
     <template v-if="raw">
@@ -85,6 +94,7 @@ function onRawChange(value: string | number | boolean): void {
       :image-url="imageUrl"
       :loading="isFetching"
       :error="errorText"
+      :hierarchy-ms="hierarchy?.elapsedMs ?? null"
       @refresh="refresh"
     />
   </el-drawer>

@@ -42,8 +42,10 @@ const props = withDefaults(
     loading?: boolean
     /** 已格式化的错误文案（describeApiError 的结果）。 */
     error?: string | null
+    /** 后端本次 dump 层级耗时（ms），用于状态行显示 */
+    hierarchyMs?: number | null
   }>(),
-  { mode: 'browse', allowPoint: true, loading: false, error: null },
+  { mode: 'browse', allowPoint: true, loading: false, error: null, hierarchyMs: null },
 )
 
 const emit = defineEmits<{ refresh: []; pick: [target: Target] }>()
@@ -67,6 +69,8 @@ const nodeByKey = computed(() => {
 })
 
 const maxDepthShown = ref(0)
+// 用户手动调过「叠加到第 N 层」后，刷新不再把范围重置回全量（大树全量很吃渲染）。
+const depthChosen = ref(false)
 const clickableOnly = ref(false)
 const showLabels = ref(false)
 
@@ -158,7 +162,7 @@ watch(
 
 // 层级变化（刷新/换设备）后重置视图范围与选中项。
 watch(tree, (next) => {
-  maxDepthShown.value = next.maxDepth
+  maxDepthShown.value = depthChosen.value ? Math.min(maxDepthShown.value, next.maxDepth) : next.maxDepth
   selectedKey.value = null
   imageHover.value = null
   treeHoverKey.value = null
@@ -402,6 +406,9 @@ const statusLine = computed(() => {
   const parts = [`截图 ${pngWidth.value}×${pngHeight.value}`]
   if (tree.value.nodeCount > 0) {
     parts.push(`${tree.value.nodeCount} 节点`, `最深 ${tree.value.maxDepth} 层`)
+    if (props.hierarchyMs !== null && props.hierarchyMs !== undefined) {
+      parts.push(`层级 ${props.hierarchyMs}ms`)
+    }
   }
   if (truncated.value) parts.push(`框过多，只绘制前 ${MAX_OVERLAY_BOXES} 个`)
   return parts.join(' · ')
@@ -459,6 +466,7 @@ function applyPoint(): void {
 // ---------------------------------------------------------------- 树交互 / 复制
 
 function setDepth(value: number | number[]): void {
+  depthChosen.value = true
   maxDepthShown.value = Array.isArray(value) ? (value[0] ?? 0) : value
 }
 
@@ -466,7 +474,10 @@ function onTreeClick(data: unknown): void {
   const item = data as InspectorNode
   if (!item || !item.key) return
   selectedKey.value = item.key
-  if (item.depth > maxDepthShown.value) maxDepthShown.value = item.depth
+  if (item.depth > maxDepthShown.value) {
+    depthChosen.value = true
+    maxDepthShown.value = item.depth
+  }
 }
 
 function onTreeLeave(): void {
@@ -557,6 +568,7 @@ async function copyCenter(): Promise<void> {
               <rect
                 v-for="box in overlayBoxes"
                 :key="box.key"
+                v-memo="[box.x, box.y, box.width, box.height, box.depth, box.visible, box.clickable]"
                 :x="box.x"
                 :y="box.y"
                 :width="box.width"

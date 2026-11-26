@@ -267,7 +267,9 @@ GET /api/devices/{serial}/info|hierarchy?raw=|screenshot(png)|apps?keyword=&type
 POST /api/devices/{serial}/logcat/start|stop；GET /api/devices/{serial}/logcat/status
 （start 可带 run_id/max_lines/package；P0 package 仅记录不生效）。运行期自动采集由
 `capture.logcat_auto_attach` + 脚本 settings.logcat 控制，artifact 关联 run。
-  hierarchy 响应：`{"node": HierarchyNode, "raw": str|null}`（raw=true 时尽量给原始 XML，取不到为 null 并带 `"raw_unavailable"`）；
+  hierarchy 响应：`{"node": HierarchyNode, "raw": str|null, "elapsed_ms": int, "node_count": int}`
+  （raw=true 时**只 dump 一次**：用原始 XML 解析成树；取不到 raw 时为 null 并带 `"raw_unavailable"`。
+  `elapsed_ms`/`node_count` 供前端显示"刷新慢在哪"；后端对 >800ms 的 dump、>1500ms 的截图打 WARNING）；
 POST /api/devices/{serial}/tap|long_press|swipe|key|text|app|shell；
 POST /api/devices/{serial}/screenrecord/start {name,bit_rate,time_limit_s} / stop；
 GET /api/devices/{serial}/screenrecord/status → {active,pending,name,time_limit_s,elapsed_s,remaining_s,started_at,last:{name,size,url}}；

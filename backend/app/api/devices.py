@@ -380,12 +380,57 @@ def get_hierarchy(
     raw: bool = False,
     driver: Driver = Depends(get_driver_or_503),
 ) -> dict[str, Any]:
-    node = _device_call(serial, driver.dump_hierarchy)
+    """当前层级树。返回 additive 的 elapsed_ms / node_count，前端可显示"刷新到底慢在哪"。
+
+    raw=true 时**只 dump 一次**：直接用原始 XML 解析成树（以前会 dump_hierarchy +
+    dump_hierarchy_raw 各一次，刷新耗时翻倍）。
+    """
+    started = time.perf_counter()
+    raw_xml: str | None = None
+    node: Any = None
+    if raw:
+        raw_fn = getattr(driver, "dump_hierarchy_raw", None)
+        if callable(raw_fn):
+            try:
+                raw_xml = str(raw_fn())
+            except Exception:
+                logger.warning("dump_hierarchy_raw failed", exc_info=True)
+        if raw_xml:
+            try:
+                from ..android import hierarchy  # noqa: PLC0415 - be-driver 模块
+
+                node = hierarchy.parse_xml(raw_xml)
+            except Exception:
+                logger.warning("parse raw hierarchy failed, fallback to dump_hierarchy", exc_info=True)
+                node = None
+    if node is None:
+        node = _device_call(serial, driver.dump_hierarchy)
     body: dict[str, Any] = {"node": node.to_dict()}
     if raw:
-        body["raw"] = _raw_xml(driver, node)
-        if body["raw"] is None:
+        if raw_xml is None:
+            raw_xml = _raw_xml(driver, node)
+        if raw_xml is None:
             body["raw_unavailable"] = "raw xml not supported by current driver"
+        else:
+            body["raw"] = raw_xml
+
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    try:
+        from ..android import hierarchy  # noqa: PLC0415
+
+        node_count = len(hierarchy.flatten(node))
+    except Exception:
+        node_count = 0
+    body["elapsed_ms"] = elapsed_ms
+    body["node_count"] = node_count
+    if elapsed_ms >= 800:
+        logger.warning(
+            "hierarchy dump slow: serial=%s raw=%s elapsed=%dms nodes=%d",
+            serial,
+            raw,
+            elapsed_ms,
+            node_count,
+        )
     return body
 
 
@@ -402,8 +447,16 @@ def _capture_png(serial: str, driver: Driver) -> bytes:
 
 @router.get("/{serial}/screenshot")
 def get_screenshot(serial: str, driver: Driver = Depends(get_driver_or_503)) -> Response:
+    started = time.perf_counter()
     data = _capture_png(serial, driver)
-    return Response(content=data, media_type="image/png", headers={"Cache-Control": "no-store"})
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    if elapsed_ms >= 1500:
+        logger.warning("screenshot slow: serial=%s elapsed=%dms bytes=%d", serial, elapsed_ms, len(data))
+    return Response(
+        content=data,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store", "X-Elapsed-Ms": str(elapsed_ms)},
+    )
 
 
 @router.get("/{serial}/apps")
