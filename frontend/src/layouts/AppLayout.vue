@@ -144,10 +144,6 @@ function openHealth(): void {
               <el-icon :size="16"><Sunny v-if="resolvedTheme === 'dark'" /><Moon v-else /></el-icon>
             </button>
           </el-tooltip>
-
-          <el-button class="top-settings" size="small" :icon="Setting" title="打开设置" @click="navigate('/settings')">
-            设置
-          </el-button>
         </div>
       </header>
 

@@ -83,6 +83,10 @@
 - [ ] 旋转后坐标仍正确（旋转时间线）
 - [ ] 物理按键（返回/音量）被记录为 key 节点
 - [ ] 时钟锚点正确（事件时间序与设备一致）
+- [ ] 在手机上点 3 下并滑动一次 → 停止，事件数 > 0，tap/swipe 类型与坐标合理
+- [ ] 停止后采集线程 3 秒内退出，日志无 “physical recorder thread did not stop in time”
+- [ ] 指定设备 getevent 输出无设备前缀 / 只有 BTN_TOUCH UP 的设备也能正常结束手势（回归）
+- [ ] 拔线或杀 getevent → 详情页显示“触摸采集中断”，`recordings.meta.capture_error` 有值
 
 ## 6. 报告与数据
 

@@ -160,6 +160,8 @@ def test_events_to_script_is_valid_and_one_node_per_event() -> None:
     assert script["steps"][1]["params"]["duration_ms"] == 900
     assert script["steps"][2]["params"]["from"] == {"by": "point", "x": 540, "y": 1800}
     assert script["steps"][2]["params"]["to"] == {"by": "point", "x": 540, "y": 600}
+    # 方向已从短名称移到 description，参数里仍保留起终点
+    assert "方向=" in script["steps"][2]["description"]
     assert script["steps"][5]["params"] == {"key": "back"}
     assert script["steps"][6]["params"] == {"key": "home"}
     # 公共字段齐全
@@ -176,11 +178,35 @@ def test_events_to_script_is_valid_and_one_node_per_event() -> None:
         assert step["tags"] == []
     assert script["schema_version"] == 1
     assert script["settings"]["on_fail"] == "abort"
-    # 中文命名 + warnings
-    assert script["steps"][0]["name"] == "点击「登录」"
+    # 短名称：类型标签 + 同类型序号（顺序即事件顺序）
+    assert [step["name"] for step in script["steps"]] == [
+        "点击1",
+        "长按1",
+        "滑动1",
+        "点击2",
+        "输入1",
+        "按键1",
+        "按键2",
+        "应用1",
+    ]
+    # 备注不再重复节点数（节点列已展示）
+    assert script["notes"] == "由录制 rec_x 转换"
+    assert "共" not in script["notes"]
+    assert "个节点" not in script["notes"]
     assert any("坐标定位" in warning for warning in warnings)
     # app 事件现在生成节点（不再有「未生成节点」警告），并提示已还原操作间隔
     assert any("间隔" in warning for warning in warnings)
+    # 疑似滚动只提示，不做合并
+    assert any("已生成 swipe 节点" in warning for warning in warnings)
+    assert not any("已合并为 swipe 节点" in warning for warning in warnings)
+
+
+def test_short_name_unknown_type_falls_back_to_original() -> None:
+    counters: dict[str, int] = {}
+    assert convert._next_step_name("unknown-kind", "原名称", counters) == "原名称"
+    assert counters == {}
+    assert convert._next_step_name("click", "fallback", counters) == "点击1"
+    assert convert._next_step_name("click", "fallback", counters) == "点击2"
 
 
 def test_events_to_script_filter_include_kinds_and_exclude_seqs() -> None:
@@ -200,6 +226,8 @@ def test_events_to_script_filter_include_kinds_and_exclude_seqs() -> None:
 def test_events_to_script_empty_yields_invalid_script_and_warning() -> None:
     script, warnings = convert.events_to_script([], "空录制")
     assert script["steps"] == []
+    assert script["notes"] == "根据录制事件生成"
+    assert "共" not in script["notes"]
     assert validate_script(script)["valid"] is False
     assert any("没有可转换" in warning for warning in warnings)
 
@@ -247,6 +275,7 @@ def test_point_mode_input_inserts_focus_click() -> None:
     script, _warnings = convert.events_to_script(events, "输入脚本")
     steps = script["steps"]
     assert [step["type"] for step in steps] == ["click", "input"]
+    assert [step["name"] for step in steps] == ["点击1", "输入1"]
     assert steps[1]["params"]["target"] is None
     assert steps[1]["params"]["text"] == "wlan"
     # 自动聚焦 click 与普通节点一样不带 when
@@ -261,6 +290,8 @@ def test_point_mode_input_without_tap_inserts_auto_focus_click() -> None:
 
     steps = script["steps"]
     assert [step["type"] for step in steps] == ["click", "input"]
+    # 自动补的聚焦点击计入点击序号
+    assert [step["name"] for step in steps] == ["点击1", "输入1"]
     assert steps[0]["tags"] == ["auto-focus"]
     assert steps[0]["when"] is None
     assert steps[1]["when"] is None
@@ -305,7 +336,7 @@ def test_swipe_keeps_recorded_path_and_long_waits_are_not_truncated() -> None:
 
 
 def test_circle_event_becomes_named_drag_with_path() -> None:
-    """画圈事件：type=drag、名称可读（画圈）、path 完整保留。"""
+    """画圈事件：type=drag、短名称、画圈信息留在 description、path 完整保留。"""
     event = {
         "seq": 1,
         "kind": "drag",
@@ -327,5 +358,6 @@ def test_circle_event_becomes_named_drag_with_path() -> None:
     script, _warnings = convert.events_to_script([event], "画圈脚本")
     step = script["steps"][0]
     assert step["type"] == "drag"
-    assert step["name"] == "画圈"
+    assert step["name"] == "拖拽1"
+    assert "轨迹=画圈" in step["description"]
     assert len(step["params"]["path"]) == 5

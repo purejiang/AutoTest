@@ -115,7 +115,7 @@ const appOptions = computed(() =>
 const APP_ACTIONS = [
   { value: 'launch', label: '启动 launch' },
   { value: 'stop', label: '停止 stop' },
-  { value: 'clear', label: '清数据 clear' },
+  { value: 'clear', label: '清除数据 clear' },
   { value: 'restart', label: '重启 restart' },
 ] as const
 
@@ -277,15 +277,12 @@ function refreshDeviceInfo(): void {
           <h3>
             <el-icon><EditPen /></el-icon>镜像录制
           </h3>
-          <StatusTag tone="blue">镜像 → 脚本</StatusTag>
-        </div>
-        <RecordingBar :serial="serial" @device-change="emit('refreshDevices')" />
-        <div class="section-sub">
-          录制期间在镜像上的点击/滑动会变成脚本节点；停止后可查看录制或一键转脚本。
-        </div>
-        <div class="manual-link-row">
           <button type="button" class="cell-link" @click="goPhysicalRecording">新建真机录制 →</button>
         </div>
+        <div class="section-sub">
+          镜像上的点击/滑动会实时出现在下方；停止后转成正式节点。
+        </div>
+        <RecordingBar :serial="serial" @device-change="emit('refreshDevices')" />
       </section>
 
       <!-- 文本 -->

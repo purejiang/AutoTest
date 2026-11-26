@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, Close, Document, EditPen, Plus, Refresh, Setting, VideoPlay } from '@element-plus/icons-vue'
+import { ArrowLeft, Close, Document, EditPen, Plus, Refresh, Setting, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useWindowSize } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -23,7 +23,14 @@ import JsonSourcePanel from './JsonSourcePanel.vue'
 import NodeForm from './NodeForm.vue'
 import NodeList from './NodeList.vue'
 import ScriptSettingsForm from './ScriptSettingsForm.vue'
-import { cloneScriptData, createStep, normalizeDraft, normalizeScriptData } from './nodeDefaults'
+import {
+  cloneScriptData,
+  createStep,
+  defaultParams,
+  nextNodeName,
+  normalizeDraft,
+  normalizeScriptData,
+} from './nodeDefaults'
 
 const route = useRoute()
 const router = useRouter()
@@ -101,13 +108,6 @@ const selectedNode = computed(() => {
 
 const stepCount = computed(() => draft.value?.steps.length ?? 0)
 
-const subtitle = computed(() => {
-  const parts = [`${stepCount.value} 个节点`]
-  const updated = script.value?.updated_at
-  if (updated) parts.push(`更新于 ${formatShortDateTime(updated)}`)
-  return parts.join(' · ')
-})
-
 const stepIssues = computed<Record<string, { errors: number; warnings: number }>>(() => {
   const result: Record<string, { errors: number; warnings: number }> = {}
   const data = draft.value
@@ -184,11 +184,15 @@ function patchNode(next: StepNode): void {
   applyDraft({ ...data, steps: data.steps.map((step) => (step.id === next.id ? next : step)) })
 }
 
-function nextNodeId(existingIds: string[]): string {
-  const used = new Set(existingIds)
-  let index = existingIds.length + 1
-  while (used.has(`s${index}`)) index += 1
-  return `s${index}`
+function insertStep(step: StepNode): void {
+  const data = draft.value
+  if (!data) return
+  const steps = [...data.steps]
+  const insertAt = selectedIndex.value >= 0 ? selectedIndex.value + 1 : steps.length
+  steps.splice(insertAt, 0, step)
+  applyDraft({ ...data, steps })
+  nodeListRef.value?.clearSearch()
+  selectedId.value = step.id
 }
 
 function addNode(type: NodeType): void {
@@ -198,29 +202,25 @@ function addNode(type: NodeType): void {
     type,
     data.steps.map((item) => item.id),
   )
-  const steps = [...data.steps]
-  const insertAt = selectedIndex.value >= 0 ? selectedIndex.value + 1 : steps.length
-  steps.splice(insertAt, 0, step)
-  applyDraft({ ...data, steps })
-  nodeListRef.value?.clearSearch()
-  selectedId.value = step.id
+  step.name = nextNodeName(type, data.steps)
+  insertStep(step)
 }
 
-function duplicateNode(nodeId: string): void {
+/** 快捷入口：复用 app step 的 clear 动作，不新增 step type/schema。 */
+function addClearDataNode(): void {
   const data = draft.value
   if (!data) return
-  const index = data.steps.findIndex((step) => step.id === nodeId)
-  const sourceNode = data.steps[index]
-  if (!sourceNode) return
-  const copy = JSON.parse(JSON.stringify(sourceNode)) as StepNode
-  copy.id = nextNodeId(data.steps.map((step) => step.id))
-  copy.name = `${sourceNode.name || '节点'} 副本`
-  const steps = [...data.steps]
-  steps.splice(index + 1, 0, copy)
-  applyDraft({ ...data, steps })
-  nodeListRef.value?.clearSearch()
-  selectedId.value = copy.id
-  ElMessage.success('已复制节点（保存后生效）')
+  const step = createStep(
+    'app',
+    data.steps.map((item) => item.id),
+  )
+  step.rerun_safety = 'destructive'
+  step.params = { ...defaultParams('app'), action: 'clear' }
+  const usedNames = new Set(data.steps.map((item) => item.name))
+  let index = 1
+  while (usedNames.has(`清除数据${index}`)) index += 1
+  step.name = `清除数据${index}`
+  insertStep(step)
 }
 
 function moveNode(nodeId: string, direction: -1 | 1): void {
@@ -306,11 +306,11 @@ onBeforeRouteLeave(async () => {
   }
 })
 
-async function handleRun(): Promise<void> {
+function handleRun(): void {
   if (editingName.value) commitName()
   if (hasUnsavedChanges.value) {
-    const saved = await handleSave()
-    if (!saved) return
+    ElMessage.warning('脚本有未保存修改，请先保存后再运行')
+    return
   }
   goRun()
 }
@@ -330,16 +330,8 @@ function deleteNode(nodeId: string): void {
   }
 }
 
-function duplicateSelected(): void {
-  if (selectedNode.value) duplicateNode(selectedNode.value.id)
-}
-
 function deleteSelected(): void {
   if (selectedNode.value) deleteNode(selectedNode.value.id)
-}
-
-function moveSelected(direction: -1 | 1): void {
-  if (selectedNode.value) moveNode(selectedNode.value.id, direction)
 }
 
 function parseJsonToData(text: string): { data?: ScriptData; error?: string } {
@@ -435,7 +427,19 @@ async function handleSave(): Promise<boolean> {
     validation.value = null
     validationOpen.value = false
     loadedId.value = id.value
-    ElMessage.success('脚本已保存')
+    // 保存接口已拦截 error；这里补一次自动检查，把 warning（如子脚本不存在）展示出来。
+    try {
+      const checked = await validateMutation.mutateAsync({ data })
+      if (checked.warnings.length > 0) {
+        validation.value = checked
+        validationOpen.value = true
+        ElMessage.warning(`脚本已保存，有 ${checked.warnings.length} 条警告`)
+      } else {
+        ElMessage.success('脚本已保存')
+      }
+    } catch {
+      ElMessage.success('脚本已保存')
+    }
     return true
   } catch (error) {
     const errors = validationErrorsOf(error)
@@ -454,27 +458,6 @@ async function handleSave(): Promise<boolean> {
 
 async function handleSaveFromSettings(): Promise<void> {
   if (await handleSave()) settingsDrawerOpen.value = false
-}
-
-function applyValidation(result: ScriptValidation): void {
-  validation.value = result
-  validationOpen.value = !result.valid || result.warnings.length > 0
-  if (result.valid) {
-    ElMessage.success(result.warnings.length ? `校验通过，有 ${result.warnings.length} 条警告` : '校验通过')
-  } else {
-    ElMessage.error(`校验未通过：${result.errors.length} 个错误`)
-  }
-}
-
-async function handleValidate(): Promise<void> {
-  const data = effectiveData()
-  if (!data) return
-  try {
-    applyValidation(await validateMutation.mutateAsync({ data }))
-  } catch (error) {
-    const errors = validationErrorsOf(error)
-    if (errors.length > 0) applyValidation({ valid: false, errors, warnings: [] })
-  }
 }
 
 function jumpToPath(path: string): void {
@@ -515,7 +498,7 @@ function jumpToPath(path: string): void {
   </div>
 
   <div v-else class="page-fill script-editor-page">
-    <PageHead :title="draft.name || '脚本编辑器'" :subtitle="subtitle" @back="router.push('/scripts')">
+    <PageHead :title="draft.name || '脚本编辑器'" @back="router.push('/scripts')">
       <template #back><el-icon><ArrowLeft /></el-icon></template>
       <template #title>
         <div class="script-title">
@@ -540,16 +523,17 @@ function jumpToPath(path: string): void {
           </template>
         </div>
       </template>
+      <template #below-title>
+        <p v-if="draft.notes" class="script-notes" :title="draft.notes">备注：{{ draft.notes }}</p>
+      </template>
       <template #title-extra>
         <StatusTag v-if="script" :tone="source.tone">{{ source.label }}</StatusTag>
-        <StatusTag :tone="hasUnsavedChanges ? 'amber' : 'green'">
-          {{ hasUnsavedChanges ? '未保存' : '已保存' }}
-        </StatusTag>
+        <StatusTag v-if="hasUnsavedChanges" tone="amber">未保存</StatusTag>
         <button
           v-if="script?.last_run"
           type="button"
           class="last-run-chip"
-          :title="`运行 #${script.last_run.id} · ${script.last_run.device_serial || '未知设备'}`"
+          :title="`运行 #${script.last_run.id}`"
           @click="openLastRun"
         >
           <StatusTag :tone="runStatusMeta(script.last_run.status).tone">
@@ -562,15 +546,15 @@ function jumpToPath(path: string): void {
         <StatusTag v-else tone="gray">未运行</StatusTag>
       </template>
       <template #actions>
-        <el-button :icon="Check" :loading="validateMutation.isPending.value" @click="handleValidate">校验</el-button>
         <el-button :icon="Setting" @click="settingsDrawerOpen = true">设置</el-button>
         <el-button :icon="Document" @click="jsonOpen = true">JSON</el-button>
         <el-button
           :icon="VideoPlay"
           :disabled="stepCount === 0 || updateMutation.isPending.value"
+          :title="hasUnsavedChanges ? '请先保存后再运行' : '运行脚本'"
           @click="handleRun"
         >
-          {{ hasUnsavedChanges ? '保存并运行' : '运行' }}
+          运行
         </el-button>
         <el-button
           type="primary"
@@ -589,7 +573,6 @@ function jumpToPath(path: string): void {
       <StatusTag tone="amber">源码未应用</StatusTag>
       <span>JSON 源码有未应用的修改；保存时会以源码为准。</span>
       <span class="spacer" />
-      <el-button size="small" @click="jsonOpen = true">查看</el-button>
       <el-button size="small" type="primary" plain @click="handleApplyJson">应用到表单</el-button>
       <el-button size="small" @click="handleResetJson">放弃源码改动</el-button>
     </div>
@@ -641,8 +624,8 @@ function jumpToPath(path: string): void {
         :issues="stepIssues"
         @select="selectedId = $event"
         @add="addNode"
+        @add-preset="addClearDataNode"
         @reorder="reorderNode"
-        @delete="deleteNode"
       />
 
       <div class="editor-main">
@@ -651,16 +634,13 @@ function jumpToPath(path: string): void {
             <NodeForm
               v-if="selectedNode"
               :node="selectedNode"
-              :index="selectedIndex"
               :total="stepCount"
               :steps="draft.steps"
               :default-on-fail="draft.settings.on_fail"
               :default-retry="draft.defaults.retry ?? draft.settings.retry"
               :default-timeout-ms="draft.settings.default_timeout_ms"
               @change="patchNode"
-              @duplicate="duplicateSelected"
               @delete="deleteSelected"
-              @move="moveSelected"
             />
             <el-empty v-else description="选择左侧节点进行编辑" :image-size="64">
               <el-button size="small" type="primary" plain :icon="Plus" @click="addNode('click')">
@@ -719,3 +699,40 @@ function jumpToPath(path: string): void {
     </el-drawer>
   </div>
 </template>
+
+<style scoped>
+.script-editor-page .editor-grid {
+  grid-template-columns: 320px minmax(0, 1fr);
+}
+
+.script-notes {
+  display: -webkit-box;
+  margin: 0;
+  max-width: min(72ch, 100%);
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@media (max-width: 1360px) {
+  .script-editor-page .editor-grid {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1180px) {
+  .script-editor-page .editor-grid {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .script-editor-page .editor-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 220px minmax(0, 1fr);
+  }
+}
+</style>

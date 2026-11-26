@@ -678,7 +678,6 @@ defineExpose({
       </div>
 
       <MirrorStatusLine
-        :serial="serial"
         :session="session"
         :pending-text="keyboard.pendingText.value"
         :busy="gestures.busy.value"

@@ -5,7 +5,6 @@ import type { MirrorSession } from '../composables/useMirrorSession'
 import type { MirrorUiStatus } from '../types'
 
 const props = defineProps<{
-  serial: string
   session: MirrorSession
   pendingText?: string
   busy?: boolean
@@ -42,12 +41,12 @@ const input = computed(() => props.pendingText?.trim())
 </script>
 
 <template>
-  <div class="mirror-statusline" role="status" aria-live="polite">
+  <div class="mirror-statusline" role="status" aria-live="polite" :aria-label="STATUS_TEXT[status]">
     <span class="mirror-dot" :class="`mirror-dot-${STATUS_TONE[status]}`" aria-hidden />
-    <span class="mirror-statusline-strong">{{ STATUS_TEXT[status] }}</span>
-    <span class="mirror-statusline-dot" aria-hidden>·</span>
-    <span class="mirror-statusline-item mirror-statusline-serial" :title="serial">{{ serial }}</span>
-    <span class="mirror-statusline-dot" aria-hidden>·</span>
+    <template v-if="status !== 'streaming'">
+      <span class="mirror-statusline-strong">{{ STATUS_TEXT[status] }}</span>
+      <span class="mirror-statusline-dot" aria-hidden>·</span>
+    </template>
     <span class="mirror-statusline-item">
       {{ resolved ? `${hello?.width}×${hello?.height}` : '分辨率 —' }}
       <template v-if="resolved && hello?.rotation"> / {{ hello.rotation }}°</template>

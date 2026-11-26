@@ -142,7 +142,12 @@ export const deviceKeys = {
 // ---------------------------------------------------------------- 查询
 
 export function useDevices(
-  options: { refetchInterval?: number | false; enabled?: MaybeRefOrGetter<boolean> } = {},
+  options: {
+    refetchInterval?: number | false
+    enabled?: MaybeRefOrGetter<boolean>
+    /** 调用方自己展示错误时抑制全局 toast（如新建录制弹窗）。 */
+    suppressError?: boolean
+  } = {},
 ) {
   return useQuery({
     queryKey: deviceKeys.list(),
@@ -150,6 +155,7 @@ export function useDevices(
     enabled: computed(() => toValue(options.enabled ?? true)),
     refetchInterval: options.refetchInterval ?? 5000,
     staleTime: 2000,
+    meta: { suppressError: options.suppressError },
   })
 }
 

@@ -142,6 +142,8 @@ export function useCreateRecording() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (payload: CreateRecordingPayload) => post<Recording>('/recordings', payload),
+    // 新建向导在遮罩内展示错误，避免全局 toast 与 inline alert 同时出现。
+    meta: { suppressError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: recordingKeys.all })
     },

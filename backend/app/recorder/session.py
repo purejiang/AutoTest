@@ -607,7 +607,9 @@ def _probe_touch_device(serial: str) -> dict[str, Any]:
     )
 
 
-def _stream_events_factory(serial: str, on_touch: Any, on_key: Any, stop_event: threading.Event) -> Any:
+def _stream_events_factory(
+    serial: str, on_touch: Any, on_key: Any, stop_event: threading.Event
+) -> str | None:
     """后台线程入口；真实实现在 be-media 的 app.android.getevent。"""
     from ..android.getevent import stream_events
 
@@ -781,10 +783,29 @@ class PhysicalRecorder(_BaseRecorder):
 
     def _consume(self) -> None:
         factory = _stream_events_factory  # 允许测试 monkeypatch
+        error: str | None = None
         try:
-            factory(self.serial, self._on_touch, self._on_key, self._stop_event)
+            result = factory(self.serial, self._on_touch, self._on_key, self._stop_event)
+            if isinstance(result, str) and result.strip():
+                error = result.strip()
         except Exception as exc:  # 真机断流/线程异常不应影响主流程
+            error = f"{type(exc).__name__}: {exc}"
             logger.warning("physical recorder stream ended for %s: %s", self.serial, exc)
+        if error is None and not self._stop_event.is_set():
+            error = "采集流已结束"
+        if error and not self._stop_event.is_set():
+            self.meta["capture_error"] = error[:500]
+            try:
+                self._persist_meta()
+            except Exception as persist_exc:  # noqa: BLE001 - 排障字段落库失败不应再抛
+                logger.warning(
+                    "persist capture_error failed for %s: %s",
+                    self.recording_id,
+                    persist_exc,
+                )
+            logger.warning(
+                "physical recorder capture error for %s: %s", self.recording_id, error
+            )
 
     def stop(self) -> bool:
         self._stop_event.set()

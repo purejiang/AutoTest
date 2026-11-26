@@ -14,7 +14,9 @@ import pytest
 from sqlalchemy import select
 
 from app import config
+from app.android import getevent
 from app.android.driver import FakeDriver
+from app.android.getevent import TouchSample
 from app.db import session_scope
 from app.models import Recording, RecordingEvent, Script, now_iso
 from app.recorder import hooks
@@ -454,3 +456,70 @@ def test_physical_normalized_touch_samples_map_to_device_pixels(temp_db) -> None
     kind, payload, _confidence = captured[0]
     assert kind == "tap"
     assert (payload["x"], payload["y"]) == (540, 1200)
+
+
+# ---------------------------------------------------------------- 真机抓包 -> PhysicalRecorder
+REAL_CAPTURE_TAP_NO_PREFIX = [
+    "[   93856.488781] 0003 0035 00001516",
+    "[   93856.488781] 0003 0036 0000457a",
+    "[   93856.488781] 0003 003a 00000164",
+    "[   93856.488781] 0003 0039 00000000",
+    "[   93856.488781] 0001 014a 00000001",
+    "[   93856.488781] 0000 0000 00000000",
+    "[   93856.614418] 0003 0035 00001516",
+    "[   93856.614418] 0003 0036 0000457a",
+    "[   93856.614418] 0003 0039 00000000",
+    "[   93856.614418] 0001 014a 00000000",
+    "[   93856.614418] 0000 0000 00000000",
+]
+
+
+def test_physical_recorder_records_tap_from_real_capture(temp_db, monkeypatch) -> None:
+    """抓包行 -> parser -> PhysicalRecorder._on_touch -> tap 事件。"""
+    monkeypatch.setattr(
+        rec,
+        "_map_point",
+        lambda serial, x, y, mapper=None, screen=None: (int(round(x * 1000)), int(round(y * 1000))),
+    )
+    recorder, captured = _physical_with_capture()
+    samples = [
+        event
+        for event in getevent.parse_lines(
+            REAL_CAPTURE_TAP_NO_PREFIX, abs_x=(0, 9791), abs_y=(0, 21599)
+        )
+        if isinstance(event, TouchSample)
+    ]
+    assert [event.down for event in samples] == [True, False]
+    for sample in samples:
+        recorder._on_touch(sample)
+
+    assert len(captured) == 1
+    kind, payload, _confidence = captured[0]
+    assert kind == "tap"
+    assert payload["source"] == "physical"
+
+
+def test_physical_recorder_persists_capture_error(temp_db, monkeypatch) -> None:
+    recording_id = make_recording(
+        temp_db, recording_id="rec_capture_err", serial="fake-err", mode="physical"
+    )
+    recorder = rec.PhysicalRecorder(recording_id, "fake-err", driver_getter=lambda serial: None)
+    monkeypatch.setattr(rec, "_stream_events_factory", lambda *args: "已收到原始行但未解析")
+    recorder._consume()
+    assert read_recording(recording_id).meta.get("capture_error") == "已收到原始行但未解析"
+
+
+def test_physical_recorder_persists_capture_exception(temp_db, monkeypatch) -> None:
+    recording_id = make_recording(
+        temp_db, recording_id="rec_capture_exc", serial="fake-exc", mode="physical"
+    )
+    recorder = rec.PhysicalRecorder(recording_id, "fake-exc", driver_getter=lambda serial: None)
+
+    def boom(*args):
+        raise RuntimeError("getevent crashed")
+
+    monkeypatch.setattr(rec, "_stream_events_factory", boom)
+    recorder._consume()
+    error = read_recording(recording_id).meta.get("capture_error")
+    assert isinstance(error, str)
+    assert "RuntimeError" in error

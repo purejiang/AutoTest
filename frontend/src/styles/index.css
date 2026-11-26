@@ -1597,14 +1597,6 @@ pre,
   white-space: nowrap;
 }
 
-.mirror-statusline-serial {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: var(--mono);
-  font-size: 11.5px;
-}
-
 .mirror-statusline-warn {
   color: var(--amber);
 }
@@ -1800,12 +1792,8 @@ pre,
   font-size: 10px;
 }
 
+/* 行布局/参数/标签在 NodeList.vue 的 scoped style 中维护；这里只保留共享视觉态。 */
 .node-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 42px;
-  padding: 5px 8px;
   border-bottom: 1px solid #f4f6f9;
   border-left: 3px solid transparent;
   cursor: pointer;
@@ -1820,33 +1808,6 @@ pre,
   border-left-color: var(--accent);
 }
 
-.node-num {
-  width: 20px;
-  flex: none;
-  color: var(--muted-2);
-  font-size: 10.5px;
-  text-align: right;
-}
-
-.node-ic {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  flex: none;
-  border-radius: 5px;
-  background: var(--surface-3);
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.node-copy {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-
 .node-name {
   overflow: hidden;
   color: var(--ink);
@@ -1858,34 +1819,6 @@ pre,
 
 .node-row.disabled .node-name {
   opacity: 0.45;
-}
-
-.node-type {
-  overflow: hidden;
-  color: var(--muted-2);
-  font-family: var(--mono);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-tools {
-  display: none;
-  align-items: center;
-  gap: 1px;
-  flex: none;
-}
-
-.node-row:hover .node-tools,
-.node-row.selected .node-tools,
-.node-row:focus-within .node-tools {
-  display: flex;
-}
-
-.node-tools .el-button {
-  height: 22px;
-  width: 22px;
-  padding: 0;
 }
 
 .editor-main {
@@ -1999,12 +1932,6 @@ pre,
   min-width: 0;
   color: var(--muted);
   font-size: 11.5px;
-}
-
-.node-head-sub {
-  color: var(--muted-2);
-  font-size: 10.5px;
-  white-space: nowrap;
 }
 
 /* 节点名做成“标题输入框”：平时像标题，悬停/聚焦才出现输入框边界 */
@@ -3040,14 +2967,6 @@ pre,
   color: var(--muted);
 }
 
-.top-settings {
-  margin-left: 4px;
-}
-
-.top-settings .el-icon {
-  margin-right: 3px;
-}
-
 html.dark .topbar {
   background: rgba(31, 31, 31, 0.88);
 }
@@ -3156,20 +3075,6 @@ html.dark .el-descriptions {
 @media (max-width: 900px) {
   .top-actions {
     gap: 4px;
-  }
-  .top-settings span {
-    display: none;
-  }
-}
-
-@media (max-width: 640px) {
-  .top-settings {
-    width: 28px;
-    padding: 0;
-    margin-left: 0;
-  }
-  .top-settings .el-icon {
-    margin-right: 0;
   }
 }
 

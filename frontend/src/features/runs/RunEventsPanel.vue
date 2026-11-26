@@ -39,7 +39,7 @@ watch(
         <span class="tag blue" style="margin-left: 4px">{{ events.length }}</span>
         <span class="dot" :class="connected ? 'live' : 'offline'" style="margin-left: 6px" />
         <span class="hint" style="margin-left: 3px">
-          {{ connected ? 'WS 已连接' : reconnectAttempt > 0 ? `重连中（第 ${reconnectAttempt} 次）` : 'WS 未连接' }}
+          {{ connected ? '实时已连接' : reconnectAttempt > 0 ? `重连中（第 ${reconnectAttempt} 次）` : '实时未连接' }}
         </span>
       </h2>
       <div class="head-actions">

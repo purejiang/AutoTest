@@ -86,6 +86,21 @@ function nextStepId(existingIds: string[]): string {
   return `s${index}`
 }
 
+/** 新节点短名称：扫描现有「标签+数字」，取最大序号 +1（例如 点击1、点击2、拖拽1）。 */
+export function nextNodeName(type: NodeType, steps: StepNode[]): string {
+  const label = NODE_TYPE_META[type].label
+  let max = 0
+  for (const step of steps) {
+    const name = String(step.name || '').trim()
+    if (!name.startsWith(label)) continue
+    const suffix = name.slice(label.length)
+    if (!/^\d+$/.test(suffix)) continue
+    const value = Number(suffix)
+    if (Number.isFinite(value)) max = Math.max(max, value)
+  }
+  return `${label}${max + 1}`
+}
+
 export function createStep(type: NodeType, existingIds: string[]): StepNode {
   return {
     id: nextStepId(existingIds),

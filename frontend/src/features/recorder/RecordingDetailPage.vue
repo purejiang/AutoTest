@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   Delete,
   Document,
-  Refresh,
   SwitchButton,
   VideoPause,
   VideoPlay,
@@ -88,15 +87,41 @@ const statusMeta = computed(() => recordingStatusMeta(recording.value?.status))
 const modeMeta = computed(() => recordingModeMeta(recording.value?.mode))
 const hasScript = computed(() => Boolean(recording.value?.script_id))
 const convertLabel = computed(() => (hasScript.value ? '重新生成' : '转脚本'))
+const isPhysical = computed(() => recording.value?.mode === 'physical')
+
+const captureError = computed(() => {
+  const value = recording.value?.meta?.capture_error
+  return typeof value === 'string' ? value.trim() : ''
+})
+
+const touchDeviceText = computed(() => {
+  if (!isPhysical.value) return ''
+  const meta = recording.value?.meta ?? {}
+  const name = typeof meta.touch_device_name === 'string' ? meta.touch_device_name : ''
+  const path = typeof meta.touch_device === 'string' ? meta.touch_device : ''
+  const screenValue = Array.isArray(meta.screen) ? meta.screen : []
+  const screen =
+    screenValue.length >= 2 && screenValue[0] != null && screenValue[1] != null
+      ? `${String(screenValue[0])}×${String(screenValue[1])}`
+      : ''
+  const device = name && path ? `${name}（${path}）` : name || path
+  return [device, screen].filter(Boolean).join(' · ')
+})
+
+const eventsEmptyDescription = computed(() =>
+  isPhysical.value
+    ? '暂无事件：在手机上操作后事件会实时出现在这里；若仍为 0，请查看上方采集信息/错误。'
+    : '暂无事件：去控制台在镜像上操作并开启录制。',
+)
 
 const liveHint = computed(() => {
   if (isPaused.value) return '已暂停，事件不会追加'
   if (!recordingWs.connected.value) {
     return recordingWs.reconnectAttempt.value > 0
-      ? `实时连接中断，正在第 ${recordingWs.reconnectAttempt.value} 次重连（已回退 4s 轮询）`
-      : '实时连接建立中（已回退 4s 轮询）'
+      ? `实时连接中断，正在第 ${recordingWs.reconnectAttempt.value} 次重连（暂时每 4 秒刷新）`
+      : '实时连接建立中（暂时每 4 秒刷新）'
   }
-  return eventCount.value > 0 ? '事件通过 WS 实时追加' : '等待第 1 个事件…'
+  return eventCount.value > 0 ? '' : '等待第 1 个事件…'
 })
 
 const convertOpen = ref(false)
@@ -388,7 +413,7 @@ watch(
 
   <div v-else class="page">
     <PageHead
-      :title="`录制详情 · ${recording.name || recording.id}`"
+      :title="recording.name || recording.id"
       :subtitle="`${recording.id} · ${recording.serial || '—'}`"
       @back="router.push('/recorder')"
     >
@@ -396,7 +421,6 @@ watch(
       <template #title-extra>
         <StatusTag :tone="statusMeta.tone">{{ statusMeta.label }}</StatusTag>
         <StatusTag :tone="modeMeta.tone">{{ modeMeta.label }}</StatusTag>
-        <StatusTag v-if="recording.script_id" tone="green">已生成脚本</StatusTag>
       </template>
       <template #actions>
         <el-button v-if="isRecording" :icon="VideoPause" :loading="pauseMutation.isPending.value" @click="pauseRecording">
@@ -425,47 +449,45 @@ watch(
         >
           {{ convertLabel }}
         </el-button>
-        <el-button :icon="Refresh" :loading="recordingQuery.isFetching.value || eventsQuery.isFetching.value" @click="refreshAll">
-          刷新
-        </el-button>
         <el-button v-if="isStopped" type="danger" plain :icon="Delete" @click="removeRecording">删除</el-button>
       </template>
     </PageHead>
 
     <div v-if="isLive" class="recording-livebar">
       <span :class="['dot', { 'live-pulse': isRecording }]" />
-      <strong>{{ statusMeta.label }}</strong>
+      <StatusTag :tone="statusMeta.tone">{{ statusMeta.label }}</StatusTag>
       <span class="hint">已记录 <b>{{ eventCount }}</b> 个事件</span>
       <span class="spacer" />
-      <span class="hint">{{ liveHint }}</span>
+      <span v-if="liveHint" class="hint">{{ liveHint }}</span>
       <StatusTag :tone="recordingWs.connected.value ? 'green' : 'amber'" dot>
-        {{ recordingWs.connected.value ? 'WS 实时' : '轮询回退' }}
+        {{ recordingWs.connected.value ? '实时' : '轮询' }}
       </StatusTag>
     </div>
+
+    <el-alert
+      v-if="captureError"
+      type="error"
+      show-icon
+      :closable="false"
+      title="触摸采集中断"
+    >
+      <template #default>
+        <div class="row wrap">
+          <span>{{ captureError }}</span>
+          <span class="hint">
+            {{ isLive ? '请使用页头「停止」后重新创建。' : '该录制可能不完整，建议重新创建。' }}
+          </span>
+        </div>
+      </template>
+    </el-alert>
 
     <section class="card">
       <div class="card-head">
         <h2>录制摘要</h2>
-        <span class="hint">录制停止后可转脚本；事件表最多保留最近 {{ MAX_EVENTS }} 条</span>
+        <span class="hint">停止后可转脚本</span>
       </div>
       <div class="card-body">
         <div class="recording-summary">
-          <div class="kv">
-            <span>录制 ID</span>
-            <strong class="code-text">{{ recording.id }}</strong>
-          </div>
-          <div class="kv">
-            <span>状态</span>
-            <strong>{{ statusMeta.label }}</strong>
-          </div>
-          <div class="kv">
-            <span>模式</span>
-            <strong>{{ modeMeta.label }}</strong>
-          </div>
-          <div class="kv">
-            <span>设备</span>
-            <strong class="code-text">{{ recording.serial || '—' }}</strong>
-          </div>
           <div class="kv">
             <span>事件数</span>
             <strong>{{ eventCount }}</strong>
@@ -481,15 +503,14 @@ watch(
           <div class="kv">
             <span>关联脚本</span>
             <strong>
-              <button v-if="recording.script_id" type="button" class="cell-link" @click="openScript">
-                {{ recording.script_name || recording.script_id }}
-              </button>
+              <span v-if="recording.script_id">{{ recording.script_name || recording.script_id }}</span>
               <span v-else class="muted">尚未生成</span>
             </strong>
           </div>
-        </div>
-        <div class="hint recording-detail-note">
-          真机录制通过 getevent 采集触摸；转脚本前建议先确认触摸设备与标定。
+          <div v-if="touchDeviceText" class="kv kv-wide">
+            <span>采集设备</span>
+            <strong class="code-text" :title="touchDeviceText">{{ touchDeviceText }}</strong>
+          </div>
         </div>
       </div>
     </section>
@@ -500,7 +521,9 @@ watch(
           录制事件
           <span class="tag blue" style="margin-left: 4px">{{ eventCount }}</span>
         </h2>
-        <span class="hint">按录制顺序 · 低置信度事件高亮 · 删除后不参与转脚本</span>
+        <span class="hint">
+          按录制顺序 · 低置信度事件高亮 · 删除后不参与转脚本 · 最多保留最近 {{ MAX_EVENTS }} 条
+        </span>
       </div>
 
       <div v-if="selectedEvents.length > 0" class="batch-bar">
@@ -524,9 +547,15 @@ watch(
         show-icon
         :closable="false"
         title="事件加载失败"
-        :description="describeApiError(eventsQuery.error.value)"
         style="margin: 8px"
-      />
+      >
+        <template #default>
+          <div class="row wrap">
+            <span>{{ describeApiError(eventsQuery.error.value) }}</span>
+            <el-button size="small" @click="refreshAll">重试</el-button>
+          </div>
+        </template>
+      </el-alert>
 
       <el-table
         ref="eventsTableRef"
@@ -571,8 +600,9 @@ watch(
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty description="暂无事件：去控制台在镜像上操作并开启录制">
+          <el-empty :description="eventsEmptyDescription">
             <el-button
+              v-if="!isPhysical"
               type="primary"
               @click="router.push({ path: '/console', query: { tab: 'manual', manual: 'record' } })"
             >
@@ -582,12 +612,8 @@ watch(
         </template>
       </el-table>
 
-      <div class="table-foot">
-        <span>
-          共 {{ eventCount }} 个事件
-          <template v-if="events.length < eventCount"> · 当前加载 {{ events.length }} 条</template>
-        </span>
-        <span class="hint">事件表最多保留最近 {{ MAX_EVENTS }} 条</span>
+      <div v-if="events.length < eventCount" class="table-foot">
+        <span>当前加载 {{ events.length }} / 共 {{ eventCount }} 个事件</span>
       </div>
     </section>
 
@@ -642,10 +668,6 @@ watch(
   animation: recording-live-pulse 1.2s ease-in-out infinite;
 }
 
-.recording-livebar strong {
-  font-size: 11.5px;
-}
-
 .recording-livebar .hint {
   color: var(--muted);
 }
@@ -668,8 +690,12 @@ watch(
   font-size: 11.5px;
 }
 
-.recording-detail-note {
-  margin-top: 8px;
+.recording-summary .kv > span {
+  white-space: nowrap;
+}
+
+.recording-summary .kv-wide {
+  grid-column: 1 / -1;
 }
 
 @keyframes recording-live-pulse {

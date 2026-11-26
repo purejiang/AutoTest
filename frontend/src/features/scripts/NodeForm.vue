@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowDown, ArrowUp, CopyDocument, Delete, MoreFilled } from '@element-plus/icons-vue'
+import { Delete } from '@element-plus/icons-vue'
 
 import type { OnFail, Retry, StepNode } from '@/types/api'
 import { numberOrNull } from '@/lib/format'
@@ -12,7 +12,6 @@ import StatusTag from '@/components/StatusTag.vue'
 
 const props = defineProps<{
   node: StepNode
-  index: number
   total: number
   steps: StepNode[]
   defaultOnFail: 'abort' | 'continue'
@@ -22,9 +21,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   change: [node: StepNode]
-  duplicate: []
   delete: []
-  move: [direction: -1 | 1]
 }>()
 
 const advancedOpen = ref<string[]>([])
@@ -66,13 +63,6 @@ function setOnFail(value: string): void {
 function setWhen(value: StepNode['when']): void {
   patch({ when: value })
 }
-
-function onNodeCommand(command: string): void {
-  if (command === 'duplicate') emit('duplicate')
-  else if (command === 'up') emit('move', -1)
-  else if (command === 'down') emit('move', 1)
-  else if (command === 'delete') emit('delete')
-}
 </script>
 
 <template>
@@ -88,9 +78,6 @@ function onNodeCommand(command: string): void {
           aria-label="节点名称"
           @update:model-value="patch({ name: $event })"
         />
-        <span class="node-head-sub">第 {{ index + 1 }} / {{ total }}</span>
-        <span class="node-head-sub code-text">id = {{ node.id }}</span>
-        <StatusTag v-if="!node.enabled" tone="gray">已禁用</StatusTag>
         <StatusTag v-if="node.when" tone="cyan">带条件</StatusTag>
       </div>
       <div class="node-head-actions">
@@ -102,29 +89,22 @@ function onNodeCommand(command: string): void {
           @update:model-value="patch({ enabled: Boolean($event) })"
         />
         <span class="node-head-divider" />
-        <el-dropdown trigger="click" @command="onNodeCommand">
-          <el-button text :icon="MoreFilled" title="更多节点操作" />
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="duplicate" :icon="CopyDocument">复制节点</el-dropdown-item>
-              <el-dropdown-item command="up" :icon="ArrowUp" :disabled="index <= 0">上移</el-dropdown-item>
-              <el-dropdown-item command="down" :icon="ArrowDown" :disabled="index >= total - 1">
-                下移
-              </el-dropdown-item>
-              <el-dropdown-item command="delete" :icon="Delete" divided :disabled="total <= 1">
-                删除节点
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <el-button
+          class="node-delete"
+          text
+          type="danger"
+          :icon="Delete"
+          :disabled="total <= 1"
+          title="删除节点"
+          @click="emit('delete')"
+        >
+          删除
+        </el-button>
       </div>
     </div>
 
     <el-form class="node-editor-form" label-position="top" size="small" @submit.prevent>
-      <div class="section-label">
-        动作参数
-        <span class="hint">{{ meta.label }} 的主配置</span>
-      </div>
+      <div class="section-label">动作参数</div>
       <ParamsEditor :type="node.type" :params="node.params" @change="patch({ params: $event })" />
 
       <div class="form-grid" style="margin-top: 6px">
@@ -236,6 +216,9 @@ function onNodeCommand(command: string): void {
             <span class="hint" style="margin-left: 6px">重跑安全性、标签、执行节奏</span>
           </template>
           <div class="form-grid">
+            <el-form-item label="节点 ID" class="full">
+              <code class="code-text">{{ node.id }}</code>
+            </el-form-item>
             <el-form-item label="重跑安全性">
               <el-select
                 :model-value="node.rerun_safety"
@@ -292,3 +275,10 @@ function onNodeCommand(command: string): void {
     </el-form>
   </div>
 </template>
+
+<style scoped>
+.node-head-actions .node-delete {
+  width: auto;
+  padding: 0 6px;
+}
+</style>

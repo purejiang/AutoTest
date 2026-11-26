@@ -29,9 +29,7 @@ import {
 } from '@/api/scripts'
 import {
   formatDateTime,
-  formatDuration,
   formatRelative,
-  runDurationMs,
   runStatusMeta,
   safeParseJson,
   sourceMeta,
@@ -171,7 +169,7 @@ function openRun(runId: number): void {
 }
 
 function lastRunTitle(run: NonNullable<Script['last_run']>): string {
-  const parts = [`运行 #${run.id}`, run.device_serial || '未知设备']
+  const parts = [`运行 #${run.id}`]
   if (run.error?.message) parts.push(run.error.message)
   return parts.join(' · ')
 }
@@ -190,9 +188,7 @@ function openMirrorRecord(): void {
 }
 
 function handleCreateCommand(command: string): void {
-  if (command === 'manual') {
-    openManual()
-  } else if (command === 'mirror') {
+  if (command === 'mirror') {
     openMirrorRecord()
   } else if (command === 'physical') {
     physicalOpen.value = true
@@ -337,7 +333,6 @@ async function handleImportFile(event: Event): Promise<void> {
           <el-icon style="margin-right: 4px"><Plus /></el-icon>新建脚本
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="manual">手动创建</el-dropdown-item>
               <el-dropdown-item command="mirror">从镜像录制</el-dropdown-item>
               <el-dropdown-item command="physical">从真机录制</el-dropdown-item>
             </el-dropdown-menu>
@@ -388,12 +383,12 @@ async function handleImportFile(event: Event): Promise<void> {
           @row-click="onRowClick"
         >
           <el-table-column type="selection" width="36" />
-          <el-table-column label="脚本 / 备注" min-width="300">
+          <el-table-column label="脚本 / ID" min-width="300">
             <template #default="{ row }">
               <button type="button" class="cell-link" @click.stop="router.push(`/scripts/${row.id}`)">
                 {{ row.name || row.id }}
               </button>
-              <div v-if="row.notes" class="cell-sub cell-notes" :title="row.notes">{{ row.notes }}</div>
+              <div class="cell-sub cell-id" :title="row.id">{{ row.id }}</div>
             </template>
           </el-table-column>
           <el-table-column label="节点" width="64" align="right">
@@ -420,7 +415,7 @@ async function handleImportFile(event: Event): Promise<void> {
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="最近运行" width="214">
+          <el-table-column label="最近运行" width="150">
             <template #default="{ row }">
               <button
                 v-if="row.last_run"
@@ -429,18 +424,12 @@ async function handleImportFile(event: Event): Promise<void> {
                 :title="lastRunTitle(row.last_run)"
                 @click.stop="openRun(row.last_run.id)"
               >
-                <span class="last-run-main">
-                  <StatusTag :tone="runStatusMeta(row.last_run.status).tone">
-                    {{ runStatusMeta(row.last_run.status).label }}
-                  </StatusTag>
-                  <span class="small muted">
-                    {{ formatRelative(row.last_run.started_at ?? row.last_run.created_at) }}
-                  </span>
-                  <span v-if="runDurationMs(row.last_run) !== null" class="small muted">
-                    · {{ formatDuration(runDurationMs(row.last_run)) }}
-                  </span>
+                <StatusTag :tone="runStatusMeta(row.last_run.status).tone">
+                  {{ runStatusMeta(row.last_run.status).label }}
+                </StatusTag>
+                <span class="small muted">
+                  {{ formatRelative(row.last_run.started_at ?? row.last_run.created_at) }}
                 </span>
-                <span class="last-run-sub">{{ row.last_run.device_serial || '未知设备' }}</span>
               </button>
               <span v-else class="muted small">从未运行</span>
             </template>
@@ -452,10 +441,9 @@ async function handleImportFile(event: Event): Promise<void> {
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="176" align="right">
+          <el-table-column label="操作" width="140" align="right">
             <template #default="{ row }">
               <div class="actions-cell" @click.stop>
-                <el-button link type="primary" @click="router.push(`/scripts/${row.id}`)">编辑</el-button>
                 <el-button link type="primary" :icon="VideoPlay" @click="runInConsole(row)">运行</el-button>
                 <el-dropdown trigger="click" @command="(command: string) => handleRowCommand(command, row)">
                   <el-button link :icon="MoreFilled" title="更多" />
@@ -472,12 +460,13 @@ async function handleImportFile(event: Event): Promise<void> {
             </template>
           </el-table-column>
           <template #empty>
-            <el-empty :description="search ? '未找到匹配的脚本' : '还没有脚本，手动新建或从录制生成'">
-              <div class="row" style="justify-content: center">
-                <el-button type="primary" :icon="Plus" @click="openManual">手动创建</el-button>
-                <el-button :icon="Upload" @click="triggerImport">导入 JSON</el-button>
-              </div>
-            </el-empty>
+            <el-empty
+              :description="
+                search
+                  ? '未找到匹配的脚本，试试清除搜索'
+                  : '还没有脚本，使用右上角「新建脚本」或上传图标导入'
+              "
+            />
           </template>
         </el-table>
         <div class="table-foot">
@@ -494,7 +483,7 @@ async function handleImportFile(event: Event): Promise<void> {
       </div>
     </template>
 
-    <RunHistoryPanel v-else @browse-library="switchTab('library')" />
+    <RunHistoryPanel v-else />
 
     <el-dialog v-model="manualOpen" title="新建脚本" width="520px" append-to-body>
       <el-form label-position="top" size="small">
@@ -589,11 +578,12 @@ async function handleImportFile(event: Event): Promise<void> {
   color: var(--accent);
 }
 
-.cell-notes {
+.cell-id {
   max-width: 420px;
   overflow: hidden;
-  font-family: var(--font);
-  font-size: 11px;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -624,39 +614,21 @@ async function handleImportFile(event: Event): Promise<void> {
 }
 
 .last-run {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   max-width: 100%;
   padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.last-run:hover .last-run-main {
+.last-run:hover {
   text-decoration: underline;
   text-underline-offset: 2px;
-}
-
-.last-run-main {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  white-space: nowrap;
-}
-
-.last-run-sub {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--muted-2);
-  font-family: var(--mono);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

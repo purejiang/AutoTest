@@ -229,6 +229,7 @@ export interface ScriptLastRun {
     failed_steps?: number
     skipped_steps?: number
     duration_ms?: number
+    total_steps?: number
   } | null
 }
 
@@ -313,6 +314,7 @@ export interface Run {
     failed_steps?: number
     skipped_steps?: number
     duration_ms?: number
+    total_steps?: number
   } | null
   created_at: string
   debug?: { step_mode?: boolean; breakpoints?: string[] } | null

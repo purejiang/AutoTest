@@ -8,7 +8,14 @@ import { describeApiError } from '@/api/client'
 import { runKeys, useRun, useRunEvents } from '@/api/runs'
 import { useScript } from '@/api/scripts'
 import { useRunEventsWs } from '@/api/useRunEventsWs'
-import { isTerminalRunStatus, formatDateTime, formatDuration, runDurationMs, runStatusMeta } from '@/lib/format'
+import {
+  formatDateTime,
+  formatDuration,
+  isTerminalRunStatus,
+  runDurationMs,
+  runProgress,
+  runStatusMeta,
+} from '@/lib/format'
 import { useUiStore } from '@/stores/ui'
 import type { RunEvent } from '@/types/api'
 import StatusTag from '@/components/StatusTag.vue'
@@ -62,18 +69,15 @@ const visibleEvents = computed(() =>
 )
 
 const totalSteps = computed(() => run.value?.total_steps || run.value?.steps?.length || 0)
-const currentIndex = computed(() => {
-  if (!run.value) return 0
-  const total = totalSteps.value
-  if (total <= 0) return 0
-  if (liveStatus.value === 'succeeded') return total
-  if (liveStatus.value === 'queued') return 0
-  // step_index 是当前节点下标（0-based）；进度按“已处理到第几个节点”展示。
-  return Math.min(total, Math.max(0, Number(run.value.step_index ?? 0) + 1))
-})
-const percent = computed(() =>
-  totalSteps.value > 0 ? Math.min(100, Math.round((currentIndex.value / totalSteps.value) * 100)) : 0,
+const progress = computed(() =>
+  runProgress({
+    status: liveStatus.value,
+    step_index: run.value?.step_index,
+    total_steps: totalSteps.value,
+  }),
 )
+const currentIndex = computed(() => progress.value.current)
+const percent = computed(() => progress.value.percent)
 const progressTone = computed(() => {
   if (liveStatus.value === 'failed' || liveStatus.value === 'aborted') return 'red'
   if (liveStatus.value === 'succeeded') return 'green'
@@ -188,7 +192,7 @@ function clearEvents(): void {
             </div>
             <span class="hint">
               <span class="dot" :class="ws.connected.value ? 'live' : 'offline'" />
-              {{ ws.connected.value ? 'WS 已连接' : ws.reconnectAttempt.value > 0 ? `重连中（第 ${ws.reconnectAttempt.value} 次）` : 'WS 未连接' }}
+              {{ ws.connected.value ? '实时已连接' : ws.reconnectAttempt.value > 0 ? `重连中（第 ${ws.reconnectAttempt.value} 次）` : '实时未连接' }}
             </span>
           </div>
 

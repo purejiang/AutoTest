@@ -1,17 +1,20 @@
 """物理录制：getevent 流解析（契约 §8 / §14）。
 
 - ``touch_device_detection(serial)``：``getevent -pl`` 解析出触摸设备节点与 ABS 范围；
-- ``GeteventParser`` / ``parse_lines``：把 ``getevent -lt`` 行解析成 ``TouchSample`` / ``KeyEvent``
+- ``GeteventParser`` / ``parse_lines``：把 getevent 行解析成 ``TouchSample`` / ``KeyEvent``
   （协议 A/B 状态机：ABS_MT_SLOT、ABS_MT_TRACKING_ID、SYN_REPORT 成帧、BTN_TOUCH）；
 - ``stream_events(serial, on_touch, on_key, stop_event, device_path=None)``：真正拉流
-  （``adb -s S exec-out getevent -lt <dev>``），回调消费；``stop_event`` 可停。
+  （``adb -s S exec-out getevent -t <dev>``），回调消费；``stop_event`` 可停。
 
-行格式（``getevent -t`` 数字模式，例）::
+行格式（``getevent -t`` 数字模式；**指定设备时不打印设备前缀**）::
 
-    [  1234.567] /dev/input/event2: 0003 0035 00000123
+    [  1234.567890] 0003 0035 00000123
+    [  1234.567890] /dev/input/event2: 0003 0035 00000123   # 未指定设备时
 
-也兼容 ``-l`` 标签模式（``EV_ABS ABS_MT_POSITION_X 00000123``）。触摸坐标用 ABS 范围线性
-归一化到 0..1；``t`` 是 getevent 时间戳（设备/主机秒）。
+也兼容 ``-l`` 标签模式（``EV_ABS ABS_MT_POSITION_X 00000123``）和
+``BTN_TOUCH DOWN/UP`` 文本值；标签模式只覆盖触摸/BTN_TOUCH，物理按键生产路径
+统一走数字模式。触摸坐标用 ABS 范围线性归一化到 0..1；``t`` 是 getevent
+时间戳（设备/主机秒）。
 
 无真机可测：``parse_pl_output`` / ``parse_lines`` 是纯函数（tests/test_media_getevent.py 喂样例文本）。
 """
@@ -296,8 +299,13 @@ def touch_device_detection(
 
 
 # ---------------------------------------------------------------- 行解析 / 协议状态机
+# 指定设备时 getevent 不打印 "/dev/input/eventX: " 前缀（见 Android toolbox
+# getevent.c 的 print_device 分支），因此设备前缀必须可选；同时兼容带前缀的
+# 旧抓包和非 -l 数字模式。
 _LINE_RE = re.compile(
-    r"^\s*(?:\[?\s*(?P<t>\d+\.\d+)\s*\]?\s*)?(?P<dev>/dev/input/\S+?):\s*(?P<rest>.+?)\s*$"
+    r"^\s*(?:\[?\s*(?P<t>\d+\.\d+)\s*\]?\s*)?"
+    r"(?:(?P<dev>/dev/input/\S+?):\s*)?"
+    r"(?P<rest>.+?)\s*$"
 )
 
 
@@ -313,7 +321,7 @@ def _parse_line(line: str) -> tuple[float, str, int, int, int] | None:
     parts = match.group("rest").split()
     if len(parts) < 3:
         return None
-    device = match.group("dev")
+    device = match.group("dev") or ""
     first, second, third = parts[0], parts[1], parts[2]
     try:
         ev_type = int(first, 16)
@@ -330,7 +338,13 @@ def _parse_line(line: str) -> tuple[float, str, int, int, int] | None:
     try:
         value = int(third, 16)
     except ValueError:
-        return None
+        # 标签模式 EV_KEY BTN_TOUCH DOWN/UP 的值是文本，不是十六进制。
+        if third == "DOWN":
+            value = 1
+        elif third == "UP":
+            value = 0
+        else:
+            return None
     return (timestamp, device, ev_type, code, value)
 
 
@@ -361,7 +375,8 @@ class GeteventParser:
         self._current_slot = 0
         self._slots: dict[int, dict[str, Any]] = {}
         self._changed_slots: set[int] = set()
-        self._btn_touch = False
+        # None = 该设备不发 BTN_TOUCH，退回 tracking id 判断；True/False = 显式接触状态。
+        self._btn_touch: bool | None = None
         self._syn_pending = False
 
     # ---- 内部
@@ -382,7 +397,8 @@ class GeteventParser:
         if parsed is None:
             return []
         timestamp, device, ev_type, code, value = parsed
-        if self.device and device != self.device:
+        # 指定设备时行内没有 device 前缀，此时不做过滤。
+        if self.device and device and device != self.device:
             return []
         self._last_t = timestamp
         events: list[TouchSample | KeyEvent] = []
@@ -390,8 +406,20 @@ class GeteventParser:
             self._handle_abs(code, value)
         elif ev_type == EV_KEY:
             if code == BTN_TOUCH:
-                self._btn_touch = bool(value)
-                self._syn_pending = True
+                new_state = bool(value)
+                if new_state != self._btn_touch:
+                    self._btn_touch = new_state
+                    if new_state:
+                        self._changed_slots.add(self._current_slot)
+                    else:
+                        # 有的设备抬手只发 BTN_TOUCH UP，不重置 tracking id；
+                        # 抬起时把所有仍按下的 slot 都标成待释放。
+                        for slot_index, slot in self._slots.items():
+                            if slot.get("down"):
+                                self._changed_slots.add(slot_index)
+                        if not self._changed_slots:
+                            self._changed_slots.add(self._current_slot)
+                    self._syn_pending = True
             elif code not in _BTN_RANGE:
                 events.append(KeyEvent(t=timestamp, keycode=code, down=bool(value)))
         elif ev_type == EV_SYN and code == SYN_REPORT:
@@ -431,14 +459,22 @@ class GeteventParser:
             return []
         self._syn_pending = False
         events: list[TouchSample | KeyEvent] = []
-        slots = sorted(self._changed_slots) or ([0] if not self._slots else [])
+        slots = sorted(self._changed_slots)
+        if not slots:
+            if self._btn_touch is False:
+                slots = sorted(
+                    slot_index for slot_index, slot in self._slots.items() if slot.get("down")
+                )
+            else:
+                slots = [0] if not self._slots else [self._current_slot]
         self._changed_slots = set()
         for slot_index in slots:
             slot = self._slot(slot_index)
             tracking_id = int(slot["tracking_id"])
             raw_x = slot["x"]
             raw_y = slot["y"]
-            if tracking_id < 0:
+            released = tracking_id < 0 or self._btn_touch is False
+            if released:
                 if slot["down"]:
                     x = self.abs_x.normalize(raw_x) if raw_x is not None else 0.0
                     y = self.abs_y.normalize(raw_y) if raw_y is not None else 0.0
@@ -454,7 +490,12 @@ class GeteventParser:
                     )
                     slot["down"] = False
                     slot.pop("last_emitted", None)
-                elif not self._protocol_b and self._btn_touch and raw_x is not None and raw_y is not None:
+                elif (
+                    not self._protocol_b
+                    and self._btn_touch is True
+                    and raw_x is not None
+                    and raw_y is not None
+                ):
                     # 协议 A 且无 ABS_MT_TRACKING_ID 的老设备：BTN_TOUCH 按下 + 坐标即一次 down
                     x = self.abs_x.normalize(int(raw_x))
                     y = self.abs_y.normalize(int(raw_y))
@@ -503,7 +544,7 @@ def parse_lines(
     abs_y: tuple[int, int] | None = None,
     device: str | None = None,
 ) -> Iterator[TouchSample | KeyEvent]:
-    """回放模式：把 ``getevent -lt`` 行序列解析成事件（测试用；无 I/O）。"""
+    """回放模式：把 getevent 行序列解析成事件（测试用；无 I/O）。"""
     parser = GeteventParser(abs_x=abs_x, abs_y=abs_y, device=device)
     for line in lines:
         yield from parser.feed_line(line)
@@ -511,7 +552,9 @@ def parse_lines(
 
 # ---------------------------------------------------------------- 实时流
 def _start_getevent(serial: str, device_path: str) -> subprocess.Popen[str]:
-    argv = [config.find_adb(), "-s", serial, "exec-out", "getevent", "-lt", device_path]
+    # 数字模式 -t：指定设备时输出 "[t] 0003 0035 ..."（无设备前缀）。
+    # 不用 -l，避免 EV_KEY 的 DOWN/UP 文本值和非数字键名无法解析。
+    argv = [config.find_adb(), "-s", serial, "exec-out", "getevent", "-t", device_path]
     try:
         return subprocess.Popen(
             argv,
@@ -550,10 +593,13 @@ def stream_events(
     device_path: str | None = None,
     *,
     device: TouchDevice | None = None,
-) -> None:
-    """拉 ``getevent -lt`` 流并回放成事件，直到 ``stop_event`` 置位/设备断开。
+) -> str | None:
+    """拉 ``getevent -t`` 数字流并回放成事件，直到 ``stop_event`` 置位/设备断开。
 
-    ``on_touch`` / ``on_key`` 为 None 时对应事件丢弃；异常只记录（调用方负责重连策略）。
+    ``on_touch`` / ``on_key`` 为 None 时对应事件丢弃。
+
+    返回值：正常停止返回 None；流意外结束/读取失败/“有原始行但 0 个解析事件”
+    时返回面向排障的错误字符串（由 PhysicalRecorder 写入 meta.capture_error）。
     """
     stop_event = stop_event or threading.Event()
     if device is None:
@@ -571,21 +617,72 @@ def stream_events(
     parser = GeteventParser(abs_x=abs_x, abs_y=abs_y, device=device_path)
     process = _start_getevent(serial, device_path)
     logger.info("getevent stream started: serial=%s device=%s", serial, device_path)
+
+    # 无触摸时 stdout 迭代会永久阻塞；watchdog 在 stop 时 terminate 进程解除阻塞。
+    done = threading.Event()
+
+    def _watchdog() -> None:
+        while not done.is_set():
+            if stop_event.wait(0.2):
+                _stop_process(process)
+                return
+
+    threading.Thread(
+        target=_watchdog,
+        name=f"getevent-watch-{serial}",
+        daemon=True,
+    ).start()
+
+    raw_lines = 0
+    emitted = 0
+    error: str | None = None
     try:
         assert process.stdout is not None
         for line in process.stdout:
             if stop_event.is_set():
                 break
+            raw_lines += 1
             for event in parser.feed_line(line):
                 if isinstance(event, TouchSample):
+                    emitted += 1
                     if on_touch is not None:
                         on_touch(event)
-                elif isinstance(event, KeyEvent) and on_key is not None:
-                    on_key(event)
-        if process.poll() is None:
-            process.wait(timeout=5.0)
+                elif isinstance(event, KeyEvent):
+                    emitted += 1
+                    if on_key is not None:
+                        on_key(event)
+        if not stop_event.is_set():
+            exit_code = process.poll()
+            if exit_code is None:
+                try:
+                    process.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    pass
+                exit_code = process.poll()
+            if raw_lines > 0 and emitted == 0:
+                error = (
+                    f"收到 {raw_lines} 行 getevent 输出但未解析出触摸事件"
+                    "（输出格式可能变化）"
+                )
+            elif raw_lines == 0:
+                error = f"getevent 流已结束（exit={exit_code}），未收到数据"
+            else:
+                error = f"getevent 流已结束（exit={exit_code}）"
     except Exception as exc:  # noqa: BLE001 - 结束/管道错误
-        logger.warning("getevent stream for %s ended: %s", serial, exc)
+        error = f"读取 getevent 失败：{exc}"
     finally:
+        done.set()
         _stop_process(process)
+        try:
+            stdin = getattr(process, "stdin", None)
+            if stdin is not None:
+                stdin.close()
+        except Exception:  # pragma: no cover - stdin 已关闭
+            pass
         logger.info("getevent stream stopped: serial=%s device=%s", serial, device_path)
+
+    if stop_event.is_set():
+        return None
+    if error:
+        logger.warning("getevent stream for %s ended without stop: %s", serial, error)
+    return error

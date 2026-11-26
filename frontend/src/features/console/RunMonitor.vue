@@ -13,6 +13,7 @@ import {
   formatDuration,
   isTerminalRunStatus,
   runDurationMs,
+  runProgress,
   runStatusMeta,
   stepStatusMeta,
 } from '@/lib/format'
@@ -116,18 +117,15 @@ const stepRows = computed<StepRow[]>(() => {
 })
 
 const totalSteps = computed(() => run.value?.total_steps || stepRows.value.length || 0)
-const currentIndex = computed(() => {
-  const data = run.value
-  if (!data) return 0
-  const total = totalSteps.value
-  if (total <= 0) return 0
-  if (liveStatus.value === 'succeeded') return total
-  if (liveStatus.value === 'queued') return 0
-  return Math.min(total, Math.max(0, Number(data.step_index ?? 0) + 1))
-})
-const percent = computed(() =>
-  totalSteps.value > 0 ? Math.min(100, Math.round((currentIndex.value / totalSteps.value) * 100)) : 0,
+const progress = computed(() =>
+  runProgress({
+    status: liveStatus.value,
+    step_index: run.value?.step_index,
+    total_steps: totalSteps.value,
+  }),
 )
+const currentIndex = computed(() => progress.value.current)
+const percent = computed(() => progress.value.percent)
 
 const counts = computed(() => {
   const results = run.value?.steps ?? []

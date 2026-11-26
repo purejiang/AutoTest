@@ -25,7 +25,9 @@ const queryClient = new QueryClient({
     },
   }),
   mutationCache: new MutationCache({
-    onError: (error) => {
+    onError: (error, _variables, _context, mutation) => {
+      // 允许单 mutation 标记 meta.suppressError（调用方自己展示错误）。
+      if (mutation.meta?.suppressError) return
       notifyApiError(error)
     },
   }),

@@ -85,6 +85,28 @@ export function elapsedSince(value?: string | null): number | null {
   return Math.max(0, dayjs().diff(start))
 }
 
+/**
+ * 运行进度：`step_index` 是当前节点下标（0-based），展示为“已处理到第几个节点”。
+ * succeeded 直接显示 total/total；queued 显示 0；其余按当前节点计 1 个。
+ * 列表、详情、控制台必须共用这一处，避免同一条运行出现 8/9 与 9/9 两种结果。
+ */
+export function runProgress(run: {
+  status?: RunStatus | string | null
+  step_index?: number | null
+  total_steps?: number | null
+  summary?: { total_steps?: number } | null
+}): { current: number; total: number; percent: number } {
+  const rawTotal = Number(run.total_steps ?? run.summary?.total_steps ?? 0)
+  const total = Number.isFinite(rawTotal) ? Math.max(0, Math.floor(rawTotal)) : 0
+  if (total <= 0) return { current: 0, total: 0, percent: 0 }
+  if (run.status === 'queued') return { current: 0, total, percent: 0 }
+  if (run.status === 'succeeded') return { current: total, total, percent: 100 }
+  const rawIndex = Number(run.step_index ?? 0)
+  const index = Number.isFinite(rawIndex) ? Math.max(0, Math.floor(rawIndex)) : 0
+  const current = Math.min(total, index + 1)
+  return { current, total, percent: Math.min(100, Math.round((current / total) * 100)) }
+}
+
 // ---------------------------------------------------------------- JSON
 export function prettyJson(value: unknown): string {
   try {

@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { Delete, Plus, Rank, Search } from '@element-plus/icons-vue'
+import { Plus, Search } from '@element-plus/icons-vue'
 import { useDebounceFn } from '@vueuse/core'
 import { computed, onBeforeUnmount, ref } from 'vue'
 
 import type { NodeType, StepNode } from '@/types/api'
+import StatusTag from '@/components/StatusTag.vue'
+
 import { NODE_TYPE_GROUPS, NODE_TYPE_META } from './nodeDefaults'
+import { describeNodeParams } from './nodeSummary'
 
 type DropPosition = 'before' | 'after'
 
@@ -17,9 +20,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [id: string]
   add: [type: NodeType]
+  'add-preset': [preset: 'clear_data']
   reorder: [fromId: string, targetId: string, position: DropPosition]
-  delete: [id: string]
 }>()
+
+const CLEAR_DATA_COMMAND = '__clear_data'
 
 const search = ref('')
 const filteredSearch = ref('')
@@ -35,17 +40,46 @@ function onSearchInput(value: string): void {
 const isFiltering = computed(() => search.value.trim().length > 0)
 const dragDisabled = computed(() => isFiltering.value)
 
+function metaOf(step: StepNode) {
+  return NODE_TYPE_META[step.type]
+}
+
+function stepNumber(stepId: string): number {
+  return props.steps.findIndex((item) => item.id === stepId) + 1
+}
+
+function nodeTitle(step: StepNode): string {
+  return step.name || `${metaOf(step).label}${stepNumber(step.id)}`
+}
+
+function paramText(step: StepNode): string {
+  return describeNodeParams(step)
+}
+
 const visibleSteps = computed(() => {
   if (!filteredSearch.value) return props.steps
   return props.steps.filter((step) => {
-    const meta = NODE_TYPE_META[step.type]
-    const text = [step.id, step.name, step.type, meta.label, step.description].join(' ').toLowerCase()
+    const meta = metaOf(step)
+    const text = [
+      step.id,
+      step.name,
+      step.type,
+      meta.label,
+      step.description,
+      describeNodeParams(step),
+    ]
+      .join(' ')
+      .toLowerCase()
     return text.includes(filteredSearch.value)
   })
 })
 
-function addNode(type: string): void {
-  emit('add', type as NodeType)
+function addNode(command: string): void {
+  if (command === CLEAR_DATA_COMMAND) {
+    emit('add-preset', 'clear_data')
+    return
+  }
+  emit('add', command as NodeType)
 }
 
 function issueTone(stepId: string): 'error' | 'warning' | null {
@@ -90,6 +124,8 @@ function onDragStart(step: StepNode, event: DragEvent): void {
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', step.id)
+    const row = (event.currentTarget as HTMLElement | null)?.closest('.node-row')
+    if (row instanceof HTMLElement) event.dataTransfer.setDragImage(row, 18, 18)
   }
 }
 
@@ -153,6 +189,12 @@ onBeforeUnmount(() => {
         <el-button size="small" type="primary" :icon="Plus">新增节点</el-button>
         <template #dropdown>
           <el-dropdown-menu class="node-add-menu">
+            <li class="node-add-group" role="presentation">快捷</li>
+            <el-dropdown-item :command="CLEAR_DATA_COMMAND">
+              <span class="node-add-icon">🧹</span>
+              <span>清除数据</span>
+              <span class="node-add-code">app/clear</span>
+            </el-dropdown-item>
             <template v-for="group in NODE_TYPE_GROUPS" :key="group.label">
               <li class="node-add-group" role="presentation">{{ group.label }}</li>
               <el-dropdown-item v-for="type in group.types" :key="type" :command="type">
@@ -176,6 +218,7 @@ onBeforeUnmount(() => {
         :prefix-icon="Search"
         @update:model-value="onSearchInput"
       />
+      <div v-if="isFiltering" class="node-filter-hint">搜索过滤时不可拖拽</div>
     </div>
 
     <div class="editor-col-body">
@@ -192,7 +235,7 @@ onBeforeUnmount(() => {
             'drop-after': dropTargetId === step.id && dropPosition === 'after',
           },
         ]"
-        :title="`${step.id} · ${step.type}${step.enabled ? '' : '（已禁用）'}`"
+        :title="`${nodeTitle(step)} · ${step.id}`"
         role="button"
         tabindex="0"
         :aria-current="step.id === selectedId ? 'true' : undefined"
@@ -212,16 +255,25 @@ onBeforeUnmount(() => {
           @dragstart="onDragStart(step, $event)"
           @dragend="finishDrag"
         >
-          <el-icon :size="13"><Rank /></el-icon>
+          <svg class="grip" viewBox="0 0 10 16" width="10" height="16" aria-hidden="true" focusable="false">
+            <circle cx="2" cy="2" r="1.2" />
+            <circle cx="8" cy="2" r="1.2" />
+            <circle cx="2" cy="8" r="1.2" />
+            <circle cx="8" cy="8" r="1.2" />
+            <circle cx="2" cy="14" r="1.2" />
+            <circle cx="8" cy="14" r="1.2" />
+          </svg>
         </span>
-        <span class="node-num">{{ steps.findIndex((item) => item.id === step.id) + 1 }}</span>
-        <span class="node-ic">{{ NODE_TYPE_META[step.type].icon }}</span>
-        <span class="node-copy">
-          <span class="node-name">{{ step.name || step.id }}</span>
-          <span class="node-type">
-            {{ NODE_TYPE_META[step.type].subtitle }}
-            <span v-if="!step.enabled" class="node-off"> · 已禁用</span>
-            <span v-if="step.when" class="node-when"> · when</span>
+        <span class="node-num">{{ stepNumber(step.id) }}</span>
+        <span class="node-main">
+          <span class="node-title">
+            <span class="node-name">{{ nodeTitle(step) }}</span>
+            <StatusTag class="node-type-tag" :tone="metaOf(step).tone">
+              {{ metaOf(step).icon }} {{ metaOf(step).label }}
+            </StatusTag>
+          </span>
+          <span v-if="paramText(step)" class="node-params" :title="paramText(step)">
+            {{ paramText(step) }}
           </span>
         </span>
         <span
@@ -231,29 +283,11 @@ onBeforeUnmount(() => {
           :title="issueTitle(step.id)"
           :aria-label="issueTitle(step.id)"
         />
-        <span class="node-tools" @click.stop @keydown.stop>
-          <el-button
-            size="small"
-            text
-            type="danger"
-            :icon="Delete"
-            :disabled="steps.length <= 1"
-            title="删除节点"
-            @click="emit('delete', step.id)"
-          />
-        </span>
       </div>
       <el-empty v-if="steps.length === 0" description="还没有节点，点「新增节点」添加" :image-size="56" />
       <div v-else-if="visibleSteps.length === 0" class="hint" style="padding: 20px; text-align: center">
         没有匹配的节点
       </div>
-    </div>
-
-    <div class="editor-col-foot">
-      <span class="hint">
-        {{ steps.length }} 个节点 ·
-        {{ isFiltering ? '搜索过滤时拖拽已禁用' : '拖动排序 · Alt+↑/↓ 也可移动' }}
-      </span>
     </div>
   </div>
 </template>
@@ -261,6 +295,12 @@ onBeforeUnmount(() => {
 <style scoped>
 .node-row {
   position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(18px, max-content) minmax(0, 1fr) 7px;
+  align-items: center;
+  gap: 6px;
+  min-height: 54px;
+  padding: 6px 8px;
 }
 
 .node-row:focus-visible {
@@ -268,12 +308,51 @@ onBeforeUnmount(() => {
   outline-offset: -2px;
 }
 
-.node-when {
-  color: var(--cyan);
+.node-num {
+  width: auto;
+  min-width: 18px;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: right;
 }
 
-.node-off {
+.node-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.node-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.node-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.node-type-tag {
+  flex: none;
+}
+
+.node-params {
+  overflow: hidden;
   color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-filter-hint {
+  margin-top: 4px;
+  color: var(--muted-2);
+  font-size: 10px;
 }
 
 .node-issue {
@@ -297,12 +376,17 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 22px;
+  width: 14px;
+  height: 24px;
   flex: none;
   border-radius: 4px;
   color: var(--muted-2);
   cursor: grab;
+}
+
+.grip {
+  display: block;
+  fill: currentColor;
 }
 
 .drag-handle:hover {
@@ -334,17 +418,5 @@ onBeforeUnmount(() => {
 
 .node-row.drop-after {
   box-shadow: inset 0 -2px 0 var(--accent);
-}
-
-.editor-col-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex: none;
-  min-height: 34px;
-  padding: 6px 9px;
-  border-top: 1px solid var(--line);
-  background: var(--surface-2);
 }
 </style>

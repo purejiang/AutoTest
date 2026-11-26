@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Delete, InfoFilled, Plus, Refresh, VideoCamera } from '@element-plus/icons-vue'
+import { Delete, InfoFilled, Plus, VideoCamera } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, type TableInstance } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -46,11 +46,12 @@ const recordings = computed(() => recordingsQuery.data.value?.items ?? [])
 const total = computed(() => recordingsQuery.data.value?.total ?? 0)
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 const paged = computed(() => recordings.value)
-const emptyDescription = computed(() =>
-  modeFilter.value === 'all' && statusFilter.value === 'all'
-    ? '还没有录制草稿。去控制台在镜像上开启录制，或新建真机录制。'
-    : '没有匹配的录制草稿，调整筛选或新建真机录制。',
-)
+const emptyDescription = computed(() => {
+  if (statusFilter.value !== 'all') return '没有匹配当前筛选的录制草稿，调整筛选条件。'
+  if (modeFilter.value === 'physical') return '还没有真机录制，使用上方「新建真机录制」开始。'
+  if (modeFilter.value === 'web') return '还没有镜像录制，使用上方「去控制台录制」开始。'
+  return '还没有录制草稿，使用上方「新建真机录制」或「去控制台录制」开始。'
+})
 
 function isSelectableRecording(recording: Recording): boolean {
   return recording.status === 'stopped'
@@ -148,18 +149,12 @@ async function remove(recording: Recording): Promise<void> {
     <div class="recording-notice">
       <el-icon><InfoFilled /></el-icon>
       <span>
-        本页只收录<strong>操作录制草稿</strong>（镜像录制 / 真机录制）。视频录制与设备录屏不进入此列表，
-        <strong>视频刷新即丢失</strong>。
+        这里只列出<strong>操作录制</strong>（镜像录制 / 真机录制）；视频录屏不在此保存，
+        <strong>刷新页面即丢失</strong>。
       </span>
-      <span class="spacer" />
-      <el-button
-        size="small"
-        :icon="Refresh"
-        :loading="recordingsQuery.isFetching.value"
-        title="刷新"
-        aria-label="刷新"
-        @click="refreshRecordings"
-      />
+    </div>
+
+    <div class="recordings-actions">
       <el-button size="small" type="primary" :icon="Plus" @click="createOpen = true">新建真机录制</el-button>
       <el-button size="small" :icon="VideoCamera" @click="goConsoleRecord">去控制台录制</el-button>
     </div>
@@ -237,8 +232,10 @@ async function remove(recording: Recording): Promise<void> {
             <StatusTag :tone="recordingModeMeta(row.mode).tone">{{ recordingModeMeta(row.mode).label }}</StatusTag>
           </template>
         </el-table-column>
-        <el-table-column label="设备" width="130">
-          <template #default="{ row }"><span class="code-text small">{{ row.serial || '—' }}</span></template>
+        <el-table-column label="设备" width="150">
+          <template #default="{ row }">
+            <span class="code-text small device-text" :title="row.serial || '—'">{{ row.serial || '—' }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="事件" width="70">
           <template #default="{ row }">{{ row.event_count ?? 0 }}</template>
@@ -260,10 +257,9 @@ async function remove(recording: Recording): Promise<void> {
             <span v-else class="muted small">尚未生成</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="112" align="right">
+        <el-table-column label="操作" width="72" align="right">
           <template #default="{ row }">
             <div class="actions-cell">
-              <el-button link type="primary" @click="router.push(`/recorder/${row.id}`)">详情</el-button>
               <el-button
                 link
                 type="danger"
@@ -276,12 +272,7 @@ async function remove(recording: Recording): Promise<void> {
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty :description="emptyDescription">
-            <div class="row" style="justify-content: center">
-              <el-button type="primary" :icon="VideoCamera" @click="goConsoleRecord">去控制台录制</el-button>
-              <el-button :icon="Plus" @click="createOpen = true">新建真机录制</el-button>
-            </div>
-          </el-empty>
+          <el-empty :description="emptyDescription" />
         </template>
       </el-table>
       <div class="table-foot">
@@ -315,8 +306,16 @@ async function remove(recording: Recording): Promise<void> {
   font-size: 11px;
 }
 
-.recording-notice .spacer {
-  flex: 1;
+.recordings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.device-text {
+  white-space: nowrap;
 }
 
 .recording-toolbar {

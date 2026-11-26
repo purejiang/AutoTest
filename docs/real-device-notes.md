@@ -172,6 +172,39 @@
 仍不支持（诚实边界）：多指手势（缩放/双指滑动）只录主指针；软键盘逐键输入按整段文本回放；
 不同分辨率/旋转会改变绝对坐标的落点（坐标模式的固有限制，可用 element 模式缓解）。
 
+## 3.6 物理录制取流排障（v0.2.7，真机修复）
+
+2026-11 在一台 Android 12 / `input_mt_wrapper` 设备上复现“真机录制操作后 0 事件”。抓包 + 源码核对结论：
+
+- `adb -s <serial> exec-out getevent -lt /dev/input/event3` 的输出**没有** `/dev/input/event3:` 前缀：
+  `[   93856.488781] EV_ABS       ABS_MT_POSITION_X    00001516`
+  旧 `_LINE_RE` 强制要求设备前缀，1054 行原始输出全部被丢弃；把前缀补上后同一抓包可解析出 79 个
+  `TouchSample`。
+- 该设备抬手只发 `BTN_TOUCH UP`，**不发** `ABS_MT_TRACKING_ID ffffffff`。旧状态机只在 tracking id < 0
+  时结束手势，所以即使修好前缀，tap/swipe 也永远不会 finish。
+- 没有触摸时 stdout 没有新行，`stop_event` 无法打断阻塞迭代；旧实现 `join(3s)` 超时，getevent 进程残留
+  （日志中的 “physical recorder thread did not stop in time”）。
+- legacy toolbox `getevent` 源码有 `setbuf(stdout, NULL)`，**不是 stdout 缓冲问题**；不要为此把
+  `exec-out` 改成 `adb shell`。
+- `-l` 标签模式下 `EV_KEY ... DOWN/UP` 的值不是十六进制，且标签表不含 `KEY_BACK` 等 Linux 键名；
+  改用数字模式 `-t` 后按键与触摸共用同一套解析。
+
+修复要点：
+- 行解析兼容带/不带设备前缀；无前缀时 `device=""`，不做设备过滤。
+- `BTN_TOUCH` 作为接触边界（三态；`BTN_TOUCH UP` 释放 active slot），tracking id -1 作为兜底；
+  changed slots 为空时按“抬起取 active slot / 否则当前或 0 号”兜底。
+- `stream_events` 用数字模式 `getevent -t <device>`；标签模式补 `DOWN=1`/`UP=0` 兼容旧抓包。
+- `stream_events` 增加 watchdog：`stop_event` 置位后 terminate 进程；统计“有原始行但 0 解析事件”并
+  返回错误串，`PhysicalRecorder` 写入 `recordings.meta.capture_error`。
+- 详情页展示采集设备（名称/路径/屏幕）与 `capture_error`，避免再次出现“静默 0 事件”。
+
+回归：
+- 单测覆盖无前缀 label/numeric 行、只有 `BTN_TOUCH UP` 的抬手、多 slot 抬起、阻塞停止、capture_error。
+- 真机：点 3 下 + 滑动 → 事件数 > 0；停止 3 秒内线程退出；拔线/杀 getevent → 详情页出现
+  “触摸采集中断”。
+- 旧协议 A（无 `ABS_MT_TRACKING_ID`、只靠 BTN_TOUCH 的老设备）不在本次真机验证范围；
+  当前解析器保留该分支，但如需正式支持应单独回归 move 帧重复 down 的问题。
+
 ## 4. 脚本编写最佳实践（真机踩出来的）
 
 1. **断言优先用前台包名**判断"是否在目标页面"（稳、快）；页面内容断言挑**唯一且稳定**的文案
@@ -186,7 +219,7 @@
 
 - 浏览器端 WebCodecs 实际渲染（Chrome/Edge）：Annex B 直解与 avcC 回退两条路径、flush 后等 IDR、旋转重配。
 - 镜像页鼠标操作的**落点准确性**（归一化→设备像素逆映射，含 `max_size`/`crop` 组合）。
-- 物理录制的 **2 点标定**精度与旋转时间线（当前只验证了触摸设备探测与事件解析）。
+- 物理录制的 **2 点标定**精度与旋转时间线（取流/停止/转脚本已在 v0.2.7 真机验证，标定精度与旋转仍未验证）。
 - 多设备并发（当前 registry 支持多 serial，未做并发压测）。
 - Windows 平台全流程（adb 路径探测、打包、录屏/pull 路径差异）。
 

@@ -35,7 +35,7 @@ const KEY_OPTIONS = [
 const APP_ACTIONS = [
   { value: 'launch', label: '启动 launch' },
   { value: 'stop', label: '停止 stop' },
-  { value: 'clear', label: '清数据 clear' },
+  { value: 'clear', label: '清除数据 clear' },
   { value: 'restart', label: '重启 restart' },
 ]
 
@@ -257,6 +257,9 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
         @update:model-value="patch({ package: $event || null })"
       />
     </el-form-item>
+    <div v-if="p.action === 'clear'" class="hint" style="margin: -2px 0 8px">
+      清除数据会清空该应用的全部数据，属于破坏性操作；建议把「重跑安全性」设为 destructive。
+    </div>
     <el-form-item v-if="(p.action ?? 'launch') === 'launch' || p.action === 'restart'" label="activity（可选）">
       <el-input
         :model-value="p.activity ?? ''"

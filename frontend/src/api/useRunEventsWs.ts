@@ -126,7 +126,7 @@ export function useRunEventsWs(
 
       if (kind === 'error') {
         const messageText = (message as { message?: unknown }).message
-        error.value = typeof messageText === 'string' ? messageText : 'WS 错误'
+        error.value = typeof messageText === 'string' ? messageText : '实时连接错误'
       }
     }
 

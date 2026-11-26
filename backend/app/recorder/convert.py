@@ -61,6 +61,23 @@ _SAFE_TYPES = {"click", "long_click", "swipe", "drag", "input", "key"}
 
 _KEYCODE_TO_NAME: dict[int, str] = {code: name for name, code in KEY_CODES.items()}
 
+# 录制转脚本节点短名称：类型标签 + 同类型序号（点击1、点击2…）。
+# 方向/画圈/包名/文本/坐标等信息继续放在 description 与 params 中。
+_NODE_NAME_LABELS: dict[str, str] = {
+    "click": "点击",
+    "long_click": "长按",
+    "swipe": "滑动",
+    "drag": "拖拽",
+    "input": "输入",
+    "key": "按键",
+    "app": "应用",
+    "wait": "等待",
+    "shell": "Shell",
+    "assert": "断言",
+    "sub_script": "子脚本",
+    "screenshot": "截图",
+}
+
 _BOUNDS_RE = re.compile(r"-?\d+")
 
 
@@ -503,6 +520,7 @@ def _convert_event(
     - ``element``：优先元素定位（text/resource_id…），失败退回坐标。
     """
     step_type = classify(kind, payload)
+    extra_notes: list[str] = []
     if step_type == "app":
         package = str(payload.get("package") or "").strip()
         if not package:
@@ -516,7 +534,7 @@ def _convert_event(
             "package": package,
             "activity": str(activity) if activity else None,
         }
-        name = f"{ {'launch': '启动', 'stop': '停止', 'clear': '清数据', 'restart': '重启'}[action] } {package}"
+        name = f"{ {'launch': '启动', 'stop': '停止', 'clear': '清除数据', 'restart': '重启'}[action] } {package}"
         description = f"录制：{action} {package}" + (f" / {activity}" if activity else "")
         safety = "destructive" if action in ("stop", "clear", "restart") else "safe"
         return step_type, name, description, params, safety, None
@@ -561,6 +579,7 @@ def _convert_event(
         if step_type == "swipe":
             duration = _clamp(payload.get("duration_ms"), 50, 10_000, 300)
             name = _swipe_direction(start, end)
+            extra_notes.append(f"方向={name}")
             safety = "safe"
         else:
             duration = _clamp(payload.get("duration_ms"), 100, 10_000, 1000)
@@ -594,6 +613,7 @@ def _convert_event(
                     )
                     if math.hypot(ex - sx, ey - sy) < POINT_MAX_PX and extent >= POINT_MAX_PX:
                         name = "画圈"
+                        extra_notes.append("轨迹=画圈")
                 except (TypeError, ValueError):
                     pass
     elif step_type == "input":
@@ -617,8 +637,22 @@ def _convert_event(
         return None
 
     description = _build_description(kind, payload, confidence)
+    if extra_notes:
+        # 保留方向/画圈等关键后缀：必要时截断前面的原始描述，避免后缀被 500 字上限吃掉。
+        suffix = "；".join(extra_notes)
+        description = description[: max(0, 500 - len(suffix) - 1)] + "；" + suffix
     point = params.get("target") if isinstance(params.get("target"), dict) else None
     return step_type, name[:120], description, params, safety, point
+
+
+def _next_step_name(step_type: str, fallback: str, counters: dict[str, int]) -> str:
+    """短名称：类型标签 + 整份脚本内同类型序号；未知类型回退原名称。"""
+    label = _NODE_NAME_LABELS.get(step_type)
+    if label is None:
+        return fallback
+    count = counters.get(step_type, 0) + 1
+    counters[step_type] = count
+    return f"{label}{count}"
 
 
 def _clamp(value: Any, low: int, high: int, default: int) -> int:
@@ -666,6 +700,7 @@ def events_to_script(
     swipe_count = 0
     skipped = 0
     previous_ts: float | None = None
+    name_counters: dict[str, int] = {}
 
     for event in events:
         kind = str(_event_get(event, "kind", "") or "").strip()
@@ -711,7 +746,7 @@ def events_to_script(
                     steps.append(
                         {
                             "id": f"s{len(steps) + 1}",
-                            "name": f"点击聚焦 ({focus_point['x']}, {focus_point['y']})",
+                            "name": _next_step_name("click", "点击聚焦", name_counters),
                             "type": "click",
                             "description": "输入前点击聚焦（录制未带独立点击时自动补）",
                             "enabled": True,
@@ -748,7 +783,7 @@ def events_to_script(
         steps.append(
             {
                 "id": f"s{len(steps) + 1}",
-                "name": step_name,
+                "name": _next_step_name(step_type, step_name, name_counters),
                 "type": step_type,
                 "description": description,
                 "enabled": True,
@@ -768,9 +803,7 @@ def events_to_script(
     script: dict[str, Any] = {
         "schema_version": 1,
         "name": (str(name or "录制脚本").strip() or "录制脚本")[:200],
-        "notes": (
-            f"由录制 {recording_id} 转换，共 {len(steps)} 个节点" if recording_id else f"根据录制事件生成，共 {len(steps)} 个节点"
-        ),
+        "notes": f"由录制 {recording_id} 转换" if recording_id else "根据录制事件生成",
         "variables": {},
         "settings": {
             "default_timeout_ms": 8000,
@@ -804,7 +837,7 @@ def events_to_script(
     if low_confidence_nodes:
         warnings.append(f"{low_confidence_nodes} 个节点置信度低（层级缺失/过期），建议运行前补充元素选择器")
     if swipe_count:
-        warnings.append(f"检测到疑似滚动（{swipe_count} 次滑动），已合并为 swipe 节点")
+        warnings.append(f"检测到疑似滚动（{swipe_count} 次滑动），已生成 swipe 节点")
     if not steps:
         warnings.append("没有可转换的录制事件")
 
