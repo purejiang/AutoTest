@@ -330,9 +330,10 @@ GET /api/reports/{id}/download（zip，支持 Range）；DELETE /api/reports/{id
 GET /api/maintenance/stats；POST /api/maintenance/cleanup {retention_days?,dry_run?}。
 
 ### 7.6 设置（be-core）
-GET /api/settings → {effective, sources, schema}（schema 每项含 additive `default` 代码默认值）；
-PUT /api/settings {values}（null=删该层覆盖）；
-DELETE /api/settings/{key}；POST /api/settings/reset；
+GET /api/settings → {effective, sources, schema, config_file}
+  （schema 每项含 additive `default` 代码默认值 / `layer`(bootstrap|runtime) / `writable` / `env`）；
+PUT /api/settings {values}（null=删该层覆盖；bootstrap 项 → 400 INVALID_ARGUMENT）；
+DELETE /api/settings/{key}（bootstrap 项 → 400）；POST /api/settings/reset（只清 DB 层，文件/环境变量仍生效）；
 GET /api/settings/scrcpy/options（白名单+校验，渲染表单用）；
 GET /api/health → {status,version,db,adb:{path,version,devices},data_dir}。
 
@@ -424,12 +425,36 @@ v0.2.5 手势回放补充：
 - 启动自检：socket 数、首帧 ≤8s、codec 字符串从 SPS 解析；
 - 孤儿清理：只清理本进程历史 session 的 localabstract forward，不动别人的。
 
-## 11. 配置三级（be-core）
+## 11. 配置分层（be-core）
 
-优先级：DB(settings 表) > 文件(`$AUTOTEST_CONFIG` 或 `~/.autotest/config.json`) > 代码默认。
-`config.py`（Lead 已写）暴露 effective()/get()/sources()/set_db_overrides()；settings API 只写 DB 层。
+四层，从低到高：**代码默认 < 配置文件 < 数据库(settings 表) < 环境变量**。
+
+- 配置文件：`$AUTOTEST_CONFIG` 或 `~/.autotest/config.json`；JSON 按点号展平
+  （`{"engine":{"default_timeout_ms":5000}}` → `engine.default_timeout_ms`）。**只在启动时读**
+  （`reload_file_layer()`），改完需重启。
+- 数据库：设置页写入；启动时与每次写操作后 `settings_service.load_into_config()` 重载。
+  生效时机：`engine.*` 下一次运行；`scrcpy.*` 停止并重启镜像；`server.host/port` 重启进程。
+- 环境变量：`ENV_MAP` 白名单（`AUTOTEST_DATA_DIR` / `AUTOTEST_ARTIFACTS_DIR` / `AUTOTEST_ADB` /
+  `AUTOTEST_HOST` / `AUTOTEST_PORT` / `AUTOTEST_TOKEN` / `AUTOTEST_SCRCPY_JAR`），优先级最高；
+  `AUTOTEST_CONFIG` 只用于选配置文件路径，不参与值合并。
+- `config.py` 暴露 effective()/get()/sources()/layer_of()/db_writable()/env_var_for()；settings API 只写 DB 层。
+
+**分层按 key 分类，不按层一刀切：**
+
+- **启动项（bootstrap，`config.BOOTSTRAP_KEYS`）**：打开数据库之前就要确定的值——
+  `runtime.data_dir`、`runtime.artifacts_dir`、`runtime.frontend_dir`、`server.host`、`server.port`。
+  只允许 代码默认 < 配置文件 < 环境变量；**settings 表里即使有行也会被忽略并告警**，设置页只读，
+  `PUT/DELETE /api/settings` 返回 `INVALID_ARGUMENT`（details 里给出配置文件路径与环境变量名）。
+  原因：`data_dir` 里就放着数据库文件本身，允许 DB 覆盖会出现「DB 在旧目录、artifacts 在新目录」的分裂状态，
+  且重启不会自愈（覆盖值就存在那个旧库里）。
+- **运行项（runtime）**：其余 key（engine/scrcpy/recording/capture/retention/security/adb 等）可写数据库，
+  遵循上面四层优先级。设置页用来源标签（默认/配置文件/数据库覆盖/环境变量）展示每项实际来源。
+
 默认值清单见 config.DEFAULTS（engine/scrcpy/recording/capture/retention/security/server）。
 `engine.default_delay_before_ms` / `engine.default_delay_after_ms` 只作为新建脚本的停顿初值（见 §3），不参与运行时兜底。
+
+日志：文件 handler 在 `create_app()` 载入配置文件层之后才挂（`logs.configure_file_logging()`），
+路径取自生效的 `data_dir`；测试通过 `logs.disable_file_logging()` 关闭文件日志，避免污染真实数据目录。
 
 ## 12. 前端页面（fe-core 与 fe-mirror 边界）
 
@@ -455,14 +480,14 @@ v0.2.5 路由与导航：
 
 - **鉴权范围**：`security.token` 在 v1 只用于镜像 WS（`/ws/mirror/{serial}?token=`）校验；REST 端点不做鉴权
   （默认仅绑 127.0.0.1）。REST 鉴权与 CORS 收紧闭源进 v1.1。
-- **data_dir 生效时机**：`runtime.data_dir` / `runtime.artifacts_dir` 修改后**重启进程生效**（DB 引擎在 lifespan
-  早期打开，不热切换）。设置页需给出提示文案。
+- **data_dir 生效时机**：`runtime.data_dir` / `runtime.artifacts_dir` 属于启动项（§11），只能改配置文件或
+  环境变量，**重启进程生效**；设置页只读展示，并提示配置文件路径与环境变量名。
 - **fake 设备**：`GET /api/devices` **只在环境变量 `AUTOTEST_FAKE_DEVICE=1` 时**包含 `fake-1`
   （列表项带 `"fake": true`）；默认无真机返回空列表，不把“未连接/adb 不可用”伪装成可用设备。
   `get_driver("fake-*")` 显式传参始终可用，供联调/测试。
 - **环境变量层**（优先级最高）：`AUTOTEST_DATA_DIR` / `AUTOTEST_ARTIFACTS_DIR` / `AUTOTEST_ADB` /
   `AUTOTEST_HOST` / `AUTOTEST_PORT` / `AUTOTEST_TOKEN` / `AUTOTEST_SCRCPY_JAR` / `AUTOTEST_CONFIG`。
-  优先级：默认 < 配置文件 < DB settings < 环境变量。
+  优先级：默认 < 配置文件 < DB settings < 环境变量；启动项不参与 DB 层（§11）。
 - **ScreenRecorder 产物**：设备端 `screenrecord` 录 mp4 → SIGINT 收尾 → `adb pull` → 校验 ftyp/moov → 清理设备端临时文件；
   `stop() -> (Path, size)`，失败不留损坏文件（报 DEVICE_UNAVAILABLE）。
 - **录制工具条唯一入口**：控制台 → 手动控制 → 镜像录制（`RecordingBar`，固定 `mode=web`）；真机录制从录制页新建。

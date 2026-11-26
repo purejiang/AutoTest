@@ -33,6 +33,36 @@ ENV_MAP: dict[str, str] = {
     "AUTOTEST_SCRCPY_JAR": "scrcpy.jar",
 }
 
+# 启动项（bootstrap）：在「打开数据库之前」就必须确定的配置。
+# 它们只能来自 代码默认 < 配置文件 < 环境变量，**永远不写进 settings 表**：
+# 数据目录就藏着数据库文件本身，把它存进数据库会出现"数据库不在配置值指向的目录里"
+# 的自相矛盾状态（DB 在旧目录、artifacts 在新目录），且重启也不会自愈。
+BOOTSTRAP_KEYS: frozenset[str] = frozenset(
+    {
+        "runtime.data_dir",
+        "runtime.artifacts_dir",
+        "runtime.frontend_dir",
+        "server.host",
+        "server.port",
+    }
+)
+
+_ENV_BY_KEY: dict[str, str] = {cfg_key: env_key for env_key, cfg_key in ENV_MAP.items()}
+
+
+def layer_of(key: str) -> str:
+    """配置分层：bootstrap = 只走文件/环境变量；runtime = 允许设置页写数据库。"""
+    return "bootstrap" if key in BOOTSTRAP_KEYS else "runtime"
+
+
+def env_var_for(key: str) -> str | None:
+    """该 key 对应的环境变量名（没有映射则为 None），用于设置页提示。"""
+    return _ENV_BY_KEY.get(key)
+
+
+def db_writable(key: str) -> bool:
+    return key in DEFAULTS and key not in BOOTSTRAP_KEYS
+
 # ---------------------------------------------------------------- defaults
 DEFAULTS: dict[str, Any] = {
     "adb.path": "",
@@ -87,7 +117,12 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "max": 120,
         "desc": "连接或重连网络设备的等待上限",
     },
-    {"key": "runtime.data_dir", "type": "string", "title": "数据目录", "desc": "留空使用 ~/.autotest/data"},
+    {
+        "key": "runtime.data_dir",
+        "type": "string",
+        "title": "数据目录",
+        "desc": "启动项：留空使用 ~/.autotest/data；要改请写 ~/.autotest/config.json 或 AUTOTEST_DATA_DIR，然后重启",
+    },
     {
         "key": "engine.poll_interval_ms",
         "type": "int",
@@ -318,7 +353,12 @@ def _coerce(key: str, value: Any) -> Any:
 def set_db_overrides(values: dict[str, Any]) -> None:
     with _LOCK:
         global _DB_LAYER, _EFFECTIVE
-        _DB_LAYER = {k: v for k, v in values.items() if v is not None}
+        # 启动项永远不从 DB 层进入 effective：即使旧库里有行也忽略（防分裂状态）。
+        _DB_LAYER = {
+            k: v
+            for k, v in values.items()
+            if v is not None and k not in BOOTSTRAP_KEYS
+        }
         _EFFECTIVE = None
 
 

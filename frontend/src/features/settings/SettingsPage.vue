@@ -187,8 +187,9 @@ const overrideTooltip = computed(() => {
   }
   return [
     `有 ${overrideCount.value} 项设置不是代码默认值：数据库覆盖 ${counts.db} 项 · 配置文件 ${counts.file} 项 · 环境变量 ${counts.env} 项。`,
-    '优先级：默认值 < 配置文件 < 数据库 < 环境变量。',
-    '每项标题旁的来源标签显示具体来源；只有「数据库覆盖」可以在页面上点 ↺ 删除，文件/环境变量需要修改配置或重启进程。',
+    '行为/偏好项优先级：默认值 < 配置文件 < 数据库 < 环境变量；每项标题旁的来源标签显示具体来源。',
+    '启动项（数据目录、端口等，打开数据库前就要确定）只认 默认 < 配置文件 < 环境变量，不存数据库，页面只读：改配置文件或环境变量后重启。',
+    '只有「数据库覆盖」可以在页面上点 ↺ 删除，文件/环境变量需要修改配置或重启进程。',
   ].join('\n')
 })
 
@@ -534,6 +535,8 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   :entry="entry"
                   :model-value="values[entry.key]"
                   :source="sourceOf(entry)"
+                  :readonly="entry.layer === 'bootstrap'"
+                  :config-file="settings?.config_file ?? ''"
                   @update:model-value="values[entry.key] = $event"
                   @clear="deleteOverride(entry)"
                 />
@@ -588,6 +591,8 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   :entry="entry"
                   :model-value="values[entry.key]"
                   :source="sourceOf(entry)"
+                  :readonly="entry.layer === 'bootstrap'"
+                  :config-file="settings?.config_file ?? ''"
                   @update:model-value="values[entry.key] = $event"
                   @clear="deleteOverride(entry)"
                 />
@@ -622,6 +627,8 @@ function applyThemeChoice(choice: ThemeChoice): void {
                     :entry="entry"
                     :model-value="values[entry.key]"
                     :source="sourceOf(entry)"
+                    :readonly="entry.layer === 'bootstrap'"
+                    :config-file="settings?.config_file ?? ''"
                     @update:model-value="values[entry.key] = $event"
                     @clear="deleteOverride(entry)"
                   />
@@ -642,6 +649,8 @@ function applyThemeChoice(choice: ThemeChoice): void {
                     :entry="entry"
                     :model-value="values[entry.key]"
                     :source="sourceOf(entry)"
+                    :readonly="entry.layer === 'bootstrap'"
+                    :config-file="settings?.config_file ?? ''"
                     @update:model-value="values[entry.key] = $event"
                     @clear="deleteOverride(entry)"
                   />
@@ -662,6 +671,8 @@ function applyThemeChoice(choice: ThemeChoice): void {
                     :entry="entry"
                     :model-value="values[entry.key]"
                     :source="sourceOf(entry)"
+                    :readonly="entry.layer === 'bootstrap'"
+                    :config-file="settings?.config_file ?? ''"
                     @update:model-value="values[entry.key] = $event"
                     @clear="deleteOverride(entry)"
                   />
@@ -681,6 +692,8 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   :entry="entry"
                   :model-value="values[entry.key]"
                   :source="sourceOf(entry)"
+                  :readonly="entry.layer === 'bootstrap'"
+                  :config-file="settings?.config_file ?? ''"
                   @update:model-value="values[entry.key] = $event"
                   @clear="deleteOverride(entry)"
                 />
@@ -705,6 +718,8 @@ function applyThemeChoice(choice: ThemeChoice): void {
                   :entry="entry"
                   :model-value="values[entry.key]"
                   :source="sourceOf(entry)"
+                  :readonly="entry.layer === 'bootstrap'"
+                  :config-file="settings?.config_file ?? ''"
                   @update:model-value="values[entry.key] = $event"
                   @clear="deleteOverride(entry)"
                 />

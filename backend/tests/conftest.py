@@ -3,7 +3,25 @@ from __future__ import annotations
 
 import pytest
 
+from app import config
 from app import db as appdb
+from app import logs as applogs
+
+# 测试绝不能把日志写进真实数据目录（~/.autotest/data 或用户自定义目录）：
+# 必须在任何 test 模块 import app.main、触发 create_app() 之前关掉文件日志。
+applogs.disable_file_logging()
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path, monkeypatch):
+    """每个测试一个独立的 data_dir（环境变量层），绝不写 ~/.autotest 或仓库 data/。
+
+    之前测试能跑通是因为本机 ~/.autotest/config.json 把 data_dir 指到仓库里；
+    默认目录现在在工作区之外（也符合真实默认 ~/.autotest/data），必须显式隔离。
+    """
+    monkeypatch.setenv("AUTOTEST_DATA_DIR", str(tmp_path / "data"))
+    config.reset_to_defaults()
+    yield
 
 
 @pytest.fixture(autouse=True)

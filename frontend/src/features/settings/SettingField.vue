@@ -5,11 +5,18 @@ import type { SettingEntry } from '@/types/api'
 import { numberOrNull, settingSourceMeta } from '@/lib/format'
 import StatusTag from '@/components/StatusTag.vue'
 
-defineProps<{
-  entry: SettingEntry
-  modelValue: any
-  source: 'default' | 'file' | 'db' | 'env'
-}>()
+withDefaults(
+  defineProps<{
+    entry: SettingEntry
+    modelValue: any
+    source: 'default' | 'file' | 'db' | 'env'
+    /** 启动项（bootstrap）：只读，改配置文件/环境变量后重启 */
+    readonly?: boolean
+    /** 配置文件路径，启动项提示用 */
+    configFile?: string
+  }>(),
+  { readonly: false, configFile: '' },
+)
 
 const emit = defineEmits<{
   'update:modelValue': [value: unknown]
@@ -22,7 +29,7 @@ function update(value: unknown): void {
 
 function sourceTitle(source: 'default' | 'file' | 'db' | 'env'): string {
   if (source === 'db') return '来自数据库覆盖，可点右侧 ↺ 删除；删除后按优先级回到文件/默认值'
-  if (source === 'file') return '来自配置文件，优先级高于默认值；需修改配置文件后重新加载'
+  if (source === 'file') return '来自配置文件，优先级高于数据库/默认值；需修改配置文件后重启'
   if (source === 'env') return '来自环境变量，优先级最高；需取消环境变量并重启进程'
   return '当前使用代码默认值'
 }
@@ -69,11 +76,18 @@ function defaultLabel(entry: SettingEntry): string | null {
       />
     </div>
     <div v-if="entry.desc" class="field-desc">{{ entry.desc }}</div>
+    <div v-if="readonly" class="setting-readonly">
+      启动项（打开数据库前就要确定，不存数据库）：改
+      <code class="code-text">{{ configFile || '~/.autotest/config.json' }}</code>
+      <span v-if="entry.env"> 或设置环境变量 <code class="code-text">{{ entry.env }}</code></span>
+      ，然后重启 AutoTest。
+    </div>
 
     <el-switch
       v-if="entry.type === 'bool'"
       :model-value="Boolean(modelValue)"
       size="small"
+      :disabled="readonly"
       @update:model-value="update($event)"
     />
     <el-select
@@ -81,6 +95,7 @@ function defaultLabel(entry: SettingEntry): string | null {
       :model-value="modelValue"
       size="small"
       style="width: 100%"
+      :disabled="readonly"
       @update:model-value="update($event)"
     >
       <el-option
@@ -99,6 +114,7 @@ function defaultLabel(entry: SettingEntry): string | null {
       :step="1"
       controls-position="right"
       style="width: 100%"
+      :disabled="readonly"
       @update:model-value="update(numberOrNull($event))"
     />
     <el-input
@@ -107,6 +123,7 @@ function defaultLabel(entry: SettingEntry): string | null {
       size="small"
       clearable
       class="code-text"
+      :disabled="readonly"
       @update:model-value="update($event)"
     />
     <div v-if="defaultLabel(entry) !== null" class="setting-default">
@@ -114,3 +131,18 @@ function defaultLabel(entry: SettingEntry): string | null {
     </div>
   </div>
 </template>
+
+<style scoped>
+.setting-readonly {
+  padding: 4px 6px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.setting-readonly code {
+  font-size: 10px;
+}
+</style>

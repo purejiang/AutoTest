@@ -1,4 +1,9 @@
-"""设置服务（契约 §7.6 / §11）：DB 层读写 + 三级配置合并（default < file < db）。
+"""设置服务（契约 §7.6 / §11）：DB 层读写 + 四层配置合并（default < file < db < env）。
+
+分层规则：
+- runtime 项（行为/偏好）：允许写 settings 表，DB 优先级高于文件（用户显式操作应生效）；
+- bootstrap 项（启动项：数据目录/端口/host 等）：**不进 DB**，只支持 文件/环境变量；
+  设置页只读展示，API 写入直接 INVALID_ARGUMENT，避免「数据库不在配置值指向的目录」的分裂状态。
 
 - 只有本服务写 DB settings 表；写完立即 `config.set_db_overrides()` 重载，保证 effective 实时；
 - 值校验按 `config.SETTINGS_SCHEMA`（type/min/max），未知 key 直接 INVALID_ARGUMENT；
@@ -14,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from .. import config, db
 from ..errors import ApiError
+from ..logs import logger
 from ..models import Setting, now_iso
 
 SCRCPY_SERVER_VERSION = "5.0.1"
@@ -103,7 +109,11 @@ def _migrate_network_mode(session: Session) -> None:
 
 
 def load_into_config(session: Session | None = None) -> dict[str, Any]:
-    """读 settings 表 -> config.set_db_overrides()。启动时与每次写入后调用。"""
+    """读 settings 表 -> config.set_db_overrides()。启动时与每次写入后调用。
+
+    bootstrap 项即使旧库里还有行也不会进入 effective（只告警一次），
+    因为它们在打开数据库之前就已确定，DB 覆盖会造成目录/端口分裂。
+    """
     if session is not None:
         _migrate_network_mode(session)
         rows = session.execute(select(Setting)).scalars().all()
@@ -111,11 +121,20 @@ def load_into_config(session: Session | None = None) -> dict[str, Any]:
         with db.session_scope() as own:
             _migrate_network_mode(own)
             rows = own.execute(select(Setting)).scalars().all()
-    values = {
-        row.key: row.value
-        for row in rows
-        if row.key in config.DEFAULTS and row.value is not None
-    }
+    values: dict[str, Any] = {}
+    ignored: list[tuple[str, Any]] = []
+    for row in rows:
+        if row.key not in config.DEFAULTS or row.value is None:
+            continue
+        if row.key in config.BOOTSTRAP_KEYS:
+            ignored.append((row.key, row.value))
+            continue
+        values[row.key] = row.value
+    if ignored:
+        logger.warning(
+            "settings 表里有启动项覆盖，已忽略（启动项只支持配置文件/环境变量，见 docs/contracts.md §11）：%s",
+            ", ".join(f"{key}={value!r}" for key, value in ignored),
+        )
     config.set_db_overrides(values)
     return values
 
@@ -148,18 +167,46 @@ def _delete_rows(session: Session, keys: list[str]) -> None:
 def response() -> dict[str, Any]:
     """GET /api/settings 响应：{effective, sources, schema}。
 
-    schema 每项额外带 `default`（代码默认值），设置页在输入框下方展示默认值；
-    这是 additive 字段，不影响已有消费方。
+    schema 每项额外带 `default`（代码默认值）、`layer`（bootstrap/runtime）、
+    `writable`（是否可写数据库）、`env`（对应环境变量名，供设置页提示）；
+    这些是 additive 字段，不影响已有消费方。
     """
     schema = [
-        {**entry, "default": config.DEFAULTS.get(entry["key"])}
+        {
+            **entry,
+            "default": config.DEFAULTS.get(entry["key"]),
+            "layer": config.layer_of(entry["key"]),
+            "writable": config.db_writable(entry["key"]),
+            "env": config.env_var_for(entry["key"]),
+        }
         for entry in config.SETTINGS_SCHEMA
     ]
     return {
         "effective": config.effective(),
         "sources": config.sources(),
         "schema": schema,
+        "config_file": str(config.config_file_path()),
     }
+
+
+def _ensure_runtime_key(key: str) -> None:
+    """启动项不允许写数据库：给出明确的替代路径（配置文件/环境变量 + 重启）。"""
+    if key not in config.BOOTSTRAP_KEYS:
+        return
+    env_name = config.env_var_for(key)
+    hint = f"改 {config.config_file_path()}"
+    if env_name:
+        hint += f" 或设置环境变量 {env_name}"
+    raise ApiError(
+        "INVALID_ARGUMENT",
+        f"{key} 是启动项（打开数据库前就要确定），不能存数据库；{hint}，然后重启 AutoTest",
+        {
+            "key": key,
+            "layer": "bootstrap",
+            "config_file": str(config.config_file_path()),
+            "env": env_name,
+        },
+    )
 
 
 def update(session: Session, values: dict[str, Any]) -> dict[str, Any]:
@@ -172,6 +219,7 @@ def update(session: Session, values: dict[str, Any]) -> dict[str, Any]:
     for key, value in values.items():
         if key not in config.DEFAULTS:
             raise ApiError("INVALID_ARGUMENT", f"unknown setting: {key}", {"key": key})
+        _ensure_runtime_key(key)
         if value is None:
             deletes.append(key)
             continue
@@ -194,6 +242,7 @@ def delete(session: Session, key: str) -> dict[str, Any]:
     """DELETE /api/settings/{key}：只删 DB 层覆盖（file/default 生效）。"""
     if key not in config.DEFAULTS:
         raise ApiError("INVALID_ARGUMENT", f"unknown setting: {key}", {"key": key})
+    _ensure_runtime_key(key)
     _delete_rows(session, [key])
     session.flush()
     load_into_config(session)

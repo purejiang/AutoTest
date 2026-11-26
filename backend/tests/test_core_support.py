@@ -77,6 +77,9 @@ def _reset_device_state() -> None:
 @pytest.fixture()
 def core_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     config.reset_to_defaults()
+    # 隔离夹具默认会设 AUTOTEST_DATA_DIR（环境变量赢过文件层）；
+    # 这里删掉它，让本用例能验证「文件层 data_dir」的真实优先级。
+    monkeypatch.delenv("AUTOTEST_DATA_DIR", raising=False)
     monkeypatch.setenv("AUTOTEST_CONFIG", str(write_config_file(tmp_path)))
     db.reset_engine_for_tests(tmp_path / "test.db")
     _reset_device_state()

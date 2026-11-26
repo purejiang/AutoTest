@@ -468,11 +468,19 @@ export interface SettingEntry {
   options?: Array<{ label: string; value: string }>
   /** 代码默认值（GET /api/settings 的 additive 字段） */
   default?: unknown
+  /** bootstrap = 启动项（只读，改配置文件/环境变量）；runtime = 可写数据库 */
+  layer?: 'bootstrap' | 'runtime'
+  /** 是否允许写数据库（启动项为 false） */
+  writable?: boolean
+  /** 对应环境变量名（没有映射时为 null） */
+  env?: string | null
 }
 
 export interface SettingsResponse {
   effective: Record<string, unknown>
   sources: Record<string, 'default' | 'file' | 'db' | 'env'>
+  /** 配置文件路径（启动项提示用，additive 字段） */
+  config_file?: string
   schema: SettingEntry[]
 }
 

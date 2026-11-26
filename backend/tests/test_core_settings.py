@@ -71,6 +71,45 @@ def test_new_toolchain_keys_are_editable(core_client) -> None:
     assert out_of_range.status_code == 422
 
 
+def test_bootstrap_keys_are_readonly(core_client) -> None:
+    """启动项（数据目录/端口）只认 文件/环境变量：schema 标 layer，API 写入直接拒绝。"""
+    body = core_client.get("/api/settings").json()
+    schema = {item["key"]: item for item in body["schema"]}
+    entry = schema["runtime.data_dir"]
+    assert entry["layer"] == "bootstrap"
+    assert entry["writable"] is False
+    assert entry["env"] == "AUTOTEST_DATA_DIR"
+    assert schema["engine.default_timeout_ms"]["layer"] == "runtime"
+    assert schema["engine.default_timeout_ms"]["writable"] is True
+    assert body["config_file"].endswith("config.json")
+
+    response = core_client.put(
+        "/api/settings", json={"values": {"runtime.data_dir": "/tmp/other-data-dir"}}
+    )
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "INVALID_ARGUMENT"
+    assert "启动项" in error["message"]
+    assert "AUTOTEST_DATA_DIR" in error["message"]
+    assert core_client.delete("/api/settings/runtime.data_dir").status_code == 400
+    # server.host/port 不在设置页展示，但同样是启动项，不能写库
+    assert (
+        core_client.put("/api/settings", json={"values": {"server.port": 9000}}).status_code == 400
+    )
+
+
+def test_legacy_bootstrap_db_row_is_ignored(core_client) -> None:
+    """旧版本把 data_dir 存进 DB：只忽略（并告警），不能改变生效目录，否则 DB/产物会分裂。"""
+    with db.session_scope() as session:
+        session.add(models.Setting(key="runtime.data_dir", value="/tmp/legacy-data-dir"))
+    values = settings_service.load_into_config()
+    assert "runtime.data_dir" not in values
+
+    body = core_client.get("/api/settings").json()
+    assert body["effective"]["runtime.data_dir"] != "/tmp/legacy-data-dir"
+    assert body["sources"]["runtime.data_dir"] == "file"
+
+
 def test_scrcpy_max_fps_zero_is_editable(core_client) -> None:
     """scrcpy.max_fps 存成 0（不限，即 scrcpy 默认值）：保存不能把 0 当成空值，镜像启动要原样透传。"""
     from app.android import scrcpy

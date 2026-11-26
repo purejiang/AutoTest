@@ -26,7 +26,7 @@ from starlette.routing import WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
-from . import __version__, config, db, errors
+from . import __version__, config, db, errors, logs
 from .logs import logger
 from .services import settings_service
 
@@ -186,6 +186,8 @@ def create_app() -> FastAPI:
     # 静态挂载（尤其 /artifacts）要读 data_dir/artifacts_dir：必须先装载文件层配置，
     # 否则用 ~/.autotest/config.json 切换数据目录后，DB 在新区、产物静态目录还指向旧区。
     config.reload_file_layer()
+    # 文件日志要用「已加载配置文件层之后」的 data_dir，否则会写错目录。
+    logs.configure_file_logging()
     application = FastAPI(
         title="AutoTest",
         version=__version__,
