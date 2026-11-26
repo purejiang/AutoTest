@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// 镜像画质卡：四档预设是「按设备长边缩放 + 上限 + 帧率 + 码率」的快捷方式，
-// 保存 scrcpy.scale / max_size / max_fps / video_bit_rate；手动改任意一项显示「自定义」。
-// 实际分辨率由后端在镜像启动时按设备长边计算。max_fps=0 表示不限（跟随设备刷新率）。
+// 镜像画质卡：三档预设（缩放 + 长边上限 + 码率）+「自定义」；预设只决定画质，
+// 选中时卡片上直接显示取值，详细配置只在「自定义」模式展开。
+// 帧率与画质正交，始终单独可调（下拉，0 = 不限，跟随设备刷新率）。
+// 实际分辨率由后端在镜像启动时按设备长边计算。
 import { RefreshLeft } from '@element-plus/icons-vue'
 import { computed, onMounted, ref } from 'vue'
 
@@ -106,7 +107,20 @@ const mirrorPreset = computed<string>(() => {
   return matched?.value ?? 'custom'
 })
 
+// 预设模式 / 自定义模式：点「自定义」后详细配置才展开；即使之后数值又恰好等于某个预设，
+// 也保持展开（customPinned），否则用户刚改的输入框会突然消失。
+const customPinned = ref(false)
+const activeMirrorPreset = computed(() =>
+  customPinned.value || mirrorPreset.value === 'custom' ? 'custom' : mirrorPreset.value,
+)
+const showDetail = computed(() => activeMirrorPreset.value === 'custom')
+
+function selectCustom(): void {
+  customPinned.value = true
+}
+
 function applyPreset(preset: MirrorPreset): void {
+  customPinned.value = false
   emit('change', 'scrcpy.scale', preset.scale)
   emit('change', 'scrcpy.max_size', preset.maxSize)
   emit('change', 'scrcpy.video_bit_rate', preset.videoBitRate)
@@ -139,6 +153,15 @@ const fpsOptions = computed<Array<{ value: number; label: string }>>(() => {
     options.push({ value: current, label: `${current} fps（当前）` })
   }
   return options
+})
+
+// 「自定义」卡片显示当前生效的缩放/码率（选中时），未选中时只提示可手动调整。
+const customDetail = computed(() => {
+  if (!showDetail.value) return '手动调整'
+  const scale = numeric('scrcpy.scale')
+  const bitrate = bitrateMbps.value
+  const parts = [scale === null ? null : `${scale}%`, bitrate === null ? null : `${bitrate}Mbps`]
+  return parts.filter(Boolean).join(' · ') || '手动调整'
 })
 
 function numeric(key: string): number | null {
@@ -238,7 +261,7 @@ function defaultLabel(key: string): string {
           :key="preset.value"
           type="button"
           class="preset"
-          :class="{ active: mirrorPreset === preset.value }"
+          :class="{ active: activeMirrorPreset === preset.value }"
           :disabled="disabled"
           @click="applyPreset(preset)"
         >
@@ -249,21 +272,78 @@ function defaultLabel(key: string): string {
           <span class="preset-detail">{{ preset.detail }}</span>
           <span class="preset-note">{{ preset.note }}</span>
         </button>
+        <button
+          type="button"
+          class="preset"
+          :class="{ active: activeMirrorPreset === 'custom' }"
+          :disabled="disabled"
+          @click="selectCustom"
+        >
+          <span class="preset-name">自定义</span>
+          <span class="preset-detail">{{ customDetail }}</span>
+          <span class="preset-note">逐项调整画质参数</span>
+        </button>
       </div>
 
       <div class="preset-hint">
-        预设只决定<strong>画质</strong>（缩放 + 码率）；<strong>帧率是独立项</strong>，任何预设都可以单独设成
-        0（不限）。<br />
-        100% 使用设备原生分辨率；低于 100%
-        时按设备长边比例缩放并受长边上限约束，实际分辨率在启动镜像时计算，不放大。
+        <strong>预设</strong>只决定画质（缩放 + 码率），选中后在卡片上直接显示取值；要逐项改缩放 /
+        长边上限 / 码率 / 裁剪时选「<strong>自定义</strong>」。<strong>帧率</strong>与画质正交，任何模式下都能单独设（0 = 不限）。<br />
+        100% 使用设备原生分辨率；低于 100% 时按设备长边比例缩放并受长边上限约束，实际分辨率在启动镜像时计算，不放大。
       </div>
 
       <div v-if="summary" class="mirror-summary">
         <span>当前：{{ summary }}</span>
-        <span v-if="mirrorPreset === 'custom'" class="mirror-summary-tag">自定义画质</span>
+        <span v-if="showDetail" class="mirror-summary-tag">自定义画质</span>
       </div>
 
-      <div class="field-grid">
+      <div class="field fps-row">
+        <span class="field-label">
+          帧率（fps）
+          <StatusTag
+            v-if="sourceOf('scrcpy.max_fps') !== 'default'"
+            :tone="sourceMeta('scrcpy.max_fps').tone"
+            :title="sourceTitle('scrcpy.max_fps')"
+          >
+            {{ sourceMeta('scrcpy.max_fps').label }}
+          </StatusTag>
+          <el-button
+            v-if="sourceOf('scrcpy.max_fps') === 'db'"
+            size="small"
+            text
+            :icon="RefreshLeft"
+            title="删除数据库覆盖，按优先级回到配置文件/默认值"
+            @click="emit('clear', 'scrcpy.max_fps')"
+          />
+        </span>
+        <el-select
+          :model-value="numeric('scrcpy.max_fps') ?? 0"
+          size="small"
+          style="width: 100%"
+          :disabled="disabled"
+          @update:model-value="applyFps(Number($event))"
+        >
+          <el-option
+            v-for="option in fpsOptions"
+            :key="option.value"
+            :value="option.value"
+            :label="option.label"
+          />
+        </el-select>
+        <div v-if="fpsOverkill !== null" class="field-hint-warn">
+          本机屏幕约 {{ fpsOverkill }}Hz：设 0 会让设备按自身刷新率（可能 120Hz）推流，约一半解码是白费；
+          建议改成 {{ fpsOverkill }}。
+        </div>
+        <div v-else-if="fpsIsUnlimited" class="field-default">
+          0 = 不限，跟随设备刷新率（与 scrcpy 默认一致）；画质预设不受影响
+        </div>
+        <div v-else-if="hasDefault('scrcpy.max_fps')" class="field-default">
+          默认：{{ defaultLabel('scrcpy.max_fps') }}（不限）
+        </div>
+      </div>
+
+      <div v-if="showDetail" class="custom-detail-head">自定义画质参数</div>
+
+      <div v-if="showDetail" class="field-grid">
         <div class="field">
           <span class="field-label">
             按设备缩放（%）
@@ -332,51 +412,6 @@ function defaultLabel(key: string): string {
           <div v-if="scaleIsNative" class="field-default">100% 时按原生分辨率，不使用上限</div>
           <div v-else-if="hasDefault('scrcpy.max_size')" class="field-default">
             默认：{{ defaultLabel('scrcpy.max_size') }}
-          </div>
-        </div>
-
-        <div class="field">
-          <span class="field-label">
-            帧率（fps）
-            <StatusTag
-              v-if="sourceOf('scrcpy.max_fps') !== 'default'"
-              :tone="sourceMeta('scrcpy.max_fps').tone"
-              :title="sourceTitle('scrcpy.max_fps')"
-            >
-              {{ sourceMeta('scrcpy.max_fps').label }}
-            </StatusTag>
-            <el-button
-              v-if="sourceOf('scrcpy.max_fps') === 'db'"
-              size="small"
-              text
-              :icon="RefreshLeft"
-              title="删除数据库覆盖，按优先级回到配置文件/默认值"
-              @click="emit('clear', 'scrcpy.max_fps')"
-            />
-          </span>
-          <el-select
-            :model-value="numeric('scrcpy.max_fps') ?? 0"
-            size="small"
-            style="width: 100%"
-            :disabled="disabled"
-            @update:model-value="applyFps(Number($event))"
-          >
-            <el-option
-              v-for="option in fpsOptions"
-              :key="option.value"
-              :value="option.value"
-              :label="option.label"
-            />
-          </el-select>
-          <div v-if="fpsOverkill !== null" class="field-hint-warn">
-            本机屏幕约 {{ fpsOverkill }}Hz：设 0 会让设备按自身刷新率（可能 120Hz）推流，约一半解码是白费；
-            建议改成 {{ fpsOverkill }}。
-          </div>
-          <div v-else-if="fpsIsUnlimited" class="field-default">
-            0 = 不限，跟随设备刷新率（与 scrcpy 默认一致）；画质预设不受影响
-          </div>
-          <div v-else-if="hasDefault('scrcpy.max_fps')" class="field-default">
-            默认：{{ defaultLabel('scrcpy.max_fps') }}（不限）
           </div>
         </div>
 
@@ -459,7 +494,7 @@ function defaultLabel(key: string): string {
 
 .preset-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -555,7 +590,28 @@ function defaultLabel(key: string): string {
   font-size: 9.5px;
 }
 
-/* 帧率快捷项：不限 / 60 / 30（与预设解耦，随时可切） */
+/* 帧率是独立项：始终可见（不受预设/自定义模式影响）。
+   标签在左、下拉在右，提示文案占满整行，避免一个下拉横跨整张卡片。 */
+.field.fps-row {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 220px);
+  align-items: center;
+  gap: 6px 8px;
+  margin-bottom: 10px;
+}
+
+.field.fps-row .field-default,
+.field.fps-row .field-hint-warn {
+  grid-column: 1 / -1;
+}
+
+.custom-detail-head {
+  margin: 2px 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .field-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
