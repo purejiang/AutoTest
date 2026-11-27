@@ -178,6 +178,7 @@ sh scripts/start.sh --rebuild      # 改过前端代码后重新构建并启动
 sh scripts/build.sh                # 只构建 Vue 前端到 frontend/dist
 cd frontend && npm run lint        # Vue/TS ESLint
 cd frontend && npm run typecheck   # 类型检查
+cd frontend && npm run test        # Vitest 单测
 cd frontend && npm run build       # 类型检查 + 生产构建
 cd backend && uv run pytest -q     # 后端测试（无需真机）
 cd backend && uv run python ../scripts/check_env.py   # 环境自检（adb/设备/端口/jar）
@@ -297,6 +298,8 @@ cd backend && uv run uvicorn app.main:app --reload --port 8787
 cd frontend && npm run dev                      # Vue 前端 dev（代理到 8787）
 cd frontend && npm run lint                     # ESLint / Vue 规则
 cd frontend && npm run typecheck                # 类型检查
+cd frontend && npm run test                     # Vitest 单测（无需后端）
+cd frontend && npm run types:check               # 前端类型与 docs/openapi.json 一致
 cd frontend && npm run build                    # 类型检查 + 构建到 frontend/dist
 # 回滚：cd frontend-react && npm run dev / npm run build
 ```

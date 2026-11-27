@@ -247,8 +247,9 @@ export interface Script {
   schema_version: number
   data: ScriptData
   step_count?: number
-  created_at: string
-  updated_at: string
+  /** 脚本是 JSON 文件，时间戳可能缺失（导入/手写文件）时为 null。 */
+  created_at: string | null
+  updated_at: string | null
   last_run?: ScriptLastRun | null
 }
 
@@ -461,17 +462,17 @@ export interface SettingEntry {
   key: string
   type: 'string' | 'int' | 'bool' | 'enum'
   title: string
-  desc?: string
-  min?: number
-  max?: number
-  /** type='enum' 时的可选项 */
-  options?: Array<{ label: string; value: string }>
+  desc?: string | null
+  min?: number | null
+  max?: number | null
+  /** type='enum' 时的可选项（后端可能返回 null） */
+  options?: Array<{ label: string; value: string }> | null
   /** 代码默认值（GET /api/settings 的 additive 字段） */
   default?: unknown
   /** bootstrap = 启动项（只读，改配置文件/环境变量）；runtime = 设置页可保存 */
-  layer?: 'bootstrap' | 'runtime'
+  layer?: 'bootstrap' | 'runtime' | string | null
   /** 是否允许在设置页保存（启动项为 false） */
-  writable?: boolean
+  writable?: boolean | null
   /** 对应环境变量名（没有映射时为 null） */
   env?: string | null
 }
@@ -482,7 +483,7 @@ export interface SettingsResponse {
   /** 配置文件路径（启动项提示用，additive 字段） */
   config_file?: string
   /** POST /api/settings/reload 时：改了但需要重启才生效的启动项 */
-  restart_required?: string[]
+  restart_required?: string[] | null
   schema: SettingEntry[]
 }
 

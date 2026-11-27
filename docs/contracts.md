@@ -60,14 +60,14 @@ backend/app/
     logcat.py          [be-report] logcat 采集（运行期 + 手动）
     network.py         [be-report] 域名抓包（stdlib 代理，不抓正文）
 frontend/src/
-  main.tsx/App.tsx/router/layout/theme   [fe-core]
-  api/client.ts  api/hooks.ts            [fe-core]
+  main.ts / App.vue / router/index.ts / navigation.ts / layouts/AppLayout.vue / composables/useTheme.ts [fe-core]
+  api/client.ts / api/<域>.ts / api/useRunEventsWs.ts / api/useRecordingEventsWs.ts [fe-core]
   types/api.ts                          [Lead]
-  store/*                               [fe-core]
-  lib/format.ts                         [fe-core]
-  features/devices/**  scripts/**  runs/**  recorder/**  settings/**  [fe-core]
+  stores/ composables/ lib/              [fe-core 共享层；lib/h264|webcodecs|mirrorWs 归 fe-mirror]
+  features/console|devices|scripts|runs|recorder|settings/** [fe-core]
   features/mirror/**                    [fe-mirror] 镜像画布/WebCodecs/输入映射/录制工具条
-  lib/webcodecs.ts  lib/h264.ts  lib/mirrorWs.ts  [fe-mirror]
+  styles/index.css                      [fe-core] 设计 token + shell + Element Plus 覆写
+frontend-react/  v0.1.3 React 冻结备份（不参与构建，仅回滚/对照）
 ```
 
 **写作用域纪律**：只改自己名下的文件。需要改别人文件 → 发消息给 Lead。需要加依赖 → 发消息给 Lead（禁止自己 `uv add` / `npm i`）。
@@ -482,8 +482,11 @@ v0.2.5 路由与导航：
   不再有 RunScriptModal，也不再在编辑器里收集设备/变量。
 
 前端边界：
-- 请求走 `src/api/client.ts`（fetch 封装，统一错误信封提示，baseURL `/api`）；
-- 类型唯一来源 `src/types/api.ts`（Lead 已写，只许向后兼容追加）；
+- 请求走 `src/api/client.ts`（axios 封装，统一错误信封提示，baseURL `/api`）；
+- 类型唯一来源 `src/types/api.ts`（Lead 已写，只许向后兼容追加）；后端响应 schema 由
+  `scripts/export_openapi.py` 导出到 `docs/openapi.json`，前端 `npm run types:gen` 生成
+  `src/types/generated.ts`，`src/types/contract.ts` 用编译期断言校验手写类型与生成类型一致；
+  CI 会跑 `export_openapi.py --check` 与 `npm run types:check` 防止漂移；
 - `features/mirror/**` 提供 canvas/WebCodecs/输入映射与 RecordingBar；控制台 `MirrorStage` 复用，
   `features/console/**` 负责控制台页面与手动/自动面板；
 - 录制事件实时流：前端 `src/api/useRecordingEventsWs.ts` 连接 `/ws/recordings/{id}?since_seq=`，
@@ -609,7 +612,7 @@ def build_report(run_id: int, include_video: bool = False) -> dict   # {report_i
 
 ### 14.6 集成规则
 - 所有跨模块 import 按上述签名写；对方文件暂不存在时**不阻塞自己开发**：测试里 monkeypatch/自建桩；
-- main.py（be-core）用动态路由发现：遍历 app.api 包内模块，把含 `router` 属性的自动 include；
+- main.py（be-core）用动态路由发现：遍历 app.api 包内模块，把 `router`（HTTP，可带 `/api` prefix）与 `ws_router`（WS，挂根路径）自动 include；新增模块不要再用绝对 `/api/...` 路径，也不要让 WS 走 `/api` 前缀；
 - 每人只跑自己的测试：`uv run pytest tests/test_<域>_*.py -q`；全量 pytest 由 Lead 在集成时跑；
 - 完成后向 Lead 发消息：改动文件清单 + 测试结果 + 已知坑。
 
