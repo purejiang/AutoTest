@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {
   Camera,
-  Connection,
   DataLine,
   Document,
   EditPen,
@@ -24,13 +23,9 @@ import {
   useDeviceShell,
   useDeviceText,
   useMirrorStatus,
-  useScreenRecordStart,
-  useScreenRecordStatus,
-  useScreenRecordStop,
-  type ScreenRecordLast,
 } from '@/api/devices'
 import type { Device } from '@/types/api'
-import { formatBytes, prettyJson } from '@/lib/format'
+import { prettyJson } from '@/lib/format'
 import { useUiStore } from '@/stores/ui'
 import StatusTag from '@/components/StatusTag.vue'
 import RecordingBar from '@/features/mirror/components/RecordingBar.vue'
@@ -56,14 +51,14 @@ const router = useRouter()
 const ui = useUiStore()
 
 const MANUAL_TABS = [
+  { value: 'video', label: '视频', icon: VideoCamera },
   { value: 'record', label: '镜像', icon: VideoPlay },
   { value: 'text', label: '文本', icon: EditPen },
   { value: 'app', label: '应用', icon: Link },
   { value: 'tools', label: '工具', icon: Grid },
 ] as const
 
-// 视频录制 / 设备信息不再占一级 tab，改为「工具」里的子项 + 侧边抽屉。
-const videoOpen = ref(false)
+// 设备信息是「工具」里的子项，点开走侧边抽屉。
 const infoOpen = ref(false)
 
 const activeTab = computed({
@@ -142,55 +137,10 @@ function runApp(): void {
   )
 }
 
-// ---------------------------------------------------------------- 设备信息 / 录屏 / shell
+// ---------------------------------------------------------------- 设备信息 / shell
 const infoQuery = useDeviceInfo(computed(() => props.serial))
 const mirrorQuery = useMirrorStatus(computed(() => props.serial))
 const info = computed<Device | null>(() => infoQuery.data.value ?? props.device)
-
-const recName = ref('')
-const recBitRate = ref(4_000_000)
-const recTimeLimit = ref(180)
-const screenStart = useScreenRecordStart(props.serial)
-const screenStop = useScreenRecordStop(props.serial)
-const screenStatus = useScreenRecordStatus(
-  computed(() => props.serial),
-  computed(() => activeTab.value === 'tools'),
-)
-const recStatus = computed(() => screenStatus.data.value ?? null)
-const recActive = computed(() => Boolean(recStatus.value?.active))
-const recPending = computed(() => Boolean(recStatus.value?.pending))
-const lastVideo = computed<ScreenRecordLast | null>(() => recStatus.value?.last ?? null)
-
-function formatClock(seconds: number | undefined): string {
-  const total = Math.max(0, Math.floor(Number(seconds) || 0))
-  const minutes = Math.floor(total / 60)
-  return `${String(minutes).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
-}
-
-function startScreenRecord(): void {
-  screenStart.mutate(
-    {
-      name: recName.value.trim() || undefined,
-      bit_rate: recBitRate.value,
-      time_limit_s: recTimeLimit.value,
-    },
-    {
-      onSuccess: () => {
-        ElMessage.success('设备录屏已开始')
-        void screenStatus.refetch()
-      },
-    },
-  )
-}
-
-function stopScreenRecord(): void {
-  screenStop.mutate(undefined, {
-    onSuccess: () => {
-      ElMessage.success('设备录屏已停止，视频已保存')
-      void screenStatus.refetch()
-    },
-  })
-}
 
 const command = ref('getprop ro.product.model')
 const shellOutput = ref<string | null>(null)
@@ -247,6 +197,33 @@ function refreshDeviceInfo(): void {
     </div>
 
     <div class="manual-pages">
+      <!-- 视频录制 -->
+      <section v-show="activeTab === 'video'" class="manual-page">
+        <div class="section-head">
+          <h3>
+            <el-icon><VideoCamera /></el-icon>视频录制
+          </h3>
+          <StatusTag tone="blue">浏览器画面</StatusTag>
+          <StatusTag tone="amber">刷新即丢失</StatusTag>
+        </div>
+        <div class="video-warning">
+          <el-icon><InfoFilled /></el-icon>
+          <span>
+            <strong>视频暂不持久化：</strong
+            >只保存在当前浏览器内存，刷新或关闭页面即丢失；需要保留请停止后立即下载。
+          </span>
+        </div>
+        <MirrorVideoRecorder
+          :serial="serial"
+          :get-source="getSource"
+          :overlay="getOverlay"
+          :enabled="streaming"
+        />
+        <div class="section-sub">
+          录制当前镜像画面，支持暂停/继续；停止后可预览、拖动进度和下载，下载后才会保留。
+        </div>
+      </section>
+
       <!-- 镜像录制 -->
       <section v-show="activeTab === 'record'" class="manual-page">
         <div class="section-head">
@@ -398,111 +375,12 @@ function refreshDeviceInfo(): void {
           </div>
           <div class="tool-item">
             <span class="tool-ico"
-              ><el-icon><VideoCamera /></el-icon
-            ></span>
-            <div class="tool-main">
-              <strong>设备录屏</strong><small>手机端 screenrecord，最长 180s</small>
-            </div>
-            <el-button size="small" :loading="screenStatus.isFetching.value" @click="screenStatus.refetch()">
-              {{ recActive || recPending ? '刷新状态' : '查看状态' }}
-            </el-button>
-          </div>
-          <div class="tool-item">
-            <span class="tool-ico"
-              ><el-icon><VideoCamera /></el-icon
-            ></span>
-            <div class="tool-main">
-              <strong>视频录制</strong>
-              <small>录制镜像画面（含点击/滑动特效），停止后可下载；仅存浏览器内存</small>
-            </div>
-            <el-button size="small" :disabled="!streaming" @click="videoOpen = true">打开</el-button>
-          </div>
-          <div class="tool-item">
-            <span class="tool-ico"
               ><el-icon><InfoFilled /></el-icon
             ></span>
             <div class="tool-main">
               <strong>设备信息</strong><small>型号 / 系统 / 分辨率 / 占用与镜像状态</small>
             </div>
             <el-button size="small" @click="infoOpen = true">打开</el-button>
-          </div>
-        </div>
-
-        <div class="manual-divider" />
-
-        <div class="tool-form">
-          <div class="section-head">
-            <h3>
-              <el-icon><Connection /></el-icon>设备录屏
-            </h3>
-          </div>
-          <div class="field-row three">
-            <label class="field"
-              ><span>名称（可选）</span><el-input v-model="recName" size="small" placeholder="录屏名称"
-            /></label>
-            <label class="field">
-              <span>码率</span>
-              <el-input-number
-                v-model="recBitRate"
-                size="small"
-                :min="1000000"
-                :max="20000000"
-                :step="500000"
-                controls-position="right"
-                style="width: 100%"
-              />
-            </label>
-            <label class="field">
-              <span>时长上限(s)</span>
-              <el-input-number
-                v-model="recTimeLimit"
-                size="small"
-                :min="5"
-                :max="180"
-                controls-position="right"
-                style="width: 100%"
-              />
-            </label>
-          </div>
-          <div v-if="recActive || recPending" class="rec-status">
-            <span class="rec-dot" :class="{ 'is-live': recActive }" aria-hidden />
-            <StatusTag :tone="recActive ? 'red' : 'amber'">{{
-              recActive ? '录制中' : '已到时长上限'
-            }}</StatusTag>
-            <span class="rec-clock"
-              >{{ formatClock(recStatus?.elapsed_s) }} / {{ formatClock(recStatus?.time_limit_s) }}</span
-            >
-          </div>
-          <div class="row wrap" style="margin-top: 7px">
-            <el-button
-              type="primary"
-              size="small"
-              :loading="screenStart.isPending.value"
-              :disabled="busy || recActive || recPending"
-              @click="startScreenRecord"
-            >
-              开始录屏
-            </el-button>
-            <el-button
-              type="danger"
-              size="small"
-              :loading="screenStop.isPending.value"
-              :disabled="!recActive && !recPending"
-              @click="stopScreenRecord"
-            >
-              停止并保存
-            </el-button>
-          </div>
-          <div v-if="lastVideo?.url" class="rec-player">
-            <video :src="lastVideo.url" controls preload="metadata" />
-            <div class="rec-player-meta">
-              <span class="rec-player-name" :title="lastVideo.name">{{ lastVideo.name }}</span>
-              <span class="hint">{{ formatBytes(lastVideo.size) }}</span>
-              <a :href="lastVideo.url" :download="lastVideo.name">下载</a>
-            </div>
-          </div>
-          <div class="section-sub">
-            手机端 screenrecord 把手机画面录成 mp4；不含浏览器特效，也不生成脚本步骤。
           </div>
         </div>
 
@@ -529,25 +407,6 @@ function refreshDeviceInfo(): void {
         <div class="section-sub">以上工具都作用于当前选中设备。</div>
       </section>
     </div>
-
-    <el-drawer v-model="videoOpen" title="视频录制（浏览器画面）" size="min(540px, 94vw)" append-to-body>
-      <div class="video-warning">
-        <el-icon><InfoFilled /></el-icon>
-        <span>
-          <strong>视频暂不持久化：</strong
-          >只保存在当前浏览器内存，刷新或关闭页面即丢失；需要保留请停止后立即下载。
-        </span>
-      </div>
-      <MirrorVideoRecorder
-        :serial="serial"
-        :get-source="getSource"
-        :overlay="getOverlay"
-        :enabled="streaming"
-      />
-      <div class="section-sub">
-        录制当前镜像画面，支持暂停/继续；停止后可预览、拖动进度和下载，下载后才会保留。
-      </div>
-    </el-drawer>
 
     <el-drawer v-model="infoOpen" title="设备信息" size="min(420px, 94vw)" append-to-body>
       <div class="info-grid">
@@ -748,22 +607,6 @@ function refreshDeviceInfo(): void {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-}
-
-.field-row.three {
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-}
-
-.rec-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin: 5px 0 8px;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface-2);
 }
 
 .inline-warning {

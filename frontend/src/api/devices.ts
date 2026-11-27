@@ -81,43 +81,6 @@ export interface ShellPayload {
   timeout_ms?: number
 }
 
-export interface ScreenRecordStartPayload {
-  name?: string
-  bit_rate?: number
-  time_limit_s?: number
-}
-
-export interface ScreenRecordLast {
-  name: string
-  path: string
-  size: number
-  url?: string | null
-  stopped_at?: string
-}
-
-export interface ScreenRecordStatus {
-  ok?: boolean
-  serial: string
-  /** 是否仍在录制（达到 time_limit 后为 false，但 pending 仍为 true） */
-  active: boolean
-  /** 设备端还有未拉回的 mp4：需要“停止并保存”收尾 */
-  pending?: boolean
-  name?: string
-  time_limit_s?: number
-  elapsed_s?: number
-  remaining_s?: number
-  started_at?: string
-  last?: ScreenRecordLast | null
-}
-
-export interface ScreenRecordResult extends ScreenRecordStatus {
-  path?: string
-  size?: number
-  url?: string | null
-  recording?: boolean
-  last?: ScreenRecordLast | null
-}
-
 export interface DeviceLogcatLine {
   line: string
 }
@@ -150,7 +113,6 @@ export const deviceKeys = {
     [...deviceKeys.all, serial, 'apps', keyword, type] as const,
   screenshot: (serial: string, nonce: number) => [...deviceKeys.all, serial, 'screenshot', nonce] as const,
   mirror: (serial: string) => [...deviceKeys.all, serial, 'mirror'] as const,
-  screenrecord: (serial: string) => [...deviceKeys.all, serial, 'screenrecord'] as const,
 }
 
 // ---------------------------------------------------------------- 查询
@@ -489,43 +451,6 @@ export function useDeviceShell(serial: string) {
 }
 
 // ---------------------------------------------------------------- 录屏 / 镜像
-
-export function useScreenRecordStart(serial: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (payload: ScreenRecordStartPayload) =>
-      post<ScreenRecordResult>(`${base(serial)}/screenrecord/start`, payload),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: deviceKeys.screenrecord(serial) })
-    },
-  })
-}
-
-export function useScreenRecordStop(serial: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: () => post<ScreenRecordResult>(`${base(serial)}/screenrecord/stop`),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: deviceKeys.screenrecord(serial) })
-      void queryClient.invalidateQueries({ queryKey: deviceKeys.list() })
-    },
-  })
-}
-
-export function useScreenRecordStatus(
-  serial: MaybeRefOrGetter<string | null | undefined>,
-  enabled: MaybeRefOrGetter<boolean> = true,
-) {
-  const resolved = computed(() => toValue(serial))
-  return useQuery({
-    queryKey: computed(() => deviceKeys.screenrecord(resolved.value ?? '')),
-    queryFn: ({ signal }) =>
-      get<ScreenRecordStatus>(`${base(resolved.value as string)}/screenrecord/status`, { signal }),
-    enabled: computed(() => Boolean(resolved.value) && toValue(enabled)),
-    refetchInterval: 1000,
-    retry: false,
-  })
-}
 
 export function useMirrorStart(serial: string) {
   const queryClient = useQueryClient()

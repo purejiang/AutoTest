@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 
 export type ConsoleTab = 'manual' | 'auto'
-export type ManualTab = 'record' | 'text' | 'app' | 'tools'
+export type ManualTab = 'video' | 'record' | 'text' | 'app' | 'tools'
 
 /** 跨页面轻量 UI 状态（选择设备、控制台 tab、事件流自动滚动等）。 */
 export const useUiStore = defineStore('ui', {
@@ -10,7 +10,7 @@ export const useUiStore = defineStore('ui', {
     eventsAutoScroll: true,
     logcatAutoRefresh: true,
     consoleTab: 'manual' as ConsoleTab,
-    manualTab: 'record' as ManualTab,
+    manualTab: 'video' as ManualTab,
     /** 脚本页/编辑器点「运行」后带到控制台预选的脚本 id。 */
     pendingRunScriptId: null as string | null,
   }),

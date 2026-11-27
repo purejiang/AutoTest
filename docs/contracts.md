@@ -271,7 +271,7 @@ POST /api/devices/{serial}/logcat/start|stop；GET /api/devices/{serial}/logcat/
   （raw=true 时**只 dump 一次**：用原始 XML 解析成树；取不到 raw 时为 null 并带 `"raw_unavailable"`。
   `elapsed_ms`/`node_count` 供前端显示"刷新慢在哪"；后端对 >800ms 的 dump、>1500ms 的截图打 WARNING）；
 POST /api/devices/{serial}/tap|long_press|swipe|key|text|app|shell；
-POST /api/devices/{serial}/screenrecord/start {name,bit_rate,time_limit_s} / stop；
+POST /api/devices/{serial}/screenrecord/start {name,bit_rate,time_limit_s} / stop（仅 API：控制台「设备录屏」入口已移除，视频录制走浏览器端）；
 GET /api/devices/{serial}/screenrecord/status → {active,pending,name,time_limit_s,elapsed_s,remaining_s,started_at,last:{name,size,url}}；
   last 为最近一次录屏产物直链（/artifacts/screenrecord/…，支持 Range 播放/拖动）；
 POST /api/devices/{serial}/network/start|stop；GET /api/devices/{serial}/network/status
