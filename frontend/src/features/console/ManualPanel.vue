@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {
-  Camera,
   DataLine,
   Document,
   EditPen,
@@ -40,7 +39,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  screenshot: []
   hierarchy: []
   logcat: []
   network: []
@@ -365,13 +363,6 @@ function refreshDeviceInfo(): void {
               <strong>网络抓包</strong><small>只记录访问域名，不含 Header 与正文</small>
             </div>
             <el-button size="small" @click="emit('network')">打开</el-button>
-          </div>
-          <div class="tool-item">
-            <span class="tool-ico"
-              ><el-icon><Camera /></el-icon
-            ></span>
-            <div class="tool-main"><strong>截图</strong><small>抓取当前设备画面 PNG</small></div>
-            <el-button size="small" @click="emit('screenshot')">打开</el-button>
           </div>
           <div class="tool-item">
             <span class="tool-ico"

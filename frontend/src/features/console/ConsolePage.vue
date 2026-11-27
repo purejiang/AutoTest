@@ -269,7 +269,6 @@ function openConnect(): void {
               :streaming="streaming"
               :get-source="getMirrorCanvas"
               :get-overlay="getMirrorOverlayCanvas"
-              @screenshot="openScreenshot"
               @hierarchy="openHierarchy"
               @logcat="openLogcat"
               @network="openNetwork"
