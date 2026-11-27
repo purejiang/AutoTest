@@ -17,7 +17,7 @@ from ..logs import logger
 from ..models import Report
 from ..report.builder import build_report
 
-router = APIRouter(tags=["reports"])
+router = APIRouter(prefix="/api", tags=["reports"])
 
 
 def _report_dict(report: Report) -> dict[str, Any]:
@@ -42,7 +42,7 @@ def _get_report_row(report_id: str) -> Report:
         return report
 
 
-@router.post("/api/runs/{run_id}/report")
+@router.post("/runs/{run_id}/report")
 def create_report(run_id: int, request: ReportCreateRequest | None = None) -> dict[str, Any]:
     if request is not None and request.include_video is not None:
         include_video = bool(request.include_video)
@@ -64,7 +64,7 @@ def create_report(run_id: int, request: ReportCreateRequest | None = None) -> di
     return payload
 
 
-@router.get("/api/reports")
+@router.get("/reports")
 def list_reports(
     run_id: int | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
@@ -82,7 +82,7 @@ def list_reports(
     return items_response([_report_dict(row) for row in rows], total=total)
 
 
-@router.get("/api/reports/{report_id}/download")
+@router.get("/reports/{report_id}/download")
 def download_report(report_id: str) -> FileResponse:
     report = _get_report_row(report_id)
     path = Path(str(report.path or ""))
@@ -95,7 +95,7 @@ def download_report(report_id: str) -> FileResponse:
     )
 
 
-@router.delete("/api/reports/{report_id}")
+@router.delete("/reports/{report_id}")
 def delete_report(report_id: str) -> dict[str, Any]:
     report = _get_report_row(report_id)
     path = Path(str(report.path or ""))

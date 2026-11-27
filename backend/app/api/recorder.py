@@ -1,6 +1,6 @@
 """录制 REST + WS（契约 §7.4 / §6.3）。
 
-路由统一挂在根 router 上（`/api/...` 与 `/ws/...`），由 main.py 动态 include；
+HTTP 挂在 `/api` 前缀下（本模块 `router`），WS 挂在根（`ws_router`）；
 WS 路径 `/ws/recordings/{recording_id}?since_seq=` 与契约 §6.3 对齐。
 """
 
@@ -18,6 +18,8 @@ from ..api_schemas import (
     RecordingBulkDeleteRequest,
     RecordingCreateRequest,
     RecordingEventBulkDeleteRequest,
+    RecordingListOut,
+    RecordingOut,
     ToScriptRequest,
     items_response,
 )
@@ -29,7 +31,9 @@ from ..recorder import session as recorder_session
 from ..recorder.session import RecordingEventBus
 from ..services import script_service
 
-router = APIRouter(tags=["recordings"])
+router = APIRouter(prefix="/api", tags=["recordings"])
+# WS 不能带 /api 前缀，单独挂载；main.py 会同时发现 router / ws_router。
+ws_router = APIRouter(tags=["recordings"])
 
 
 # ================================================================ 序列化 / 查行
@@ -190,7 +194,7 @@ def _release_device(serial: str, recording_id: str) -> None:
 
 
 # ================================================================ REST：录制 CRUD
-@router.post("/api/recordings", status_code=201)
+@router.post("/recordings", status_code=201)
 def create_recording(request: RecordingCreateRequest) -> dict[str, Any]:
     serial = (request.serial or "").strip()
     if not serial:
@@ -260,7 +264,7 @@ def _cleanup_failed_recording(recording_id: str, serial: str) -> None:
         logger.warning("cleanup failed recording row failed: %s", recording_id)
 
 
-@router.get("/api/recordings")
+@router.get("/recordings", response_model=RecordingListOut)
 def list_recordings(
     status: str | None = Query(default=None),
     mode: str | None = Query(default=None),
@@ -287,26 +291,26 @@ def list_recordings(
     return items_response(items, total=total)
 
 
-@router.get("/api/recordings/{recording_id}")
+@router.get("/recordings/{recording_id}", response_model=RecordingOut)
 def get_recording(recording_id: str) -> dict[str, Any]:
     return _recording_payload(recording_id)
 
 
-@router.post("/api/recordings/{recording_id}/pause")
+@router.post("/recordings/{recording_id}/pause")
 def pause_recording(recording_id: str) -> dict[str, Any]:
     _get_recording_row(recording_id)
     recorder_session.pause(recording_id)
     return _recording_payload(recording_id)
 
 
-@router.post("/api/recordings/{recording_id}/resume")
+@router.post("/recordings/{recording_id}/resume")
 def resume_recording(recording_id: str) -> dict[str, Any]:
     _get_recording_row(recording_id)
     recorder_session.resume(recording_id)
     return _recording_payload(recording_id)
 
 
-@router.post("/api/recordings/{recording_id}/stop")
+@router.post("/recordings/{recording_id}/stop")
 def stop_recording(recording_id: str) -> dict[str, Any]:
     _get_recording_row(recording_id)
     recorder_session.stop(recording_id)
@@ -314,7 +318,7 @@ def stop_recording(recording_id: str) -> dict[str, Any]:
 
 
 # ================================================================ REST：事件
-@router.get("/api/recordings/{recording_id}/events")
+@router.get("/recordings/{recording_id}/events")
 def list_recording_events(
     recording_id: str,
     since_seq: int = Query(default=0, ge=0),
@@ -333,7 +337,7 @@ def list_recording_events(
     return items_response([_event_dict(row) for row in rows])
 
 
-@router.delete("/api/recordings/{recording_id}/events/{seq}")
+@router.delete("/recordings/{recording_id}/events/{seq}")
 def delete_recording_event(recording_id: str, seq: int) -> dict[str, Any]:
     _get_recording_row(recording_id)
     with session_scope() as db:
@@ -361,7 +365,7 @@ def delete_recording_event(recording_id: str, seq: int) -> dict[str, Any]:
     return {"deleted": True, "seq": int(seq), "event_count": total}
 
 
-@router.post("/api/recordings/{recording_id}/events/bulk-delete")
+@router.post("/recordings/{recording_id}/events/bulk-delete")
 def bulk_delete_recording_events(
     recording_id: str,
     payload: RecordingEventBulkDeleteRequest,
@@ -410,7 +414,7 @@ def bulk_delete_recording_events(
     return {"deleted": deleted, "failed": failed}
 
 
-@router.delete("/api/recordings/{recording_id}")
+@router.delete("/recordings/{recording_id}")
 def delete_recording(recording_id: str) -> dict[str, Any]:
     _get_recording_row(recording_id)
     recorder_session.stop(recording_id)
@@ -423,7 +427,7 @@ def delete_recording(recording_id: str) -> dict[str, Any]:
     return {"deleted": True, "id": str(recording_id)}
 
 
-@router.post("/api/recordings/bulk-delete")
+@router.post("/recordings/bulk-delete")
 def bulk_delete_recordings(payload: RecordingBulkDeleteRequest) -> dict[str, Any]:
     """批量删除录制：只允许 stopped，去重、空列表 400、不自动 stop。"""
     ids = list(dict.fromkeys(str(recording_id) for recording_id in payload.ids))
@@ -461,7 +465,7 @@ def bulk_delete_recordings(payload: RecordingBulkDeleteRequest) -> dict[str, Any
     return {"deleted": deleted, "failed": failed}
 
 
-@router.post("/api/recordings/{recording_id}/to_script")
+@router.post("/recordings/{recording_id}/to_script")
 def recording_to_script(
     recording_id: str,
     request: ToScriptRequest | None = None,
@@ -504,7 +508,7 @@ async def _control_loop(websocket: WebSocket) -> None:
         return
 
 
-@router.websocket("/ws/recordings/{recording_id}")
+@ws_router.websocket("/ws/recordings/{recording_id}")
 async def recording_websocket(
     websocket: WebSocket,
     recording_id: str,

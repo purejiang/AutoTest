@@ -14,7 +14,13 @@ from fastapi import APIRouter, Body, Query
 from sqlalchemy import delete, func, select
 
 from .. import config
-from ..api_schemas import RunBulkDeleteRequest, RunCreateRequest, RunDebugRequest
+from ..api_schemas import (
+    RunBulkDeleteRequest,
+    RunCreateRequest,
+    RunDebugRequest,
+    RunDetailOut,
+    RunListOut,
+)
 from ..db import session_scope
 from ..errors import ApiError
 from ..events import RunEventBus
@@ -94,12 +100,12 @@ def create_run_from_request(payload: RunCreateRequest) -> dict[str, Any]:
 
 
 # ================================================================ 端点
-@router.post("")
+@router.post("", response_model=RunDetailOut)
 def create_run_endpoint(payload: RunCreateRequest) -> dict[str, Any]:
     return create_run_from_request(payload)
 
 
-@router.get("")
+@router.get("", response_model=RunListOut)
 def list_runs(
     status: str | None = None,
     script_id: str | None = None,
@@ -121,7 +127,7 @@ def list_runs(
         return {"items": [_run_dict(row) for row in rows], "total": int(total)}
 
 
-@router.get("/{run_id}")
+@router.get("/{run_id}", response_model=RunDetailOut)
 def get_run(run_id: int) -> dict[str, Any]:
     with session_scope() as session:
         run = session.get(Run, int(run_id))

@@ -56,6 +56,7 @@ def api(monkeypatch, tmp_path, temp_db):
     app = FastAPI()
     install_error_handlers(app)
     app.include_router(recorder_api.router)
+    app.include_router(recorder_api.ws_router)
     app.include_router(reports_api.router)
     client = TestClient(app)
     yield types.SimpleNamespace(

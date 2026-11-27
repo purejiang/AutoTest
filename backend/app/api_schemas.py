@@ -19,6 +19,146 @@ def items_response(items: list[Any], total: int | None = None) -> dict[str, Any]
     return {"items": items, "total": len(items) if total is None else total}
 
 
+# ---------------------------------------------------------------- 响应体（OpenAPI / 生成前端类型用）
+class OutModel(BaseModel):
+    """响应体基类：模型声明字段用于 OpenAPI 与校验，未声明字段原样透传。
+
+    extra="allow" 是刻意的：端点返回的是手写 dict，模型短期落后时不能让字段被静默丢弃。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+
+class RunOut(OutModel):
+    id: int
+    script_id: str | None = None
+    script_name: str = ""
+    device_serial: str = ""
+    status: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    current_step_id: str | None = None
+    step_index: int = 0
+    total_steps: int = 0
+    error: dict[str, Any] | None = None
+    summary: dict[str, Any] | None = None
+    created_at: str = ""
+    debug: dict[str, Any] | None = None
+    variables: dict[str, str] = Field(default_factory=dict)
+    effective_variables: dict[str, str] = Field(default_factory=dict)
+
+
+class StepResultOut(OutModel):
+    id: int
+    run_id: int
+    step_id: str = ""
+    step_name: str = ""
+    step_type: str = ""
+    step_index: int = 0
+    status: str = "passed"
+    attempts: int = 1
+    started_at: str | None = None
+    ended_at: str | None = None
+    duration_ms: int = 0
+    error: dict[str, Any] | None = None
+    output: dict[str, Any] | None = None
+
+
+class ArtifactOut(OutModel):
+    id: int
+    run_id: int | None = None
+    step_result_id: int | None = None
+    kind: str = "screenshot"
+    name: str = ""
+    path: str
+    url: str | None = None
+    size: int = 0
+    created_at: str = ""
+
+
+class RunListOut(OutModel):
+    items: list[RunOut] = Field(default_factory=list)
+    total: int = 0
+
+
+class RunDetailOut(RunOut):
+    steps: list[StepResultOut] = Field(default_factory=list)
+    artifacts: list[ArtifactOut] = Field(default_factory=list)
+
+
+class SettingEntryOut(OutModel):
+    key: str
+    type: str
+    title: str
+    desc: str | None = None
+    min: int | float | None = None
+    max: int | float | None = None
+    options: list[dict[str, Any]] | None = None
+    default: Any = None
+    layer: str | None = None
+    writable: bool | None = None
+    env: str | None = None
+
+
+class SettingsOut(OutModel):
+    # 字段名沿用接口契约的 "schema"；Pydantic 会提示与 BaseModel.schema 同名，这里显式抑制。
+    effective: dict[str, Any] = Field(default_factory=dict)
+    sources: dict[str, str] = Field(default_factory=dict)
+    schema_: list[SettingEntryOut] = Field(
+        default_factory=list, alias="schema", serialization_alias="schema"
+    )
+    config_file: str = ""
+    restart_required: list[str] | None = None
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+
+class ScriptOut(OutModel):
+    id: str
+    name: str = ""
+    notes: str = ""
+    source: str = "manual"
+    origin_recording_id: str | None = None
+    schema_version: int = 1
+    data: dict[str, Any] = Field(default_factory=dict)
+    step_count: int = 0
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_run: dict[str, Any] | None = None
+
+
+class ScriptListOut(OutModel):
+    items: list[ScriptOut] = Field(default_factory=list)
+    total: int = 0
+
+
+class RecordingOut(OutModel):
+    id: str
+    name: str = ""
+    mode: str = "web"
+    serial: str = ""
+    status: str = ""
+    started_at: str | None = None
+    ended_at: str | None = None
+    event_count: int = 0
+    script_id: str | None = None
+    script_name: str | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
+class RecordingListOut(OutModel):
+    items: list[RecordingOut] = Field(default_factory=list)
+    total: int = 0
+
+
+class RunEventOut(OutModel):
+    seq: int
+    type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
 # ---------------------------------------------------------------- 设备手动控制
 class PointRequest(ApiModel):
     """坐标：绝对设备像素 (x,y) 或镜像归一化 (nx,ny)，二选一。"""

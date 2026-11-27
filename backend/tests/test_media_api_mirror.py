@@ -43,6 +43,7 @@ def client(monkeypatch):
     monkeypatch.setattr(api_mirror, "_try_release", lambda serial: None)
     app = FastAPI()
     app.include_router(api_mirror.router)
+    app.include_router(api_mirror.ws_router)
     install_error_handlers(app)
     with TestClient(app) as test_client:
         yield test_client

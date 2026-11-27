@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from .. import __version__, config, db, models
-from ..api_schemas import CleanupRequest, SettingsUpdateRequest
+from ..api_schemas import CleanupRequest, SettingsOut, SettingsUpdateRequest
 from ..build_info import build_info
 from ..deps import get_db
 from ..logs import logger
@@ -30,13 +30,13 @@ _ACTIVE_RUN_STATUSES: tuple[str, ...] = ("queued", "running", "paused", "stoppin
 
 
 # ---------------------------------------------------------------- 设置
-@router.get("/settings")
+@router.get("/settings", response_model=SettingsOut)
 def get_settings() -> dict[str, Any]:
     """{effective, sources, schema}（三级合并结果）。"""
     return settings_service.response()
 
 
-@router.put("/settings")
+@router.put("/settings", response_model=SettingsOut)
 def update_settings(
     payload: SettingsUpdateRequest, session: Session = Depends(get_db)
 ) -> dict[str, Any]:
@@ -44,17 +44,17 @@ def update_settings(
     return settings_service.update(session, payload.values)
 
 
-@router.delete("/settings/{key}")
+@router.delete("/settings/{key}", response_model=SettingsOut)
 def delete_setting(key: str, session: Session = Depends(get_db)) -> dict[str, Any]:
     return settings_service.delete(session, key)
 
 
-@router.post("/settings/reset")
+@router.post("/settings/reset", response_model=SettingsOut)
 def reset_settings(session: Session = Depends(get_db)) -> dict[str, Any]:
     return settings_service.reset(session)
 
 
-@router.post("/settings/reload")
+@router.post("/settings/reload", response_model=SettingsOut)
 def reload_settings() -> dict[str, Any]:
     """重新读取 config.json（手改文件后不用重启；启动项改动会进 restart_required）。"""
     return settings_service.reload()

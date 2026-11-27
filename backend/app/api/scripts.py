@@ -22,6 +22,8 @@ from ..api_schemas import (
     DuplicateRequest,
     ScriptBulkDeleteRequest,
     ScriptCreateRequest,
+    ScriptListOut,
+    ScriptOut,
     ScriptUpdateRequest,
     ScriptValidateRequest,
 )
@@ -43,7 +45,7 @@ class ScriptRunRequest(BaseModel):
 
 
 # ---------------------------------------------------------------- 查询
-@router.get("")
+@router.get("", response_model=ScriptListOut)
 def list_scripts(
     query: str | None = None,
     limit: int = Query(50, ge=1, le=500),
@@ -53,7 +55,7 @@ def list_scripts(
     return script_service.list_scripts(session, query=query, limit=limit, offset=offset)
 
 
-@router.get("/{script_id}")
+@router.get("/{script_id}", response_model=ScriptOut)
 def get_script(script_id: str, session: Session = Depends(get_db)) -> dict[str, Any]:
     return script_service.get_script(session, script_id)
 

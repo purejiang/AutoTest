@@ -13,7 +13,7 @@ import importlib
 import os
 import pkgutil
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -113,13 +113,21 @@ def _include_api_routers(app: FastAPI) -> list[str]:
             # 队友模块尚未落地 / 可选依赖缺失 / 并行开发中的半成品文件：跳过，不阻塞启动（契约 §14.6）
             logger.warning("skip api module %s: %s", module_path, exc)
             continue
-        router = getattr(module, "router", None)
-        if router is None:
-            continue
-        app.include_router(router)
-        included.append(name)
-    # 运行事件 WS 可能在 app/ws.py（be-runner）；仅当没有其它 WS 路由时兜底挂载，避免重复注册
-    if not any(isinstance(route, WebSocketRoute) for route in app.routes):
+        # 约定：HTTP 用 router（可带 /api prefix），WS 用 ws_router（挂根路径）。
+        # 同一模块可以同时暴露两者，避免把 /ws/... 强行塞进 /api 前缀。
+        mounted = False
+        for attr in ("router", "ws_router"):
+            router = getattr(module, attr, None)
+            if router is None:
+                continue
+            app.include_router(router)
+            mounted = True
+        if mounted:
+            included.append(name)
+    # 运行事件 WS 在 app/ws.py（不在 api 包内，be-runner 所有），独立挂载。
+    # 注意 FastAPI 新版本会把 include_router 包成 _IncludedRouter，不能只看 app.routes 顶层；
+    # 这里按路径判断是否已存在，既避免重复注册，也不会因为 mirror/recorder 已有 WS 而漏挂 /ws/runs。
+    if not _has_websocket_path(app, "/ws/runs/{run_id}"):
         try:
             ws_module = importlib.import_module("app.ws")
         except (ImportError, SyntaxError):
@@ -129,6 +137,22 @@ def _include_api_routers(app: FastAPI) -> list[str]:
             app.include_router(ws_router)
             included.append("app.ws")
     return included
+
+
+def _walk_routes(routes: list[Any]) -> Iterator[Any]:
+    """递归展开 _IncludedRouter（FastAPI 新版本懒挂载），用于路由自检。"""
+    for route in routes:
+        yield route
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            yield from _walk_routes(inner.routes)
+
+
+def _has_websocket_path(app: FastAPI, path: str) -> bool:
+    return any(
+        isinstance(route, WebSocketRoute) and getattr(route, "path", None) == path
+        for route in _walk_routes(app.routes)
+    )
 
 
 # ---------------------------------------------------------------- 错误信封（框架级 404/405 等）

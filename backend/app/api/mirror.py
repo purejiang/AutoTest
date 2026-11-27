@@ -1,10 +1,10 @@
 """镜像 REST + WS（契约 §6.2 / §7.1 / §14.3）。
 
-路由（由 main.py 动态 include，不带额外 prefix）：
-- ``POST /api/devices/{serial}/mirror/start``：启动/复用 MirrorSession（可选白名单参数）；
-- ``POST /api/devices/{serial}/mirror/stop``：停止会话（幂等）；
-- ``GET  /api/devices/{serial}/mirror/status``：状态（无会话 active=False）；
-- ``WS   /ws/mirror/{serial}?token=``：hello → binary 帧（12 字节头）→ 控制消息，
+路由（由 main.py 动态 include）：
+- HTTP 挂在 ``/api/devices`` 前缀下（本模块 ``router``）：
+  ``POST /{serial}/mirror/start``、``POST /{serial}/mirror/stop``、
+  ``POST /{serial}/mirror/diag``、``GET /{serial}/mirror/status``；
+- WS 挂在根（``ws_router``）：``/ws/mirror/{serial}?token=``：hello → binary 帧（12 字节头）→ 控制消息，
   处理 ``request_keyframe`` / ``ping``。
 
 帧二进制布局与上游 scrcpy 完全一致（后端直接透传 12 字节头 + Annex B payload）：
@@ -30,7 +30,9 @@ from ..api_schemas import MirrorDiagSample
 from ..errors import ApiError
 from ..logs import logger
 
-router = APIRouter()
+router = APIRouter(prefix="/api/devices", tags=["mirror"])
+# WS 不能带 /api 前缀，单独挂载；main.py 会同时发现 router / ws_router。
+ws_router = APIRouter(tags=["mirror"])
 
 # 每个 serial 在 device_registry 的镜像占用 ref（purpose="mirror"）
 _MIRROR_REFS: dict[str, str] = {}
@@ -119,7 +121,7 @@ def _try_release(serial: str) -> None:
 
 
 # ---------------------------------------------------------------- REST
-@router.post("/api/devices/{serial}/mirror/start")
+@router.post("/{serial}/mirror/start")
 async def start_mirror(serial: str, payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
     cfg = _build_config(payload)
     _try_acquire(serial)
@@ -135,14 +137,14 @@ async def start_mirror(serial: str, payload: dict[str, Any] | None = Body(defaul
     return {"active": True, "serial": serial, "session_id": session.session_id, **session.status()}
 
 
-@router.post("/api/devices/{serial}/mirror/stop")
+@router.post("/{serial}/mirror/stop")
 async def stop_mirror(serial: str) -> dict[str, Any]:
     await asyncio.to_thread(mirror_module.stop_session, serial)
     _try_release(serial)
     return {"active": False, "serial": serial}
 
 
-@router.post("/api/devices/{serial}/mirror/diag")
+@router.post("/{serial}/mirror/diag")
 async def push_mirror_diag(serial: str, payload: MirrorDiagSample) -> dict[str, Any]:
     """浏览器上报一条诊断采样（每 5s）→ 追加到 data/diag/mirror-YYYYMMDD.jsonl。
 
@@ -157,7 +159,7 @@ async def push_mirror_diag(serial: str, payload: MirrorDiagSample) -> dict[str, 
     return {"ok": True, "stored": bool(path)}
 
 
-@router.get("/api/devices/{serial}/mirror/status")
+@router.get("/{serial}/mirror/status")
 async def mirror_status(serial: str) -> dict[str, Any]:
     return _session_payload(serial)
 
@@ -275,7 +277,7 @@ async def _send_loop(websocket: WebSocket, session: Any, sub: Any) -> None:
             await websocket.send_json(item)
 
 
-@router.websocket("/ws/mirror/{serial}")
+@ws_router.websocket("/ws/mirror/{serial}")
 async def mirror_ws(websocket: WebSocket, serial: str, token: str | None = Query(default=None)) -> None:
     await websocket.accept()
     if not _check_token(token):
