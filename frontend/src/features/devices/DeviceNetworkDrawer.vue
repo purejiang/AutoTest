@@ -2,8 +2,9 @@
 import { Connection, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 
-import { describeApiError } from '@/api/client'
+import { describeApiError, toApiError } from '@/api/client'
 import { useNetworkStart, useNetworkStatus, useNetworkStop } from '@/api/network'
 import { formatBytes } from '@/lib/format'
 import StatusTag from '@/components/StatusTag.vue'
@@ -19,9 +20,23 @@ const statusQuery = useNetworkStatus(computed(() => props.serial), computed(() =
 const startMutation = useNetworkStart(computed(() => props.serial))
 const stopMutation = useNetworkStop(computed(() => props.serial))
 
+const router = useRouter()
+
 const status = computed(() => statusQuery.data.value ?? null)
+/**
+ * 抓包默认关闭（capture.network.mode=off），此时 status 接口返回 UNSUPPORTED。
+ * 这不是故障，给一句明确的开启指引，而不是把通用错误码文案当成“不可用”。
+ */
+const disabled = computed(
+  () => statusQuery.isError.value && toApiError(statusQuery.error.value).code === 'UNSUPPORTED',
+)
+const errorText = computed(() => describeApiError(statusQuery.error.value))
 const active = computed(() => Boolean(status.value?.active))
 const domains = computed(() => status.value?.recent_domains ?? [])
+
+function goSettings(): void {
+  void router.push({ path: '/settings', query: { tab: 'execution' } })
+}
 
 async function startCapture(): Promise<void> {
   if (!props.serial) return
@@ -66,8 +81,8 @@ async function stopCapture(): Promise<void> {
       />
 
       <div class="network-toolbar">
-        <StatusTag :tone="active ? 'green' : 'gray'" dot>
-          {{ active ? '抓包中' : '未开始' }}
+        <StatusTag :tone="disabled ? 'amber' : active ? 'green' : 'gray'" dot>
+          {{ disabled ? '未启用' : active ? '抓包中' : '未开始' }}
         </StatusTag>
         <span v-if="status" class="hint">监听 127.0.0.1:{{ status.port ?? '—' }}</span>
         <span class="spacer" />
@@ -87,7 +102,7 @@ async function stopCapture(): Promise<void> {
           type="primary"
           size="small"
           :loading="startMutation.isPending.value"
-          :disabled="!serial || active"
+          :disabled="!serial || active || disabled"
           @click="startCapture"
         >
           开始抓包
@@ -105,13 +120,24 @@ async function stopCapture(): Promise<void> {
 
       <el-skeleton v-if="statusQuery.isLoading.value" :rows="6" animated />
 
+      <div v-else-if="disabled" class="network-disabled">
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          title="网络抓包未启用（默认关闭）"
+          description="在「设置 → 执行 → 采集 → 网络域名抓包」选择「仅手动」或「跟随运行」，保存后立即生效，无需重启。"
+        />
+        <el-button size="small" type="primary" plain @click="goSettings">去设置开启</el-button>
+      </div>
+
       <el-alert
         v-else-if="statusQuery.isError.value"
         type="error"
         :closable="false"
         show-icon
-        title="网络抓包不可用"
-        :description="describeApiError(statusQuery.error.value)"
+        title="网络抓包状态读取失败"
+        :description="errorText"
       />
 
       <template v-else>
@@ -191,6 +217,18 @@ async function stopCapture(): Promise<void> {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
+}
+
+.network-disabled {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.network-disabled .el-alert {
+  flex: 1;
+  min-width: 220px;
 }
 
 .network-toolbar {
