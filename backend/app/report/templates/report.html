@@ -18,7 +18,7 @@
         "Hiragino Sans GB", "Microsoft YaHei", sans-serif; font-size: 13px; line-height: 1.55;
     }
     h1 { margin: 0; font-size: 20px; }
-    h2 { margin: 26px 0 10px; font-size: 14px; color: var(--text); }
+    h2 { margin: 26px 0 8px; font-size: 14px; color: var(--text); }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
     code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
@@ -51,9 +51,22 @@
     .status.skipped { color: var(--skipped); }
     .sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
     .error-text { color: var(--failed); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
-    .node { margin: 8px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+    .node-list td { vertical-align: middle; }
+    .node-list .node-name { font-weight: 600; }
+    .node-list .node-meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .node-list .node-name { display: inline-block; }
+    .sub-script-branch { color: var(--muted); margin-right: 4px; }
+    .sub-script-name {
+      display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 4px;
+      background: var(--panel-2); color: var(--muted); font-size: 10.5px; font-weight: 500;
+    }
+    .evidence-counts { display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 11.5px; }
+    .evidence-counts b { color: var(--text); font-weight: 600; }
+    .node { margin: 8px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; scroll-margin-top: 12px; }
+    .node:target { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(37, 99, 235, .12); }
     .node > summary { padding: 9px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .node > summary .idx { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .node > summary .window { color: var(--muted); font-size: 11px; }
     .node > summary .counts { margin-left: auto; color: var(--muted); font-size: 11.5px; }
     .node-body { padding: 2px 12px 12px; border-top: 1px solid var(--border); }
     .block { margin-top: 10px; }
@@ -64,6 +77,9 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
       line-height: 1.5; white-space: pre-wrap; word-break: break-all;
     }
+    .table-scroll { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+    .table-scroll table { border: 0; border-radius: 0; }
+    .table-scroll thead th { position: sticky; top: 0; z-index: 1; }
     .compact th, .compact td { padding: 5px 8px; font-size: 11.5px; }
     .events { margin: 0; padding-left: 18px; font-size: 11.5px; }
     .events li { margin: 2px 0; }
@@ -72,12 +88,15 @@
     .shot { width: 170px; }
     .shot img { width: 100%; display: block; border: 1px solid var(--border); border-radius: 6px; }
     .shot .caption { color: var(--muted); font-size: 11px; margin-top: 4px; word-break: break-word; }
-    .merged { margin-top: 6px; }
+    .merged { margin-top: 14px; }
     .merged > summary { cursor: pointer; color: var(--accent); font-size: 12px; padding: 6px 0; }
     .timeline .content { white-space: pre-wrap; word-break: break-word; font-size: 11.5px; }
     .timeline tr.timeline-step_start td, .timeline tr.timeline-step_end td { background: #eff6ff; color: var(--accent); }
     .timeline .level { font-weight: 700; margin-right: 3px; }
     .timeline .level.W, .timeline .level.E { color: var(--failed); }
+    .status-code { font-weight: 600; }
+    .status-code.ok { color: var(--passed); }
+    .status-code.bad { color: var(--failed); }
     footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11.5px; }
     footer .files { margin: 4px 0 8px; }
     footer .files a { margin-right: 12px; }
@@ -110,24 +129,52 @@
   <div class="alert"><strong>运行错误：</strong>{{ run['error'] }}</div>
   {% endif %}
 
-  <h2>步骤</h2>
+  <h2>节点列表</h2>
+  <p class="hint">报告以节点为主；日志和请求只展示节点时间窗内的末尾固定条数，完整文件在 zip 内。</p>
   {% if steps %}
-  <table>
-    <thead><tr><th style="width:36px">#</th><th>节点</th><th style="width:70px">状态</th><th style="width:80px">耗时</th><th style="width:50px">尝试</th><th>错误</th></tr></thead>
+  <table class="node-list">
+    <thead>
+      <tr>
+        <th style="width:36px">#</th>
+        <th>节点</th>
+        <th style="width:66px">状态</th>
+        <th style="width:78px">耗时</th>
+        <th style="width:170px">时间段</th>
+        <th style="width:220px">证据</th>
+        <th>错误</th>
+      </tr>
+    </thead>
     <tbody>
       {% for step in steps %}
       <tr class="row-{{ step['status'] }}">
-        <td>{{ step['index'] }}</td>
+        <td>{{ step['row_no'] }}</td>
         <td>
-          {{ step['name'] }}
-          <div class="sub">
+          <a
+            class="node-name"
+            href="#node-{{ step['row_no'] }}"
+            style="padding-left: {{ step['depth'] * 14 }}px"
+          >{% if step['depth'] %}<span class="sub-script-branch">↳</span>{% endif %}{{ step['name'] }}</a>
+          {% if step['sub_script_name'] %}<span class="sub-script-name">{{ step['sub_script_name'] }}</span>{% endif %}
+          <div class="node-meta" style="padding-left: {{ step['depth'] * 14 }}px">
             <code>{{ step['step_id'] }}</code> · {{ step['type'] }}
-            {% if step['started_at'] %} · {{ step['started_at_local'] }} → {{ step['ended_at_local'] }}{% endif %}
           </div>
         </td>
         <td><span class="status {{ step['status'] }}">{{ step['status'] }}</span></td>
         <td>{{ step['duration_ms'] }}ms</td>
-        <td>{{ step['attempts'] }}</td>
+        <td class="sub">
+          {{ step['started_at_local'] }}{% if step['ended_at_local'] != '-' %} → {{ step['ended_at_local'] }}{% endif %}
+        </td>
+        <td>
+          <div class="evidence-counts">
+            {% if step['timeline_logcat_count'] %}<span>日志 <b>{{ step['timeline_logcat_count'] }}</b></span>{% endif %}
+            {% if step['timeline_network_count'] %}<span>请求 <b>{{ step['timeline_network_count'] }}</b></span>{% endif %}
+            {% if step['timeline_events_count'] %}<span>操作 <b>{{ step['timeline_events_count'] }}</b></span>{% endif %}
+            {% if step['screenshots'] %}<span>截图 <b>{{ step['screenshots'] | length }}</b></span>{% endif %}
+            {% if not step['timeline_logcat_count'] and not step['timeline_network_count'] and not step['timeline_events_count'] and not step['screenshots'] %}
+            <span class="empty">—</span>
+            {% endif %}
+          </div>
+        </td>
         <td class="error-text">{{ step['error'] or '' }}</td>
       </tr>
       {% endfor %}
@@ -137,27 +184,102 @@
   <p class="empty">没有步骤结果。</p>
   {% endif %}
 
-  <h2>节点时间线</h2>
-  {% if steps | selectattr('timeline_logcat') | list or steps | selectattr('timeline_network') | list or steps | selectattr('timeline_events') | list or steps | selectattr('evidence') | list or steps | selectattr('screenshots') | list %}
-  <p class="hint">按节点时间窗归类的 logcat / 域名 / 操作事件；失败节点默认展开。完整文件在 zip 内。</p>
-  {% for step in steps %}
-  {% if step['timeline_logcat'] or step['timeline_network'] or step['timeline_events'] or step['evidence'] or step['screenshots'] %}
-  <details class="node" {% if step['status'] in ['failed', 'error'] %}open{% endif %}>
+  <h2>节点详情</h2>
+  {% if steps | selectattr('has_detail') | list %}
+  <p class="hint">请求和日志按节点时间窗归类；失败节点默认展开，其余节点点击展开。</p>
+  {% for step in steps if step['has_detail'] %}
+  <details id="node-{{ step['row_no'] }}" class="node" {% if step['status'] in ['failed', 'error'] %}open{% endif %}>
     <summary>
-      <span class="idx">#{{ step['index'] }}</span>
+      <span class="idx">{% if step['depth'] %}↳{% else %}#{{ step['row_no'] }}{% endif %}</span>
       <strong>{{ step['name'] }}</strong>
+      {% if step['sub_script_name'] %}<span class="sub-script-name">{{ step['sub_script_name'] }}</span>{% endif %}
       <span class="status {{ step['status'] }}">{{ step['status'] }}</span>
+      <span class="window">
+        {{ step['started_at_local'] }}{% if step['ended_at_local'] != '-' %} → {{ step['ended_at_local'] }}{% endif %}
+        · {{ step['duration_ms'] }}ms
+      </span>
       <span class="counts">
-        {% if step['timeline_logcat'] %}logcat {{ step['timeline_logcat_count'] }}{% endif %}
-        {% if step['timeline_logcat'] and step['timeline_network'] %} · {% endif %}
-        {% if step['timeline_network'] %}域名 {{ step['timeline_network_count'] }}{% endif %}
-        {% if step['timeline_events'] %} · 操作 {{ step['timeline_events_count'] }}{% endif %}
+        {% if step['timeline_network_count'] %}请求 {{ step['timeline_network_count'] }}{% endif %}
+        {% if step['timeline_network_count'] and step['timeline_logcat_count'] %} · {% endif %}
+        {% if step['timeline_logcat_count'] %}日志 {{ step['timeline_logcat_count'] }}{% endif %}
+        {% if step['timeline_events_count'] %} · 操作 {{ step['timeline_events_count'] }}{% endif %}
         {% if step['screenshots'] %} · 截图 {{ step['screenshots'] | length }}{% endif %}
       </span>
     </summary>
     <div class="node-body">
       {% if step['error'] %}
       <div class="error-text" style="margin-top:8px">{{ step['error'] }}</div>
+      {% endif %}
+
+      {% if step['timeline_network'] %}
+      <div class="block">
+        <div class="block-head">
+          请求（共 {{ step['timeline_network_count'] }} 条，显示末尾 {{ step['timeline_network'] | length }} 条）
+          {% if run_network_file %} · <a href="{{ run_network_file }}">完整域名文件</a>{% endif %}
+        </div>
+        <div class="table-scroll">
+          <table class="compact">
+            <thead>
+              <tr>
+                <th style="width:190px">时间</th>
+                <th>域名</th>
+                <th style="width:70px">端口</th>
+                <th style="width:64px">协议</th>
+                {% if network_http_meta %}
+                <th style="width:64px">方法</th>
+                <th>接口</th>
+                <th style="width:64px">状态</th>
+                {% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for record in step['timeline_network'] %}
+              <tr>
+                <td>{{ record['ts'] }}</td>
+                <td>{{ record['host'] }}</td>
+                <td>{{ record['port'] }}</td>
+                <td>{{ record['scheme'] }}</td>
+                {% if network_http_meta %}
+                <td>{{ record.get('method') or '—' }}</td>
+                <td>{{ record.get('path') or '—' }}</td>
+                <td>
+                  {% set code = record.get('status') %}
+                  {% if code is not none %}
+                  <span class="status-code {{ 'ok' if code < 400 else 'bad' }}">{{ code }}</span>
+                  {% else %}—{% endif %}
+                </td>
+                {% endif %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if not network_http_meta %}
+        <p class="hint">当前是域名模式：只记录 host / port / scheme，HTTPS 不解密，因此没有接口、方法、成功状态。</p>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if step['timeline_logcat'] %}
+      <div class="block">
+        <div class="block-head">
+          日志（共 {{ step['timeline_logcat_count'] }} 行，显示末尾 {{ step['timeline_logcat'] | length }} 行）
+          {% if run_logcat_file %} · <a href="{{ run_logcat_file }}">完整 logcat</a>{% endif %}
+        </div>
+        <pre class="logcat">{% for item in step['timeline_logcat'] %}{{ item['ts'] }} {{ item['level'] }}/{{ item['tag'] }}: {{ item['text'] }}
+{% endfor %}</pre>
+      </div>
+      {% endif %}
+
+      {% if step['timeline_events'] %}
+      <div class="block">
+        <div class="block-head">操作事件（{{ step['timeline_events_count'] }}）</div>
+        <ul class="events">
+          {% for item in step['timeline_events'] %}
+          <li>{{ item['ts'] }} · <code>{{ item['event_type'] }}</code> {{ item['text'] }}</li>
+          {% endfor %}
+        </ul>
+      </div>
       {% endif %}
 
       {% if step['screenshots'] %}
@@ -173,7 +295,7 @@
 
       {% if step['evidence'] %}
       <div class="block">
-        <div class="block-head">失败现场</div>
+        <div class="block-head">失败现场文件</div>
         <div class="evidence-links">
           {% for item in step['evidence'] %}
           <a href="{{ item['file'] }}">
@@ -185,89 +307,63 @@
         {% for item in step['evidence'] %}
           {% if item['kind'] == 'logcat' and item['preview'] %}
           <details style="margin-top:6px">
-            <summary class="hint">查看 logcat 末尾（{{ item['preview'] | length }} 行）</summary>
+            <summary class="hint">logcat 末尾（{{ item['preview'] | length }} 行 / 共 {{ item['lines'] }} 行）</summary>
             <pre class="logcat" style="margin-top:6px">{% for line in item['preview'] %}{{ line }}
 {% endfor %}</pre>
           </details>
           {% elif item['kind'] == 'network' and item['preview'] %}
           <details style="margin-top:6px">
-            <summary class="hint">查看域名末尾（{{ item['preview'] | length }} 条）</summary>
-            <table class="compact" style="margin-top:6px">
-              <thead><tr><th>时间</th><th>host</th><th>端口</th><th>协议</th></tr></thead>
-              <tbody>
-                {% for record in item['preview'] %}
-                <tr><td>{{ record['ts'] }}</td><td>{{ record['host'] }}</td><td>{{ record['port'] }}</td><td>{{ record['scheme'] }}</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
+            <summary class="hint">域名末尾（{{ item['preview'] | length }} 条 / 共 {{ item['records'] }} 条）</summary>
+            <div class="table-scroll" style="margin-top:6px">
+              <table class="compact">
+                <thead><tr><th>时间</th><th>域名</th><th>端口</th><th>协议</th></tr></thead>
+                <tbody>
+                  {% for record in item['preview'] %}
+                  <tr><td>{{ record['ts'] }}</td><td>{{ record['host'] }}</td><td>{{ record['port'] }}</td><td>{{ record['scheme'] }}</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
           </details>
           {% endif %}
         {% endfor %}
       </div>
       {% endif %}
-
-      {% if step['timeline_events'] %}
-      <div class="block">
-        <div class="block-head">操作事件（{{ step['timeline_events_count'] }}）</div>
-        <ul class="events">
-          {% for item in step['timeline_events'] %}
-          <li>{{ item['ts'] }} · <code>{{ item['event_type'] }}</code> {{ item['text'] }}</li>
-          {% endfor %}
-        </ul>
-      </div>
-      {% endif %}
-
-      {% if step['timeline_logcat'] %}
-      <div class="block">
-        <div class="block-head">logcat（{{ step['timeline_logcat_count'] }} 行，显示末尾 {{ step['timeline_logcat'] | length }} 行）</div>
-        <pre class="logcat">{% for item in step['timeline_logcat'] %}{{ item['ts'] }} {{ item['level'] }}/{{ item['tag'] }}: {{ item['text'] }}
-{% endfor %}</pre>
-      </div>
-      {% endif %}
-
-      {% if step['timeline_network'] %}
-      <div class="block">
-        <div class="block-head">域名（{{ step['timeline_network_count'] }} 条，显示末尾 {{ step['timeline_network'] | length }} 条）</div>
-        <table class="compact">
-          <thead><tr><th>时间</th><th>host</th><th>端口</th><th>协议</th></tr></thead>
-          <tbody>
-            {% for record in step['timeline_network'] %}
-            <tr><td>{{ record['ts'] }}</td><td>{{ record['host'] }}</td><td>{{ record['port'] }}</td><td>{{ record['scheme'] }}</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% endif %}
     </div>
   </details>
-  {% endif %}
   {% endfor %}
   {% else %}
-  <p class="empty">没有可归到节点时间窗的日志/域名/操作。请确认脚本里开启了 logcat / 域名抓包。</p>
+  <p class="empty">没有可归到节点时间窗的日志/请求/操作。请确认脚本里开启了 logcat / 域名抓包。</p>
   {% endif %}
 
   <details class="merged">
-    <summary>合并时间线：共 {{ timeline_total }} 条（logcat {{ timeline_counts['logcat'] }} 行 / 域名 {{ timeline_counts['network'] }} 条 / 操作 {{ timeline_counts['event'] }} 条）</summary>
+    <summary>全局时间线（辅助排查）：共 {{ timeline_total }} 条（logcat {{ timeline_counts['logcat'] }} 行 / 域名 {{ timeline_counts['network'] }} 条 / 操作 {{ timeline_counts['event'] }} 条）</summary>
     {% if timeline %}
     <p class="hint">按时间排序，显示前 {{ timeline | length }} 条；已归到节点 {{ timeline_counts['assigned'] }} 条，节点外 {{ timeline_counts['unassigned'] }} 条。</p>
-    <table class="timeline">
-      <thead><tr><th style="width:150px">时间</th><th style="width:170px">节点</th><th style="width:70px">类型</th><th>内容</th></tr></thead>
-      <tbody>
-        {% for item in timeline %}
-        <tr class="timeline-{{ item['kind'] }}">
-          <td>{{ item['ts'] }}</td>
-          <td>{% if item['step_index'] %}#{{ item['step_index'] }} {{ item['step_name'] }}{% else %}<span class="empty">节点外</span>{% endif %}</td>
-          <td>{{ item['kind'] }}</td>
-          <td class="content">
-            {% if item['kind'] == 'logcat' %}<span class="level {{ item['level'] }}">{{ item['level'] }}</span><code>{{ item['tag'] }}</code> {{ item['text'] }}
-            {% elif item['kind'] == 'network' %}<code>{{ item['host'] }}:{{ item['port'] }}</code> {{ item['scheme'] }}
-            {% elif item['kind'] == 'event' %}<code>{{ item['event_type'] }}</code> {{ item['text'] }}
-            {% else %}{{ item['text'] }}{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="timeline">
+        <thead><tr><th style="width:150px">时间</th><th style="width:170px">节点</th><th style="width:70px">类型</th><th>内容</th></tr></thead>
+        <tbody>
+          {% for item in timeline %}
+          <tr class="timeline-{{ item['kind'] }}">
+            <td>{{ item['ts'] }}</td>
+            <td>{% if item['step_index'] %}#{{ item['step_index'] }} {{ item['step_name'] }}{% else %}<span class="empty">节点外</span>{% endif %}</td>
+            <td>{{ item['kind'] }}</td>
+            <td class="content">
+              {% if item['kind'] == 'logcat' %}<span class="level {{ item['level'] }}">{{ item['level'] }}</span><code>{{ item['tag'] }}</code> {{ item['text'] }}
+              {% elif item['kind'] == 'network' %}
+                <code>{{ item['host'] }}:{{ item['port'] }}{% if item.get('path') %}{{ item['path'] }}{% endif %}</code>
+                {% if item.get('method') %}{{ item['method'] }}{% endif %}
+                {% if item.get('status') is not none %} {{ item['status'] }}{% endif %}
+                {{ item['scheme'] }}
+              {% elif item['kind'] == 'event' %}<code>{{ item['event_type'] }}</code> {{ item['text'] }}
+              {% else %}{{ item['text'] }}{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
     {% else %}
     <p class="empty">没有 logcat / 域名 / 操作记录。</p>
     {% endif %}

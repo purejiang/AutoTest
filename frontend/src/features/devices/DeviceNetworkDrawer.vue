@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { describeApiError } from '@/api/client'
 import { useNetworkStart, useNetworkStatus, useNetworkStop } from '@/api/network'
 import { formatBytes } from '@/lib/format'
+import Notice from '@/components/Notice.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
 const props = defineProps<{
@@ -67,13 +68,10 @@ async function stopCapture(): Promise<void> {
     </template>
 
     <div class="network-drawer">
-      <el-alert
-        type="warning"
-        :closable="false"
-        show-icon
-        title="只记录域名，不含正文"
-        description="只记录访问过的 host / port / scheme，不抓 Header、请求体、响应体。同一时间只支持一台设备；不走系统代理或使用 QUIC（HTTP/3）的流量可能漏抓。"
-      />
+      <Notice severity="warning" title="只记录域名，不含正文">
+        只记录 host / port / scheme；不抓 Header、请求体、响应体。同一时间仅支持一台设备；
+        不走系统代理或使用 QUIC（HTTP/3）的流量可能漏抓。
+      </Notice>
 
       <div class="network-toolbar">
         <StatusTag :tone="disabled ? 'amber' : active ? 'green' : 'gray'" dot>
@@ -115,25 +113,20 @@ async function stopCapture(): Promise<void> {
 
       <el-skeleton v-if="statusQuery.isLoading.value" :rows="6" animated />
 
-      <div v-else-if="disabled" class="network-disabled">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          title="网络抓包未启用"
-          description="在「设置 → 执行 → 采集 → 允许网络域名抓包」打开开关，保存后立即生效，无需重启。"
-        />
-        <el-button size="small" type="primary" plain @click="goSettings">去设置开启</el-button>
-      </div>
+      <Notice v-else-if="disabled" severity="info" title="网络抓包未启用">
+        在「设置 → 执行 → 采集 → 允许网络域名抓包」打开开关，保存后立即生效，无需重启。
+        <template #actions>
+          <el-button size="small" type="primary" plain @click="goSettings">去设置开启</el-button>
+        </template>
+      </Notice>
 
-      <el-alert
+      <Notice
         v-else-if="statusQuery.isError.value"
-        type="error"
-        :closable="false"
-        show-icon
+        severity="danger"
         title="网络抓包状态读取失败"
-        :description="errorText"
-      />
+      >
+        {{ errorText }}
+      </Notice>
 
       <template v-else>
         <div class="network-stats">
@@ -212,18 +205,6 @@ async function stopCapture(): Promise<void> {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-}
-
-.network-disabled {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.network-disabled .el-alert {
-  flex: 1;
-  min-width: 220px;
 }
 
 .network-toolbar {

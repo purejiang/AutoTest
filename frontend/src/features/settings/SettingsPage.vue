@@ -272,7 +272,7 @@ onBeforeRouteLeave(async () => {
   padding: 8px 9px;
   border-top: 1px solid var(--line-soft);
   color: var(--muted-2);
-  font-size: 10px;
+  font-size: 10.5px;
   line-height: 1.5;
 }
 

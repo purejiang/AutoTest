@@ -9,6 +9,7 @@ import type { Recording, RecordingEvent } from '@/types/api'
 import { get, post } from '../lib/api'
 import { errorMessage } from '../lib/api'
 import StatusTag from '@/components/StatusTag.vue'
+import Notice from '@/components/Notice.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -252,12 +253,11 @@ function openRecording(withConvert = false): void {
       </span>
     </div>
     <div class="card-body">
-      <el-alert
+      <Notice
         v-if="error"
-        type="error"
-        :closable="true"
-        show-icon
+        severity="danger"
         :title="error"
+        closable
         style="margin-bottom: 8px"
         @close="error = null"
       />
@@ -332,11 +332,9 @@ function openRecording(withConvert = false): void {
         <div v-else class="hint rec-live-empty">暂无事件，操作镜像后会实时出现在这里。</div>
       </div>
 
-      <el-alert
+      <Notice
         v-if="stoppedId && (!recording || recording.status === 'stopped')"
-        type="success"
-        :closable="false"
-        show-icon
+        severity="success"
         title="录制完成，可查看或转脚本"
         style="margin-top: 8px"
       >
@@ -345,7 +343,7 @@ function openRecording(withConvert = false): void {
           <el-button size="small" @click="openRecording(true)">转脚本</el-button>
           <el-button size="small" @click="reset">再次录制</el-button>
         </div>
-      </el-alert>
+      </Notice>
     </div>
   </div>
 </template>

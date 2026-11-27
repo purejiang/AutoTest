@@ -431,6 +431,28 @@ function asOutcome(value: unknown): StepConditionOutcome | null {
 }
 
 /** 从 step.when 或 output.when 读取条件求值结果（v0.2 运行详情展示用）。 */
+export interface SubScriptContext {
+  parentStepId: string
+  depth: number
+  scriptId: string
+  scriptName: string
+}
+
+/** 子脚本内部节点：output.sub_script 由后端写入，用于缩进展示。 */
+export function stepSubScriptContext(step: StepResult): SubScriptContext | null {
+  const raw = step.output?.sub_script
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const meta = raw as Record<string, unknown>
+  const parentStepId = typeof meta.parent_step_id === 'string' ? meta.parent_step_id : ''
+  if (!parentStepId) return null
+  return {
+    parentStepId,
+    depth: Number.isFinite(Number(meta.depth)) ? Math.max(1, Number(meta.depth)) : 1,
+    scriptId: typeof meta.script_id === 'string' ? meta.script_id : '',
+    scriptName: typeof meta.script_name === 'string' ? meta.script_name : '',
+  }
+}
+
 export function stepConditionOutcome(step: StepResult): ConditionOutcomeView | null {
   const outcome =
     asOutcome(step.when) ??

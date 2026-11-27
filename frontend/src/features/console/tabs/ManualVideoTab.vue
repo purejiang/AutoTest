@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 手动控制 → 视频：浏览器端录制镜像画面（不落库，刷新即丢失）。
-import { InfoFilled, VideoCamera } from '@element-plus/icons-vue'
+import { VideoCamera } from '@element-plus/icons-vue'
 
+import Notice from '@/components/Notice.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import MirrorVideoRecorder from '@/features/mirror/components/MirrorVideoRecorder.vue'
 
@@ -22,13 +23,9 @@ defineProps<{
       <StatusTag tone="blue">浏览器画面</StatusTag>
       <StatusTag tone="amber">刷新即丢失</StatusTag>
     </div>
-    <div class="video-warning">
-      <el-icon><InfoFilled /></el-icon>
-      <span>
-        <strong>视频暂不持久化：</strong
-        >只保存在当前浏览器内存，刷新或关闭页面即丢失；需要保留请停止后立即下载。
-      </span>
-    </div>
+    <Notice severity="warning" variant="compact" title="视频暂不持久化">
+      只保存在当前浏览器内存，刷新或关闭页面即丢失；需要保留请停止后立即下载。
+    </Notice>
     <MirrorVideoRecorder
       :serial="serial"
       :get-source="getSource"

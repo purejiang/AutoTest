@@ -4,6 +4,7 @@ import { onBeforeUnmount, computed, ref, watch } from 'vue'
 
 import { describeApiError } from '@/api/client'
 import { useDeviceScreenshot } from '@/api/devices'
+import Notice from '@/components/Notice.vue'
 
 const props = defineProps<{
   serial: string | null
@@ -53,14 +54,9 @@ function download(): void {
     append-to-body
     @update:model-value="!$event && emit('close')"
   >
-    <el-alert
-      v-if="query.isError.value"
-      type="error"
-      :closable="false"
-      show-icon
-      title="截图失败"
-      :description="describeApiError(query.error.value)"
-    />
+    <Notice v-if="query.isError.value" severity="danger" title="截图失败">
+      {{ describeApiError(query.error.value) }}
+    </Notice>
     <el-skeleton v-else-if="!objectUrl" :rows="6" animated />
     <div v-else style="text-align: center; background: var(--surface-2); border-radius: 8px; padding: 8px">
       <img :src="objectUrl" :alt="`${serial} 截图`" style="max-width: 100%; max-height: 70vh" />

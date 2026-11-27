@@ -9,6 +9,7 @@ import { Check, MagicStick, RefreshLeft } from '@element-plus/icons-vue'
 
 import type { ScriptValidation } from '@/types/api'
 import { useTheme } from '@/composables/useTheme'
+import Notice from '@/components/Notice.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
 const props = defineProps<{
@@ -144,7 +145,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="parseError" style="padding: 8px">
-      <el-alert type="error" :closable="false" show-icon title="JSON 解析失败" :description="parseError" />
+      <Notice severity="danger" title="JSON 解析失败">{{ parseError }}</Notice>
     </div>
 
     <div v-if="validation" class="validation-list">

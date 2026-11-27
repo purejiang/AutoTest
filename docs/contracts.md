@@ -209,7 +209,8 @@ goto 目标、sub_script 存在性 warning）用 `schemas.validate_script()`。
   「界面空闲」约 10s，点击已生效但节点会先被 8s 节点超时判失败；`adb shell input` 不等空闲（实测 ~0.1s），
   失败才回落 u2。
 - `app_clear` 清完数据会自动 `pm grant` 该应用声明的运行时权限（通知/存储/相机…），避免下次启动弹系统
-  授权框挡住脚本；另有 `app_grant` 驱动方法/`app grant` 节点动作单独授权（不改数据）。
+  授权框挡住脚本；另有 `app_grant` 驱动方法/`app grant` 节点动作单独授权（不改数据、不启动应用）：
+  读 `dumpsys package` 的 runtime permissions 后逐个 `pm grant`，best effort，失败项跳过。
 
 ## 5. 运行事件（run_events.type）
 
@@ -365,18 +366,22 @@ GET /api/reports/{id}/download（zip，支持 Range）；DELETE /api/reports/{id
 GET /api/maintenance/stats；POST /api/maintenance/cleanup {retention_days?,dry_run?}。
 报告 zip：`index.html` / `junit.xml` / `steps.json` / `screenshots/` /（可选）`videos/`；
 节点证据按 `artifact.step_result_id` 关联：失败节点的 logcat 与域名清单进 `evidence/`，并在
-`index.html` 节点时间线的「失败现场」、`steps.json[].evidence`、junit `<system-out>` 中呈现；
+`index.html` 节点详情的「失败现场文件」、`steps.json[].evidence`、junit `<system-out>` 中呈现；
 运行级 logcat / 域名采集分别放 `logs/`、`network/`。
 时间线：运行级 logcat（`adb logcat -v time`，设备本地时间）、域名 JSONL 的 `ts` 与
-`run_events`（操作/状态事件）按 `StepResult.started_at/ended_at` 归入节点；`index.html` 提供
-「节点时间线」和「合并时间线」两种视图，`steps.json[].timeline` 带节点窗口内的
-logcat/network/events 条目；落在所有窗口外的记录进入「节点外」。设备时区需与后端一致，
+`run_events`（操作/状态事件）按 `StepResult.started_at/ended_at` 归入节点；`index.html` 以
+「节点列表 + 节点详情」为主视图（每个节点只放末尾 80 行 logcat / 50 条域名，超出滚动，完整文件
+在 zip 内），「全局时间线」折叠在最后作辅助排查；`steps.json[].timeline` 仍带节点窗口内的
+全量 logcat/network/events 条目；落在所有窗口外的记录进入「节点外」。设备时区需与后端一致，
 否则 logcat 时间线整体偏移（原始文件仍在 zip 内）。
+请求表当前展示域名/端口/HTTP 类型；若域名 JSONL 带可选 `method`/`path`/`status`（仅未来
+明文 HTTP 采集可能提供），报告自动增加方法/接口/状态列。域名模式 HTTPS 不解密，因此没有
+接口、方法、成功状态。
 
 ### 7.6 设置（be-core）
 GET /api/settings → {effective, sources, schema, config_file}
   （schema 每项含 additive `default` / `default_display`（空值默认的可读展示，如数据目录绝对路径） /
-  `layer`(bootstrap|runtime) / `writable` / `env`）；
+  `help`（可选长说明，前端标题右侧 HelpTip 展示） / `layer`(bootstrap|runtime) / `writable` / `env`）；
 PUT /api/settings {values}（写 config.json；null=从文件移除该项；bootstrap 项 → 400 INVALID_ARGUMENT）；
 DELETE /api/settings/{key}（从文件移除；bootstrap 项 → 400）；
 POST /api/settings/reset（移除文件里所有设置页管理的项，启动项不动）；
@@ -424,7 +429,9 @@ v0.2.5 手势回放补充：
 - 节点超时三条规则：① 显式 `timeout_ms` 永远是硬上限；② 未显式设置时，`wait` 节点按
   「等待时长（sleep 的 ms / until 的 timeout_ms）+ 2s」自动抬升，避免继承的 8s 默认值静默截断；
   ③ `sub_script` 节点未显式设置时不再用脚本默认 8s 切整段子脚本，最多到 step_max_timeout_ms/总预算
-  （子脚本内部各节点仍有自己的节点超时）。撞到引擎上限时错误信息会写明「等待 X ms 超过节点超时上限
+  （子脚本内部各节点仍有自己的节点超时）。
+  UI：wait 节点未显式设置节点超时时，输入框占位符显示「自动 N ms（等待 + 2s）」；显式值小于该下限时
+  显示黄色提醒，避免用户把节点超时误当成等待超时。撞到引擎上限时错误信息会写明「等待 X ms 超过节点超时上限
   Y ms，已按上限截断」；
 - 运行总时长 engine.max_total_ms（默认 30min，**活跃时间**口径，paused 不计）；
 - 步骤总预算 engine.max_steps（默认 2000，含 retry/goto 重跳）；

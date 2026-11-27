@@ -3,9 +3,10 @@ import { RefreshLeft } from '@element-plus/icons-vue'
 
 import type { SettingEntry } from '@/types/api'
 import { numberOrNull, settingSourceMeta } from '@/lib/format'
+import HelpTip from '@/components/HelpTip.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     entry: SettingEntry
     modelValue: string | number | boolean | null
@@ -31,6 +32,12 @@ function sourceTitle(source: 'default' | 'file' | 'env'): string {
   if (source === 'file') return '来自配置文件；点右侧 ↺ 可把该项从配置文件移除（回到默认/环境变量）'
   if (source === 'env') return '来自环境变量，优先级最高；需取消环境变量并重启进程'
   return '当前使用代码默认值'
+}
+
+function readonlyHelp(entry: SettingEntry): string {
+  const file = props.configFile || '~/.autotest/config.json'
+  const env = entry.env ? `，或设置环境变量 ${entry.env}` : ''
+  return `启动时确定，运行中不能切换；改 ${file}${env}，然后重启 AutoTest。`
 }
 
 const ZERO_LABELS: Record<string, string> = {
@@ -62,6 +69,10 @@ function intPlaceholder(entry: SettingEntry): string {
     <div class="setting-field-body">
       <div class="field-label">
         {{ entry.title }}
+        <HelpTip
+          v-if="readonly || entry.help"
+          :text="readonly ? readonlyHelp(entry) : (entry.help ?? '')"
+        />
         <StatusTag :tone="settingSourceMeta(source).tone" :title="sourceTitle(source)">
           {{ settingSourceMeta(source).label }}
         </StatusTag>
@@ -74,13 +85,8 @@ function intPlaceholder(entry: SettingEntry): string {
           @click="emit('clear')"
         />
       </div>
-      <div v-if="entry.desc" class="field-desc">{{ entry.desc }}</div>
-      <div v-if="readonly" class="setting-readonly">
-        启动项（启动时确定，运行中不能切换；只存配置文件/环境变量）：改
-        <code class="code-text">{{ configFile || '~/.autotest/config.json' }}</code>
-        <span v-if="entry.env"> 或设置环境变量 <code class="code-text">{{ entry.env }}</code></span>
-        ，然后重启 AutoTest。
-      </div>
+      <div v-if="entry.desc" class="hint field-desc">{{ entry.desc }}</div>
+      <div v-if="readonly" class="hint setting-readonly">启动项：改配置文件/环境变量后重启</div>
 
       <el-switch
         v-if="entry.type === 'bool'"
@@ -201,16 +207,4 @@ function intPlaceholder(entry: SettingEntry): string {
   }
 }
 
-.setting-readonly {
-  padding: 4px 6px;
-  border-radius: 5px;
-  background: var(--surface-2);
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.setting-readonly code {
-  font-size: 10px;
-}
 </style>

@@ -78,40 +78,7 @@
   min-width: 120px;
 }
 
-.inline-warning {
-  margin-top: 7px;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--amber-soft);
-  color: var(--amber);
-  font-size: 10.5px;
-}
-
 /* ---------------------------------------------------------------- 视频提示 */
-.video-warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin-bottom: 8px;
-  padding: 7px 9px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--amber-soft);
-  color: var(--amber);
-  font-size: 10.5px;
-  line-height: 1.5;
-}
-
-.video-warning .el-icon {
-  flex: none;
-  margin-top: 1px;
-}
-
-.video-warning strong {
-  font-weight: 650;
-}
-
 /* ---------------------------------------------------------------- 工具列表 */
 .manual-divider {
   height: 1px;
@@ -212,7 +179,7 @@
   padding: 0;
 }
 
-.manual-page .mirror-recording .el-alert {
+.manual-page .mirror-recording .app-notice {
   margin-top: 8px;
 }
 

@@ -8,6 +8,7 @@ import { useDeviceLogcat } from '@/api/devices'
 import { useSettings } from '@/api/settings'
 import { useLogcatCaptureStatus, useStartLogcatCapture, useStopLogcatCapture, type LogcatStopResult } from '@/api/logcat'
 import { useUiStore } from '@/stores/ui'
+import Notice from '@/components/Notice.vue'
 
 const props = defineProps<{
   serial: string | null
@@ -193,14 +194,9 @@ function formatSize(size: number): string {
     </div>
 
     <el-skeleton v-if="query.isLoading.value" :rows="10" animated />
-    <el-alert
-      v-else-if="query.isError.value"
-      type="error"
-      :closable="false"
-      show-icon
-      title="logcat 获取失败"
-      :description="describeApiError(query.error.value)"
-    />
+    <Notice v-else-if="query.isError.value" severity="danger" title="logcat 获取失败">
+      {{ describeApiError(query.error.value) }}
+    </Notice>
     <el-empty v-else-if="lines.length === 0" description="暂无日志" />
     <pre v-else class="logcat-pre">{{ lines.join('\n') }}</pre>
   </el-drawer>

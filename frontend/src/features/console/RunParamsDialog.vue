@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 「运行参数」弹窗：按脚本传本次运行变量（不写死脚本默认值）。
 // 预填顺序：脚本默认 ← 全局面板默认覆盖 ← 上次运行记住的覆盖；只把与脚本默认不同的项发给后端。
-import { Delete, Plus } from '@element-plus/icons-vue'
+import { Delete } from '@element-plus/icons-vue'
 import { computed, ref, watch } from 'vue'
 
 import type { Script } from '@/types/api'
@@ -14,6 +14,7 @@ import {
   saveRememberedRunVars,
   validVariableName,
 } from '@/lib/scriptVars'
+import Notice from '@/components/Notice.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -50,7 +51,14 @@ let uid = 0
 const defaults = computed<Record<string, string>>(() => declaredVariables(props.script?.data?.variables))
 const usedVariables = computed<string[]>(() => collectUsedVariables(props.script?.data))
 const missingRows = computed<string[]>(() => missingVariables(defaults.value, usedVariables.value))
-const globalNames = computed<string[]>(() => Object.keys(props.globalVariables ?? {}))
+// 运行参数只关心“脚本真正用到”的变量；声明了但没参与插值的变量不展示、也不允许覆盖。
+const allowedNames = computed(() => new Set(usedVariables.value))
+const relevantDefaults = computed<Record<string, string>>(() =>
+  Object.fromEntries(Object.entries(defaults.value).filter(([name]) => allowedNames.value.has(name))),
+)
+const globalNames = computed<string[]>(() =>
+  Object.keys(props.globalVariables ?? {}).filter((name) => allowedNames.value.has(name)),
+)
 
 const overridesCount = computed(() => {
   const values = jsonMode.value
@@ -82,11 +90,13 @@ function rebuild(): void {
     next.push(row)
   }
 
-  for (const [name, value] of Object.entries(defaults.value)) push(name, value, 'script', true)
+  for (const [name, value] of Object.entries(relevantDefaults.value)) push(name, value, 'script', true)
   for (const [name, value] of Object.entries(props.globalVariables ?? {})) {
+    if (!allowedNames.value.has(name)) continue
     push(name, value, 'global', name in defaults.value)
   }
   for (const [name, value] of Object.entries(remembered)) {
+    if (!allowedNames.value.has(name)) continue
     push(name, value, 'memory', name in defaults.value)
   }
 
@@ -124,9 +134,6 @@ function removeRow(row: ParamRow): void {
   rows.value = rows.value.filter((item) => item !== row)
 }
 
-function addRow(): void {
-  rows.value = [...rows.value, { key: nextKey(), name: '', value: '', source: 'manual', declared: false }]
-}
 
 function addMissing(name: string): void {
   if (rows.value.some((row) => row.name === name)) return
@@ -135,7 +142,7 @@ function addMissing(name: string): void {
 
 function resetToScriptDefaults(): void {
   if (props.script) saveRememberedRunVars(props.script.id, {})
-  const next: ParamRow[] = Object.entries(defaults.value).map(([name, value]) => ({
+  const next: ParamRow[] = Object.entries(relevantDefaults.value).map(([name, value]) => ({
     key: nextKey(),
     name,
     value,
@@ -194,6 +201,11 @@ function setJsonMode(next: boolean): void {
     jsonError.value = parsed.error
     return
   }
+  const unknown = unknownNames(parsed.value)
+  if (unknown.length > 0) {
+    jsonError.value = `以下变量未在脚本中声明或使用：${unknown.join('、')}`
+    return
+  }
   applyJsonValues(parsed.value)
   jsonMode.value = false
   jsonError.value = ''
@@ -224,6 +236,10 @@ function applyJsonValues(values: Record<string, string>): void {
 
 // ---------------------------------------------------------------- 提交
 
+function unknownNames(values: Record<string, string>): string[] {
+  return Object.keys(values).filter((name) => !allowedNames.value.has(name))
+}
+
 function start(): void {
   submitError.value = ''
   let values: Record<string, string>
@@ -231,6 +247,11 @@ function start(): void {
     const parsed = parseJsonValues(jsonText.value)
     if (!parsed.ok) {
       jsonError.value = parsed.error
+      return
+    }
+    const unknown = unknownNames(parsed.value)
+    if (unknown.length > 0) {
+      jsonError.value = `以下变量未在脚本中声明或使用：${unknown.join('、')}`
       return
     }
     values = parsed.value
@@ -250,6 +271,10 @@ function start(): void {
       }
       if (!row.declared && !validVariableName(name)) {
         submitError.value = `变量名不合法：${name}（只允许字母/数字/下划线/点/短横线）`
+        return
+      }
+      if (!allowedNames.value.has(name)) {
+        submitError.value = `变量「${name}」未在脚本中声明或使用，不需要传参`
         return
       }
       seen.add(name)
@@ -282,21 +307,17 @@ function start(): void {
       </span>
     </div>
 
-    <el-alert
+    <Notice
       v-if="globalNames.length > 0 && !jsonMode"
       class="param-alert"
-      type="info"
-      :closable="false"
-      show-icon
+      severity="info"
       :title="`已带入全局面板的默认覆盖：${globalNames.join('、')}`"
     />
 
-    <el-alert
+    <Notice
       v-if="missingRows.length > 0 && !jsonMode"
       class="param-alert"
-      type="warning"
-      :closable="false"
-      show-icon
+      severity="warning"
       title="脚本里用到但未声明的变量"
     >
       <div class="row wrap param-missing">
@@ -314,7 +335,7 @@ function start(): void {
           + {{ name }}
         </el-button>
       </div>
-    </el-alert>
+    </Notice>
 
     <div class="param-toolbar">
       <span class="hint">本次运行变量（脚本默认值已填好，改动才会覆盖）</span>
@@ -334,13 +355,17 @@ function start(): void {
         placeholder='{ "package": "com.example.app" }'
         @update:model-value="jsonError = ''"
       />
-      <div v-if="jsonError" class="param-error">{{ jsonError }}</div>
+      <div v-if="jsonError" class="inline-error param-error">{{ jsonError }}</div>
       <div class="hint">只写要覆盖的项；留空 = {} 表示全部用脚本默认值。</div>
     </template>
 
     <template v-else>
       <div v-if="rows.length === 0" class="param-empty hint">
-        脚本没有声明变量。可在下方「添加变量」，或到脚本设置里声明默认值。
+        {{
+          missingRows.length > 0
+            ? '脚本没有声明变量；可点上方未声明变量加入本次运行。'
+            : '脚本没有用到变量，本次运行无需传参。'
+        }}
       </div>
       <div class="param-list">
         <div v-for="row in rows" :key="row.key" class="param-row">
@@ -375,10 +400,9 @@ function start(): void {
           <span v-else-if="row.source === 'memory'" class="param-tag">上次</span>
         </div>
       </div>
-      <el-button size="small" :icon="Plus" plain class="param-add" @click="addRow">添加变量</el-button>
     </template>
 
-    <div v-if="submitError" class="param-error">{{ submitError }}</div>
+    <div v-if="submitError" class="inline-error param-error">{{ submitError }}</div>
 
     <template #footer>
       <span class="param-foot-hint">{{
@@ -486,8 +510,6 @@ function start(): void {
 
 .param-error {
   margin-top: 6px;
-  color: var(--red);
-  font-size: 10.5px;
 }
 
 .param-foot-hint {

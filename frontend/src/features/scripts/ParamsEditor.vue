@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import { useScripts } from '@/api/scripts'
+import { useScript, useScripts } from '@/api/scripts'
 import type { NodeType, Target } from '@/types/api'
 import { numberOrNull } from '@/lib/format'
+import { collectUsedVariables } from '@/lib/scriptVars'
 
+import HelpTip from '@/components/HelpTip.vue'
+import Notice from '@/components/Notice.vue'
 import VariableField from '@/components/VariableField.vue'
 
 import KeyValueEditor from './KeyValueEditor.vue'
@@ -20,6 +23,9 @@ const emit = defineEmits<{ change: [params: Record<string, unknown>] }>()
 // 12 类节点 params 的字段差异很大；这里用宽松对象读取，字段级仍由后端 schema 校验。
 const p = computed(() => props.params as Record<string, any>)
 const scriptsQuery = useScripts({ limit: 200 })
+const childScriptQuery = useScript(
+  computed(() => (props.type === 'sub_script' ? String(p.value.script_id || '') : '')),
+)
 
 const KEY_OPTIONS = [
   'back',
@@ -55,6 +61,19 @@ const scriptOptions = computed(() =>
     label: `${script.name}（${script.step_count ?? script.data?.steps?.length ?? '?'} 节点）`,
   })),
 )
+
+const childVariableDefaults = computed<Record<string, string>>(() => {
+  const variables = childScriptQuery.data.value?.data?.variables
+  return variables && typeof variables === 'object' ? variables : {}
+})
+
+const childUsedVariables = computed<string[]>(() => {
+  const data = childScriptQuery.data.value?.data
+  return data ? collectUsedVariables(data) : []
+})
+
+// 只列子脚本真正用到的变量；声明了但没有任何 {{var}} 引用时不需要在父节点覆盖。
+const childVariableNames = computed<string[]>(() => childUsedVariables.value)
 
 function patch(partial: Record<string, unknown>): void {
   emit('change', { ...props.params, ...partial })
@@ -169,7 +188,7 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
         <el-option v-for="option in KEY_OPTIONS" :key="option.value" :value="option.value" :label="option.label" />
       </el-select>
     </el-form-item>
-    <el-form-item label="或 keycode" class="hint">
+    <el-form-item label="或 keycode">
       <el-input-number
         :model-value="p.keycode ?? undefined"
         size="small"
@@ -185,14 +204,9 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
 
   <!-- wait -->
   <template v-else-if="type === 'wait'">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      title="等待节点会进入步骤表，并受节点超时限制"
-      description="固定等待会真实占用执行时间；等待元素会按轮询间隔检查，超时按失败处理。"
-      style="margin-bottom: 10px"
-    />
+    <Notice severity="info" variant="compact" title="等待节点会进入步骤表，并受节点超时限制">
+      固定等待会真实占用执行时间；等待元素会按轮询间隔检查，超时按失败处理。
+    </Notice>
     <el-form-item label="等待模式">
       <el-radio-group :model-value="p.mode ?? 'sleep'" size="small" @update:model-value="waitMode($event as 'sleep' | 'until')">
         <el-radio-button value="sleep">固定等待</el-radio-button>
@@ -215,7 +229,11 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
             <el-option value="gone" label="消失 gone" />
           </el-select>
         </el-form-item>
-        <el-form-item label="超时 (ms)">
+        <el-form-item>
+          <template #label>
+            等待超时 (ms)
+            <HelpTip text="元素在此时长内未达到目标状态则失败。" />
+          </template>
           <el-input-number
             :model-value="p.timeout_ms ?? 5000"
             size="small"
@@ -247,9 +265,6 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
         @update:model-value="patch({ ms: numberOrNull($event) ?? 1000 })"
       />
     </el-form-item>
-    <div class="hint" style="margin-top: -2px">
-      节点超时不够时引擎会自动抬到「等待时长 + 2s」（上限 600000ms）；显式设置的「节点超时」仍是硬上限。
-    </div>
   </template>
 
   <!-- app -->
@@ -264,6 +279,23 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
         <el-option v-for="option in APP_ACTIONS" :key="option.value" :value="option.value" :label="option.label" />
       </el-select>
     </el-form-item>
+    <Notice
+      v-if="p.action === 'clear'"
+      severity="warning"
+      variant="compact"
+      style="margin: -8px 0 8px"
+    >
+      清空该应用全部数据，属于破坏性操作；建议把「重跑安全性」设为 destructive。
+      <HelpTip
+        text="清理后平台会自动重新授予该应用声明的运行时权限（通知/存储/相机等），避免启动时系统授权框挡住脚本。"
+      />
+    </Notice>
+    <div v-if="p.action === 'grant'" class="hint" style="margin: -8px 0 8px">
+      补齐应用声明的运行时权限；不清数据、也不启动应用。
+      <HelpTip
+        text="逐个执行 pm grant；只处理 Android 运行时权限（通知/存储/相机等），失败的项会跳过。清数据后平台会自动重授，可不单独加这一步。"
+      />
+    </div>
     <el-form-item label="package">
       <VariableField
         :model-value="p.package ?? ''"
@@ -273,13 +305,6 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
         @update:model-value="patch({ package: $event || null })"
       />
     </el-form-item>
-    <div v-if="p.action === 'clear'" class="hint" style="margin: -2px 0 8px">
-      清除数据会清空该应用的全部数据，属于破坏性操作；建议把「重跑安全性」设为 destructive。
-      清理后平台会自动重新授予该应用声明的运行时权限（避免启动时系统授权框挡住脚本）。
-    </div>
-    <div v-if="p.action === 'grant'" class="hint" style="margin: -2px 0 8px">
-      补齐该应用声明的全部运行时权限（通知/存储/相机等）。不想清数据、但启动后弹系统授权框时可单独加这一步。
-    </div>
     <el-form-item v-if="(p.action ?? 'launch') === 'launch' || p.action === 'restart'" label="activity（可选）">
       <VariableField
         :model-value="p.activity ?? ''"
@@ -367,11 +392,18 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
     <el-form-item label="变量覆盖（可选）">
       <KeyValueEditor
         :value="p.variables ?? {}"
+        :preset-keys="childVariableNames"
+        :preset-defaults="childVariableDefaults"
+        :allow-add="false"
         variable-picker
-        empty-hint="暂无变量覆盖，子脚本使用自身 variables"
+        empty-hint="子脚本没有声明或使用变量，无需覆盖"
         @update:value="patch({ variables: $event })"
       />
     </el-form-item>
+    <div v-if="childVariableNames.length > 0" class="hint sub-script-vars-hint">
+      值留空继承子脚本默认；点值输入框的变量按钮可引用主脚本变量。
+    </div>
+    <div v-else-if="childScriptQuery.isLoading.value" class="hint">正在读取子脚本变量…</div>
     <div class="hint">整段子脚本受本节点「节点超时」限制；没显式设置时不再按脚本默认 8s 截断（最多到引擎上限/总预算），长流程建议显式设置。</div>
   </template>
 
@@ -388,3 +420,9 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
     </el-form-item>
   </template>
 </template>
+
+<style scoped>
+.sub-script-vars-hint {
+  margin: -6px 0 8px;
+}
+</style>

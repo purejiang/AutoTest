@@ -388,7 +388,10 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
             ctx.current_step_id = step.id
             if control is not None:
                 control.current_step_id = step.id
-            _update_run_progress(ctx.run_id, step.id, index)
+            # 子脚本内部节点的 step_index 属于子脚本，不能覆盖父运行的进度（否则进度条会跳/对不上）。
+            # 子节点仍通过 step_started/finished 事件和 StepResult 展示；子脚本结束后恢复父节点进度。
+            if ctx.depth == 0:
+                _update_run_progress(ctx.run_id, step.id, index)
 
             try:
                 ctx.check_total_timeout()
@@ -535,17 +538,17 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                 ctx.wait_if_paused()
                 if ctx.should_stop():
                     raise RunStopped("stop requested")
-                _safe_emit(
-                    ctx.run_id,
-                    "step_started",
-                    {
-                        "step_id": step.id,
-                        "name": step.name,
-                        "type": step.type,
-                        "index": index,
-                        "attempt": attempts,
-                    },
-                )
+                started_payload: dict[str, Any] = {
+                    "step_id": step.id,
+                    "name": step.name,
+                    "type": step.type,
+                    "index": index,
+                    "attempt": attempts,
+                }
+                sub_meta = _sub_script_context(ctx)
+                if sub_meta is not None:
+                    started_payload["sub_script"] = sub_meta
+                _safe_emit(ctx.run_id, "step_started", started_payload)
                 started_iso = now_iso()
                 started_active = ctx.active_elapsed_ms()
                 timeout_ms = _step_timeout(ctx, step)
@@ -979,6 +982,22 @@ def _safe_emit(run_id: int, event_type: str, payload: dict[str, Any]) -> None:
         logger.exception("failed to emit %s for run %s", event_type, run_id)
 
 
+def _sub_script_context(ctx: RunContext) -> dict[str, Any] | None:
+    """子脚本步骤的归属信息：父 sub_script 节点、深度、子脚本 id/name。
+
+    写入 StepResult.output["sub_script"] 与 step_started/step_finished 事件，前端/报告
+    据此把子脚本内部节点缩进展示，而不是当成父脚本的平级节点。
+    """
+    if ctx.depth <= 0 or ctx.parent is None:
+        return None
+    return {
+        "parent_step_id": str(ctx.parent.current_step_id or ""),
+        "depth": int(ctx.depth),
+        "script_id": str(getattr(ctx.script, "script_id", "") or ""),
+        "script_name": str(getattr(ctx.script, "name", "") or ""),
+    }
+
+
 def _record_attempt(
     ctx: RunContext,
     step: Any,
@@ -996,6 +1015,9 @@ def _record_attempt(
         merged = dict(output or {})
         merged["when"] = when_info
         output = merged
+    sub_meta = _sub_script_context(ctx)
+    if sub_meta is not None:
+        output = {**(output or {}), "sub_script": sub_meta}
     step_result_id = 0
     try:
         with session_scope() as session:
@@ -1034,6 +1056,8 @@ def _record_attempt(
         "duration_ms": int(duration_ms),
         "attempts": int(attempts),
     }
+    if sub_meta is not None:
+        payload["sub_script"] = sub_meta
     if error is not None:
         payload["error"] = error
     if output is not None:
@@ -1132,6 +1156,9 @@ def _record_skipped(
     output: dict[str, Any] = {"reason": reason}
     if when_info is not None:
         output["when"] = when_info
+    sub_meta = _sub_script_context(ctx)
+    if sub_meta is not None:
+        output["sub_script"] = sub_meta
     try:
         with session_scope() as session:
             session.add(
@@ -1155,6 +1182,8 @@ def _record_skipped(
     payload: dict[str, Any] = {"step_id": step.id, "reason": reason}
     if when_info is not None:
         payload["when"] = when_info
+    if sub_meta is not None:
+        payload["sub_script"] = sub_meta
     _safe_emit(ctx.run_id, "step_skipped", payload)
 
 

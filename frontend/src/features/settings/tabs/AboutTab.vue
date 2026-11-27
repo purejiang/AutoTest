@@ -5,6 +5,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { describeApiError } from '@/api/client'
 import { useHealth } from '@/api/settings'
 import { formatDateTime } from '@/lib/format'
+import Notice from '@/components/Notice.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
 const APP_VERSION = __APP_VERSION__
@@ -59,14 +60,13 @@ const health = healthQuery.data
       </div>
       <div class="card-body">
         <el-skeleton v-if="healthQuery.isLoading.value" :rows="3" animated />
-        <el-alert
+        <Notice
           v-else-if="healthQuery.isError.value || !health"
-          type="warning"
-          :closable="false"
-          show-icon
+          severity="warning"
           title="后端未连接"
-          :description="describeApiError(healthQuery.error.value)"
-        />
+        >
+          {{ describeApiError(healthQuery.error.value) }}
+        </Notice>
         <el-descriptions v-else :column="1" border size="small">
           <el-descriptions-item label="状态">
             <StatusTag :tone="health.status === 'ok' ? 'green' : 'amber'">

@@ -35,6 +35,7 @@ import {
 import { notifyBulkDeleteResult } from '@/lib/bulk'
 import PageHead from '@/components/PageHead.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import Notice from '@/components/Notice.vue'
 
 const MAX_EVENTS = 1000
 
@@ -464,22 +465,14 @@ watch(
       </StatusTag>
     </div>
 
-    <el-alert
-      v-if="captureError"
-      type="error"
-      show-icon
-      :closable="false"
-      title="触摸采集中断"
-    >
-      <template #default>
-        <div class="row wrap">
-          <span>{{ captureError }}</span>
-          <span class="hint">
-            {{ isLive ? '请使用页头「停止」后重新创建。' : '该录制可能不完整，建议重新创建。' }}
-          </span>
-        </div>
-      </template>
-    </el-alert>
+    <Notice v-if="captureError" severity="danger" title="触摸采集中断">
+      <div class="row wrap">
+        <span>{{ captureError }}</span>
+        <span class="hint">
+          {{ isLive ? '请使用页头「停止」后重新创建。' : '该录制可能不完整，建议重新创建。' }}
+        </span>
+      </div>
+    </Notice>
 
     <section class="card">
       <div class="card-head">
@@ -541,21 +534,17 @@ watch(
         <el-button size="small" @click="clearEventSelection">取消</el-button>
       </div>
 
-      <el-alert
+      <Notice
         v-if="eventsQuery.isError.value && !recordingWs.connected.value"
-        type="error"
-        show-icon
-        :closable="false"
+        severity="danger"
         title="事件加载失败"
         style="margin: 8px"
       >
-        <template #default>
-          <div class="row wrap">
-            <span>{{ describeApiError(eventsQuery.error.value) }}</span>
-            <el-button size="small" @click="refreshAll">重试</el-button>
-          </div>
-        </template>
-      </el-alert>
+        <div class="row wrap">
+          <span>{{ describeApiError(eventsQuery.error.value) }}</span>
+          <el-button size="small" @click="refreshAll">重试</el-button>
+        </div>
+      </Notice>
 
       <el-table
         ref="eventsTableRef"

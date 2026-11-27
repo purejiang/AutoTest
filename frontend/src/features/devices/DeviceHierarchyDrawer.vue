@@ -8,6 +8,7 @@ import { describeApiError } from '@/api/client'
 import { useDeviceSnapshot } from '@/api/devices'
 
 import ScreenInspector from './ScreenInspector.vue'
+import Notice from '@/components/Notice.vue'
 
 const props = defineProps<{
   serial: string | null
@@ -77,14 +78,9 @@ function onRawChange(value: string | number | boolean): void {
     <template v-if="raw">
       <pre v-if="rawXml" class="pre-block raw-xml">{{ rawXml }}</pre>
       <el-skeleton v-else-if="isFetching" :rows="10" animated />
-      <el-alert
-        v-else
-        type="info"
-        :closable="false"
-        show-icon
-        title="当前驱动不提供原始 XML"
-        :description="rawUnavailable ?? '后端返回 raw_unavailable'"
-      />
+      <Notice v-else severity="info" title="当前驱动不提供原始 XML">
+        {{ rawUnavailable ?? '后端返回 raw_unavailable' }}
+      </Notice>
     </template>
 
     <ScreenInspector

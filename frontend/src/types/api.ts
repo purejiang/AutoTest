@@ -470,7 +470,10 @@ export interface SettingEntry {
   key: string
   type: 'string' | 'int' | 'bool' | 'enum'
   title: string
+  /** 一行短说明：放在标题下方；长解释放 help（标题右侧 ?）。 */
   desc?: string | null
+  /** 可选的长说明：标题右侧 HelpTip 展示。 */
+  help?: string | null
   min?: number | null
   max?: number | null
   /** type='enum' 时的可选项（后端可能返回 null） */

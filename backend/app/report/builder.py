@@ -41,8 +41,11 @@ _UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9\u4e00-\u9fff_.-]+")
 _VIDEO_KINDS = {"video", "screenrecord"}
 _EVIDENCE_KINDS = {"logcat", "network"}
 _FAILED_STATUSES = {"failed", "error"}
-_PREVIEW_LOG_LINES = 200
-_PREVIEW_NETWORK_RECORDS = 100
+_PREVIEW_LOG_LINES = 80
+_PREVIEW_NETWORK_RECORDS = 50
+# 报告里每个节点默认只放末尾固定行数；完整文件仍在 zip 内。
+_STEP_LOG_PREVIEW_LINES = 80
+_STEP_NETWORK_PREVIEW_RECORDS = 50
 
 
 # ================================================================ 小工具
@@ -88,6 +91,48 @@ def _step_summary(steps: list[StepResult], duration_ms: int) -> dict[str, Any]:
         "failed_total": failed + errors,
         "duration_ms": duration_ms,
     }
+
+
+def _sub_script_meta(step: StepResult) -> dict[str, Any] | None:
+    output = step.output if isinstance(step.output, dict) else {}
+    meta = output.get("sub_script")
+    if not isinstance(meta, dict):
+        return None
+    if not meta.get("parent_step_id"):
+        return None
+    return meta
+
+
+def _ordered_steps(steps: list[StepResult]) -> list[tuple[StepResult, int, str | None]]:
+    """父节点在前，子脚本内部节点紧跟父节点；旧运行无元数据时保持原顺序。"""
+    by_parent: dict[str, list[StepResult]] = {}
+    roots: list[StepResult] = []
+    for step in steps:
+        meta = _sub_script_meta(step)
+        if meta is not None:
+            by_parent.setdefault(str(meta["parent_step_id"]), []).append(step)
+        else:
+            roots.append(step)
+    ordered: list[tuple[StepResult, int, str | None]] = []
+    seen: set[int] = set()
+
+    def visit(step: StepResult, depth: int, script_name: str | None) -> None:
+        if int(step.id) in seen:
+            return
+        seen.add(int(step.id))
+        ordered.append((step, depth, script_name))
+        meta = _sub_script_meta(step)
+        for child in by_parent.get(step.step_id, []):
+            child_meta = _sub_script_meta(child) or {}
+            visit(child, depth + 1, str(child_meta.get("script_name") or script_name or "") or None)
+
+    for step in roots:
+        visit(step, 0, None)
+    for step in steps:
+        if int(step.id) not in seen:
+            meta = _sub_script_meta(step) or {}
+            visit(step, int(meta.get("depth") or 1), str(meta.get("script_name") or "") or None)
+    return ordered
 
 
 def _resolve_artifact_path(artifact: Artifact) -> Path | None:
@@ -285,6 +330,8 @@ def _steps_payload(
                 "duration_ms": step.duration_ms,
                 "error": step.error,
                 "output": step.output,
+                "sub_script": (step.output or {}).get("sub_script") if isinstance(step.output, dict) else None,
+                "depth": int((((step.output or {}).get("sub_script") or {}).get("depth") or 0) if isinstance(step.output, dict) else 0),
                 "screenshots": screenshot_map.get(step.id, []),
                 "evidence": evidence_map.get(step.id, []),
                 "timeline": {
@@ -397,7 +444,7 @@ def build_report(run_id: int, include_video: bool = False) -> dict[str, Any]:
     timeline_steps = timeline["steps"]
 
     steps_view: list[dict[str, Any]] = []
-    for step in steps:
+    for step, depth, sub_script_name in _ordered_steps(steps):
         step_timeline = timeline_steps.get(int(step.id), {})
         step_logcat = step_timeline.get("logcat", [])
         step_network = step_timeline.get("network", [])
@@ -405,27 +452,52 @@ def build_report(run_id: int, include_video: bool = False) -> dict[str, Any]:
         steps_view.append(
             {
                 "index": step.step_index,
+                "row_no": len(steps_view) + 1,
+                "depth": depth,
+                "sub_script_name": sub_script_name,
                 "step_id": step.step_id,
                 "name": step.step_name or step.step_id,
                 "type": step.step_type,
                 "status": step.status,
                 "started_at": step.started_at,
                 "ended_at": step.ended_at,
+                "started_at_local": _display_time(step.started_at),
+                "ended_at_local": _display_time(step.ended_at),
                 "duration_ms": step.duration_ms,
                 "attempts": step.attempts,
                 "error": _error_message(step.error),
                 "output": step.output,
+                "sub_script": (step.output or {}).get("sub_script") if isinstance(step.output, dict) else None,
                 "screenshots": screenshot_map.get(step.id, []),
                 "evidence": evidence_map.get(step.id, []),
-                "timeline_logcat": step_logcat[-80:],
+                "timeline_logcat": step_logcat[-_STEP_LOG_PREVIEW_LINES:],
                 "timeline_logcat_count": len(step_logcat),
-                "timeline_network": step_network[-50:],
+                "timeline_network": step_network[-_STEP_NETWORK_PREVIEW_RECORDS:],
                 "timeline_network_count": len(step_network),
                 "timeline_events": step_events[-50:],
                 "timeline_events_count": len(step_events),
+                "has_detail": bool(
+                    step_logcat
+                    or step_network
+                    or step_events
+                    or screenshot_map.get(step.id)
+                    or evidence_map.get(step.id)
+                    or step.error
+                ),
             }
         )
     generated_at = now_iso()
+    run_logcat_file = next(
+        (item["file"] for item in run_evidence if item.get("kind") == "logcat"), None
+    )
+    run_network_file = next(
+        (item["file"] for item in run_evidence if item.get("kind") == "network"), None
+    )
+    network_http_meta = any(
+        (item.get("method") or item.get("path") or item.get("status") is not None)
+        for step in steps_view
+        for item in step.get("timeline_network", [])
+    )
     html = _ENV.get_template("report.html").render(
         run=_run_view(run),
         summary=summary,
@@ -438,6 +510,9 @@ def build_report(run_id: int, include_video: bool = False) -> dict[str, Any]:
         generated_at_local=_display_time(generated_at),
         include_video=bool(include_video),
         run_evidence=run_evidence,
+        run_logcat_file=run_logcat_file,
+        run_network_file=run_network_file,
+        network_http_meta=network_http_meta,
         timeline=timeline["timeline"][:500],
         timeline_total=len(timeline["timeline"]),
         timeline_counts=timeline["counts"],

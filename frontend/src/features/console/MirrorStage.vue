@@ -504,7 +504,7 @@ defineExpose({
         :pending-text="keyboard.pendingText.value"
         :busy="gestures.busy.value"
       />
-      <div class="mirror-errorline" role="alert">{{ actionError ?? session.error.value ?? '' }}</div>
+      <div class="inline-error mirror-errorline" role="alert">{{ actionError ?? session.error.value ?? '' }}</div>
     </template>
   </div>
 </template>

@@ -2,12 +2,13 @@
 import { ArrowLeft, CaretRight, CircleClose, Refresh, VideoPause } from '@element-plus/icons-vue'
 import { useQueryClient } from '@tanstack/vue-query'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { runKeys, usePauseRun, useResumeRun, useRun, useStopRun } from '@/api/runs'
 import { useScript } from '@/api/scripts'
 import { useRunEventsWs } from '@/api/useRunEventsWs'
+import { buildLiveStepRows, type LiveStepRow } from './lib/runSteps'
 import type { StepResult } from '@/types/api'
 import {
   formatDuration,
@@ -16,8 +17,10 @@ import {
   runProgress,
   runStatusMeta,
   stepStatusMeta,
+  stepSubScriptContext,
 } from '@/lib/format'
 import StatusTag from '@/components/StatusTag.vue'
+import Notice from '@/components/Notice.vue'
 
 const props = defineProps<{
   runId: number
@@ -35,6 +38,7 @@ const queryClient = useQueryClient()
 
 const runQuery = useRun(computed(() => props.runId))
 const run = computed(() => runQuery.data.value ?? null)
+const nodeListRef = ref<HTMLElement | null>(null)
 
 /** 本次运行的变量覆盖（只显示覆盖项，完整生效值在运行详情）。 */
 const runVariableOverrides = computed<Array<[string, string]>>(() =>
@@ -88,41 +92,36 @@ watch(
   },
 )
 
-const resultByStep = computed(() => {
-  const map = new Map<string, StepResult>()
-  for (const step of run.value?.steps ?? []) map.set(step.step_id, step)
-  return map
-})
+// 运行中每完成/开始一个节点都刷新详情，否则实时列表只更新状态、不更新步骤（子脚本节点尤其明显）。
+const lastEvent = computed(() => ws.events.value.at(-1) ?? null)
+watch(
+  () => lastEvent.value?.seq,
+  () => {
+    const event = lastEvent.value
+    if (!event) return
+    if (event.type.startsWith('step_') || event.type === 'run_state') {
+      void runQuery.refetch()
+    }
+  },
+)
 
-interface StepRow {
-  id: string
-  name: string
-  type: string
-  index: number
-  result: StepResult | null
-}
-
-const stepRows = computed<StepRow[]>(() => {
+const stepRows = computed<LiveStepRow[]>(() => {
   const data = run.value
   if (!data) return []
-  const scriptSteps = scriptQuery.data.value?.data?.steps ?? []
-  if (scriptSteps.length > 0) {
-    return scriptSteps.map((step, index) => ({
-      id: step.id,
-      name: step.name || step.id,
-      type: step.type,
-      index,
-      result: resultByStep.value.get(step.id) ?? null,
-    }))
-  }
-  return (data.steps ?? []).map((step, index) => ({
-    id: step.step_id,
-    name: step.step_name || step.step_id,
-    type: step.step_type,
-    index: step.step_index ?? index,
-    result: step,
-  }))
+  return buildLiveStepRows(scriptQuery.data.value?.data?.steps ?? [], data.steps ?? [])
 })
+
+// 运行中节点列表自动跟随当前节点；子脚本内部节点完成后会追加，也要滚到可见区域。
+watch(
+  () => [run.value?.current_step_id, stepRows.value.length] as const,
+  async () => {
+    await nextTick()
+    nodeListRef.value
+      ?.querySelector<HTMLElement>('.console-node.current')
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  },
+  { flush: 'post' },
+)
 
 const totalSteps = computed(() => run.value?.total_steps || stepRows.value.length || 0)
 const progress = computed(() =>
@@ -136,7 +135,8 @@ const currentIndex = computed(() => progress.value.current)
 const percent = computed(() => progress.value.percent)
 
 const counts = computed(() => {
-  const results = run.value?.steps ?? []
+  // 进度条按父脚本节点计；子脚本内部节点单独缩进展示，不能把子节点算进主进度。
+  const results = (run.value?.steps ?? []).filter((step) => !stepSubScriptContext(step))
   const passed = results.filter((step) => step.status === 'passed').length
   const failed = results.filter((step) => step.status === 'failed' || step.status === 'error').length
   return { passed, failed }
@@ -169,7 +169,7 @@ const terminalTitle = computed(() => {
   }
 })
 
-function stepStatus(row: StepRow): { label: string; tone: 'gray' | 'blue' | 'green' | 'red' | 'amber' } {
+function stepStatus(row: LiveStepRow): { label: string; tone: 'gray' | 'blue' | 'green' | 'red' | 'amber' } {
   if (row.result) {
     const meta = stepStatusMeta(row.result.status)
     return { label: meta.label, tone: meta.tone as 'gray' | 'blue' | 'green' | 'red' | 'amber' }
@@ -210,7 +210,7 @@ function openDetail(): void {
   </div>
 
   <div v-else-if="!run" class="console-run">
-    <el-alert type="error" :closable="false" show-icon title="运行信息加载失败" />
+    <Notice severity="danger" title="运行信息加载失败" />
     <el-button size="small" style="margin-top: 8px" @click="emit('back')">返回脚本列表</el-button>
   </div>
 
@@ -283,22 +283,28 @@ function openDetail(): void {
       <el-button size="small" @click="openDetail">详情</el-button>
     </div>
 
-    <div class="run-nodes">
+    <div ref="nodeListRef" class="run-nodes">
       <div
         v-for="row in stepRows"
-        :key="row.id"
-        :class="['console-node', { current: row.id === run.current_step_id && active }]"
+        :key="row.key"
+        :class="[
+          'console-node',
+          { current: row.id === run.current_step_id && active, 'sub-node': row.depth > 0 },
+        ]"
       >
-        <span class="node-index">{{ row.index + 1 }}</span>
+        <span class="node-index">{{ row.depth > 0 ? '↳' : row.index + 1 }}</span>
         <span class="node-body">
-          <span class="node-name">{{ row.name }}</span>
+          <span class="node-name">
+            {{ row.name }}
+            <span v-if="row.depth" class="sub-script-name">{{ row.subScriptName || '子脚本' }}</span>
+          </span>
           <span class="node-sub">
             <span class="mono">{{ row.type }}</span>
             <span v-if="row.result?.duration_ms" class="mono">{{
               formatDuration(row.result.duration_ms)
             }}</span>
           </span>
-          <span v-if="row.result?.error?.message" class="node-error">{{ row.result.error.message }}</span>
+          <span v-if="row.result?.error?.message" class="inline-error node-error">{{ row.result.error.message }}</span>
         </span>
         <StatusTag class="node-status" :tone="stepStatus(row).tone">{{ stepStatus(row).label }}</StatusTag>
       </div>
@@ -457,6 +463,22 @@ function openDetail(): void {
   background: var(--accent-soft);
 }
 
+.console-node.sub-node {
+  padding-left: 20px;
+  border-left: 2px solid var(--line-soft);
+  margin-left: 6px;
+}
+
+.sub-script-name {
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .node-index {
   flex: none;
   width: 18px;
@@ -504,8 +526,6 @@ function openDetail(): void {
 .node-error {
   margin-top: 2px;
   overflow: hidden;
-  color: var(--red);
-  font-size: 9.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

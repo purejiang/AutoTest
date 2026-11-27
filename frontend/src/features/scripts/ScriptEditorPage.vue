@@ -24,6 +24,7 @@ import {
   sourceMeta,
 } from '@/lib/format'
 import PageHead from '@/components/PageHead.vue'
+import Notice from '@/components/Notice.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
 import JsonSourcePanel from './JsonSourcePanel.vue'
@@ -604,13 +605,13 @@ function jumpToPath(path: string): void {
       </template>
     </PageHead>
 
-    <div v-if="jsonDirty" class="card editor-json-warning">
-      <StatusTag tone="amber">源码未应用</StatusTag>
-      <span>JSON 源码有未应用的修改；保存时会以源码为准。</span>
-      <span class="spacer" />
-      <el-button size="small" type="primary" plain @click="handleApplyJson">应用到表单</el-button>
-      <el-button size="small" @click="handleResetJson">放弃源码改动</el-button>
-    </div>
+    <Notice v-if="jsonDirty" severity="warning" title="源码未应用">
+      JSON 源码有未应用的修改；保存时会以源码为准。
+      <template #actions>
+        <el-button size="small" type="primary" plain @click="handleApplyJson">应用到表单</el-button>
+        <el-button size="small" @click="handleResetJson">放弃源码改动</el-button>
+      </template>
+    </Notice>
 
     <div v-if="validation && validationOpen" class="card editor-validation">
       <div class="editor-validation-head">

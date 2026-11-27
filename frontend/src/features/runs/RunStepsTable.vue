@@ -9,6 +9,7 @@ import {
   prettyJson,
   stepConditionOutcome,
   stepStatusMeta,
+  stepSubScriptContext,
   stepWaitMs,
 } from '@/lib/format'
 import StatusTag from '@/components/StatusTag.vue'
@@ -18,6 +19,43 @@ const props = defineProps<{
   currentStepId?: string | null
   artifacts?: Artifact[]
 }>()
+
+interface StepRow extends StepResult {
+  depth: number
+  subScriptName?: string
+}
+
+/** 父脚本节点在前、子脚本内部节点紧跟父节点缩进展示；旧运行没有 sub_script 元数据时保持平铺。 */
+const rows = computed<StepRow[]>(() => {
+  const byParent = new Map<string, StepResult[]>()
+  const roots: StepResult[] = []
+  for (const step of props.steps) {
+    const ctx = stepSubScriptContext(step)
+    if (ctx) {
+      const list = byParent.get(ctx.parentStepId) ?? []
+      list.push(step)
+      byParent.set(ctx.parentStepId, list)
+    } else {
+      roots.push(step)
+    }
+  }
+  const out: StepRow[] = []
+  const seen = new Set<number>()
+  function visit(step: StepResult, depth: number, subScriptName?: string): void {
+    if (seen.has(step.id)) return
+    seen.add(step.id)
+    out.push({ ...step, depth, subScriptName })
+    const ctx = stepSubScriptContext(step)
+    for (const child of byParent.get(step.step_id) ?? []) {
+      visit(child, depth + 1, stepSubScriptContext(child)?.scriptName ?? ctx?.scriptName)
+    }
+  }
+  for (const root of roots) visit(root, 0)
+  for (const step of props.steps) {
+    if (!seen.has(step.id)) visit(step, 1, stepSubScriptContext(step)?.scriptName)
+  }
+  return out
+})
 
 const outcomeMap = computed(
   () => new Map(props.steps.map((step) => [step.id, stepConditionOutcome(step)] as const)),
@@ -59,7 +97,7 @@ function waitFor(step: StepResult): number | null {
   return waitMap.value.get(step.id) ?? null
 }
 
-function rowClassName({ row }: { row: StepResult }): string {
+function rowClassName({ row }: { row: StepRow }): string {
   if (row.status === 'failed' || row.status === 'error') return 'step-row-failed'
   if (row.step_id === props.currentStepId) return 'step-row-current'
   return ''
@@ -68,7 +106,7 @@ function rowClassName({ row }: { row: StepResult }): string {
 
 <template>
   <el-table
-    :data="steps"
+    :data="rows"
     row-key="id"
     class="steps-table"
     :row-class-name="rowClassName"
@@ -113,11 +151,17 @@ function rowClassName({ row }: { row: StepResult }): string {
     </el-table-column>
     <el-table-column label="节点" min-width="200">
       <template #default="{ row }">
-        <div class="cell-main">
+        <div class="cell-main" :style="{ paddingLeft: `${row.depth * 16}px` }">
+          <span v-if="row.depth" class="sub-script-branch" aria-hidden="true">↳</span>
           {{ row.step_name || row.step_id }}
+          <StatusTag v-if="row.depth" tone="blue" style="margin-left: 4px">
+            {{ row.subScriptName || '子脚本' }}
+          </StatusTag>
           <StatusTag v-if="row.step_id === currentStepId" tone="blue" style="margin-left: 4px">当前</StatusTag>
         </div>
-        <div class="cell-sub">{{ row.step_id }} · {{ row.step_type }}</div>
+        <div class="cell-sub" :style="{ paddingLeft: `${row.depth * 16}px` }">
+          {{ row.step_id }} · {{ row.step_type }}
+        </div>
       </template>
     </el-table-column>
     <el-table-column label="状态" width="88">
@@ -159,3 +203,10 @@ function rowClassName({ row }: { row: StepResult }): string {
     <template #empty><el-empty description="暂无步骤结果" :image-size="56" /></template>
   </el-table>
 </template>
+
+<style scoped>
+.sub-script-branch {
+  margin-right: 4px;
+  color: var(--muted-2);
+}
+</style>

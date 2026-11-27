@@ -4,6 +4,7 @@ import { EditPen } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { ref } from 'vue'
 
+import Notice from '@/components/Notice.vue'
 import { useDeviceText } from '@/api/devices'
 import type { Device } from '@/types/api'
 
@@ -58,6 +59,8 @@ function sendText(): void {
       <el-checkbox v-model="clearFirst" size="small">发送前清空输入框</el-checkbox>
     </div>
     <div class="section-sub">中文输入需要设备端输入法配合；不确定时先用英文/数字验证链路。</div>
-    <div v-if="busy" class="inline-warning">设备被占用：{{ device?.busy_reason ?? '运行/录制中' }}</div>
+    <Notice v-if="busy" severity="warning" variant="compact">
+      设备被占用：{{ device?.busy_reason ?? '运行/录制中' }}
+    </Notice>
   </section>
 </template>

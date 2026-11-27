@@ -15,6 +15,7 @@ import {
 import { notifyBulkDeleteResult } from '@/lib/bulk'
 import StatusTag from '@/components/StatusTag.vue'
 import CreateRecordingDialog from './CreateRecordingDialog.vue'
+import Notice from '@/components/Notice.vue'
 
 type ModeFilter = 'all' | RecordingMode
 type StatusFilter = 'all' | RecordingStatus
@@ -159,20 +160,12 @@ async function remove(recording: Recording): Promise<void> {
       <el-button size="small" :icon="VideoCamera" @click="goConsoleRecord">去控制台录制</el-button>
     </div>
 
-    <el-alert
-      v-if="recordingsQuery.isError.value"
-      type="error"
-      show-icon
-      :closable="false"
-      title="录制列表加载失败"
-    >
-      <template #default>
-        <div class="row wrap">
-          <span>{{ describeApiError(recordingsQuery.error.value) }}</span>
-          <el-button size="small" @click="refreshRecordings">重试</el-button>
-        </div>
-      </template>
-    </el-alert>
+    <Notice v-if="recordingsQuery.isError.value" severity="danger" title="录制列表加载失败">
+      <div class="row wrap">
+        <span>{{ describeApiError(recordingsQuery.error.value) }}</span>
+        <el-button size="small" @click="refreshRecordings">重试</el-button>
+      </div>
+    </Notice>
 
     <div class="card table-card">
       <div class="recording-toolbar">

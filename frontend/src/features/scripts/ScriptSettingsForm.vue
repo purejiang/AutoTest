@@ -7,6 +7,7 @@ import { numberOrNull } from '@/lib/format'
 
 import { describeFailureFlow } from './lib/failure'
 import { editRetry, normalizeScriptRetry, scriptRetryOn } from './lib/retry'
+import HelpTip from '@/components/HelpTip.vue'
 import KeyValueEditor from './KeyValueEditor.vue'
 import { RERUN_SAFETY_OPTIONS } from './nodeDefaults'
 
@@ -158,9 +159,13 @@ function setRetryInterval(value: number | null | undefined): void {
           </template>
           <span v-else class="hint">节点未单独配置时不重试</span>
         </div>
-        <div class="hint" style="margin-top: 2px">次数为额外重试次数，1 = 最多执行 2 次。</div>
+        <div v-if="retryOn" class="hint" style="margin-top: 2px">额外次数，1 = 最多 2 次；断言失败不重试。</div>
       </el-form-item>
-      <el-form-item label="默认失败策略（重试用尽后）" class="full">
+      <el-form-item class="full">
+        <template #label>
+          默认失败策略（重试用尽后）
+          <HelpTip text="跳转是节点级高级动作（需要目标节点）；脚本默认只提供中止/继续。" />
+        </template>
         <el-select
           :model-value="settings.on_fail"
           style="width: 100%"
@@ -169,9 +174,6 @@ function setRetryInterval(value: number | null | undefined): void {
           <el-option value="abort" label="中止整个运行（abort）" />
           <el-option value="continue" label="继续下一步（continue）" />
         </el-select>
-        <div class="hint" style="margin-top: 2px">
-          跳转是节点级高级动作（需要目标节点），脚本默认只提供中止/继续。
-        </div>
       </el-form-item>
       <el-form-item label="失败时自动截图" class="full">
         <div class="row wrap">
@@ -206,7 +208,11 @@ function setRetryInterval(value: number | null | undefined): void {
           <span v-else class="hint">本次运行把 logcat 收进产物</span>
         </div>
       </el-form-item>
-      <el-form-item label="Logcat 范围">
+      <el-form-item>
+        <template #label>
+          Logcat 范围
+          <HelpTip text="app 范围按运行时 PID 过滤；App 重启或 PID 变化会自动重新解析；日志行按 PID 保留，堆栈续行跟随上一条。" />
+        </template>
         <div class="capture-field">
           <el-select
             :model-value="settings.logcat_scope"
@@ -219,7 +225,7 @@ function setRetryInterval(value: number | null | undefined): void {
             <el-option value="app" label="仅脚本涉及的应用（按 PID 过滤）" />
           </el-select>
           <span v-if="settings.logcat_scope === 'app'" class="hint">
-            App 重启或 PID 变化会自动重新解析；日志行按 PID 保留，堆栈续行跟随上一条。
+            app 范围按 PID 过滤；App 重启会自动重解析。
           </span>
         </div>
       </el-form-item>
@@ -229,10 +235,10 @@ function setRetryInterval(value: number | null | undefined): void {
             :model-value="settings.logcat_package"
             :disabled="!logcatAvailable || !settings.logcat"
             size="small"
-            placeholder="留空从 app 节点推断，例如 com.example.app"
+            placeholder="例如 com.example.app"
             @update:model-value="patchSettings({ logcat_package: $event })"
           />
-          <span class="hint">多个 app 节点会合并监听；没有包名时回退整机日志。</span>
+          <span class="hint">留空从 app 节点推断；多个 app 节点会合并监听，没有包名时回退整机。</span>
         </div>
       </el-form-item>
       <el-form-item label="抓取域名（本次运行）">
@@ -256,7 +262,11 @@ function setRetryInterval(value: number | null | undefined): void {
 
     <div class="section-label">新建节点默认</div>
     <div class="form-grid">
-      <el-form-item label="新建节点默认重跑安全性" class="full">
+      <el-form-item class="full">
+        <template #label>
+          新建节点默认重跑安全性
+          <HelpTip text="safe 可安全重跑；stateful 依赖运行状态；destructive 会清数据，恢复时必须确认。" />
+        </template>
         <el-select
           :model-value="settings.default_rerun_safety"
           style="width: 100%"
@@ -273,10 +283,6 @@ function setRetryInterval(value: number | null | undefined): void {
           只影响之后新增的节点；已有节点保持自己的值。
         </div>
       </el-form-item>
-    </div>
-
-    <div class="hint">
-      节点自己的「执行前/后停顿」留空时继承这里的默认值；录制转换生成的脚本默认停顿为 0，节奏由录制时还原的节点间隔决定。
     </div>
   </el-form>
 </template>

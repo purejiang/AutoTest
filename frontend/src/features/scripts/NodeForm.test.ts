@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
-import type { StepNode } from '@/types/api'
+import type { NodeType, StepNode } from '@/types/api'
 
 import NodeForm from './NodeForm.vue'
 import { createStep } from './nodeDefaults'
@@ -39,8 +39,8 @@ const buttonStub = {
   template: '<button class="fake-button" @click="$emit(\'click\')"><slot /></button>',
 }
 
-function makeNodes(partial: Partial<StepNode> = {}) {
-  const first = { ...createStep('click', []), ...partial }
+function makeNodes(partial: Partial<StepNode> = {}, type: NodeType = 'click') {
+  const first = { ...createStep(type, []), ...partial }
   const second = { ...createStep('wait', [first.id]), name: '等待收尾' }
   return { first, second, steps: [first, second] }
 }
@@ -52,8 +52,9 @@ function mountForm(
     defaultRetry?: { count: number; interval_ms: number } | null
     scriptScreenshotOnFail?: boolean
   } = {},
+  type: NodeType = 'click',
 ) {
-  const { first, steps } = makeNodes(partial)
+  const { first, steps } = makeNodes(partial, type)
   return mount(NodeForm, {
     props: {
       node: first,
@@ -79,6 +80,7 @@ function mountForm(
         'el-option': optionStub,
         'el-switch': switchStub,
         'el-button': buttonStub,
+        HelpTip: true,
         ParamsEditor: true,
         WhenEditor: true,
       },
@@ -136,7 +138,27 @@ describe('NodeForm 失败处理', () => {
 
     expect(wrapper.text()).toContain('跳转到节点（高级）')
     expect(wrapper.find('[data-test="goto-target"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('重入会重置目标及之后节点的重试计数')
+    expect(wrapper.text()).toContain('重入会重置后续重试计数')
+  })
+
+  it('wait 等待元素的显式节点超时小于等待 + 2s 时给出截断提醒', () => {
+    const wrapper = mountForm(
+      {
+        timeout_ms: 5000,
+        params: {
+          mode: 'until',
+          target: { by: 'text', value: '登录', index: 0 },
+          state: 'visible',
+          timeout_ms: 5000,
+          interval_ms: 350,
+        },
+      },
+      {},
+      'wait',
+    )
+
+    expect(wrapper.text()).toContain('等待超时 + 2s（7000ms）')
+    expect(wrapper.text()).toContain('建议留空或调到')
   })
 
   it('脚本关闭失败截图时，节点开关置灰并说明不生效', () => {
@@ -145,6 +167,6 @@ describe('NodeForm 失败处理', () => {
     const shot = wrapper.find('[data-test="node-screenshot"]')
     expect(shot.attributes('data-disabled')).toBe('true')
     expect(shot.attributes('data-on')).toBe('false')
-    expect(wrapper.text()).toContain('脚本设置里已关闭「失败时自动截图」')
+    expect(wrapper.text()).toContain('脚本已关闭失败截图，此开关不生效')
   })
 })

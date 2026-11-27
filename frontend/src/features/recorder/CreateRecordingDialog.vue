@@ -6,6 +6,7 @@ import { describeApiError } from '@/api/client'
 import { useDevices } from '@/api/devices'
 import { useCreateRecording } from '@/api/recordings'
 import type { Recording } from '@/types/api'
+import Notice from '@/components/Notice.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -174,44 +175,26 @@ onBeforeUnmount(clearCountdown)
         <el-input v-model="name" placeholder="例如：登录流程录制" :disabled="busy" />
       </el-form-item>
 
-      <el-alert
-        v-if="devicesQuery.isError.value"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="设备列表加载失败"
-        description="请确认后端与 adb 正常后重试。"
-      />
+      <Notice v-if="devicesQuery.isError.value" severity="warning" title="设备列表加载失败">
+        请确认后端与 adb 正常后重试。
+      </Notice>
 
-      <el-alert
-        v-if="isPhysical"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="开始前请确认"
-        class="start-checklist"
-      >
+      <Notice v-if="isPhysical" severity="warning" title="开始前请确认" class="start-checklist">
         <ul class="ready-checklist">
           <li>手机已解锁，并停留在要录制的界面。</li>
           <li>录制期间不要同时运行脚本，避免触摸被占用或事件混淆。</li>
           <li>如果坐标不准，先在设备测试清单里完成 2 点标定。</li>
         </ul>
-      </el-alert>
+      </Notice>
 
       <p v-if="isPhysical" class="ready-countdown">
         点击开始后倒计时 3 秒，随后立即采集手机触摸；倒计时结束前请拿好手机。
       </p>
       <p v-if="countdown > 0" class="ready-count-number">{{ countdown }}</p>
 
-      <el-alert
-        v-if="error"
-        type="error"
-        :closable="false"
-        show-icon
-        title="创建录制失败"
-        :description="error"
-        style="margin-top: 8px"
-      />
+      <Notice v-if="error" severity="danger" title="创建录制失败" style="margin-top: 8px">
+        {{ error }}
+      </Notice>
     </el-form>
 
     <template #footer>

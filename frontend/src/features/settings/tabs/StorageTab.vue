@@ -8,6 +8,7 @@ import { describeApiError } from '@/api/client'
 import { useCleanup, useHealth, useMaintenanceStats } from '@/api/settings'
 import { formatBytes, formatDateTime, prettyJson } from '@/lib/format'
 
+import Notice from '@/components/Notice.vue'
 import SettingField from '../SettingField.vue'
 import { useSettingsDraftContext } from '../useSettingsDraft'
 
@@ -139,14 +140,13 @@ async function runCleanup(): Promise<void> {
       </div>
       <div class="card-body">
         <el-skeleton v-if="statsQuery.isLoading.value" :rows="4" animated />
-        <el-alert
+        <Notice
           v-else-if="statsQuery.isError.value"
-          type="warning"
-          :closable="false"
-          show-icon
+          severity="warning"
           title="统计加载失败"
-          :description="describeApiError(statsQuery.error.value)"
-        />
+        >
+          {{ describeApiError(statsQuery.error.value) }}
+        </Notice>
         <template v-else-if="stats">
           <div class="kv-grid">
             <div class="kv">
@@ -189,7 +189,7 @@ async function runCleanup(): Promise<void> {
             </el-button>
           </div>
           <div v-if="cleanupResult" style="margin-top: 12px">
-            <el-alert v-if="cleanupSummary" type="info" :closable="false" show-icon :title="cleanupSummary" />
+            <Notice v-if="cleanupSummary" severity="info" variant="compact">{{ cleanupSummary }}</Notice>
             <pre class="pre-block" style="margin-top: 8px">{{ prettyJson(cleanupResult) }}</pre>
           </div>
         </template>

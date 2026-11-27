@@ -29,6 +29,7 @@ import {
   type InspectorTreeRow,
   type SelectorBy,
 } from './lib/hierarchy'
+import Notice from '@/components/Notice.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -517,14 +518,9 @@ const modeHint = computed(() =>
     <div class="inspector-body">
       <div class="inspector-left">
         <section class="inspector-stage" :class="{ 'is-pick': mode === 'pick' }">
-          <el-alert
-            v-if="error"
-            type="error"
-            :closable="false"
-            show-icon
-            title="截图 / 层级获取失败"
-            :description="error"
-          />
+          <Notice v-if="error" severity="danger" title="截图 / 层级获取失败">
+            {{ error }}
+          </Notice>
           <el-skeleton v-else-if="!imageUrl && loading" :rows="6" animated />
           <el-empty v-else-if="!imageUrl" description="暂无截图" :image-size="64" />
           <div v-else ref="canvasRef" class="inspector-canvas">

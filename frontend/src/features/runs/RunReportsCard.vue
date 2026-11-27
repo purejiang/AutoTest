@@ -8,6 +8,7 @@ import { downloadReport, useDeleteReport, useGenerateReport, useReports } from '
 import type { Report } from '@/types/api'
 import { formatBytes, formatDateTime } from '@/lib/format'
 import StatusTag from '@/components/StatusTag.vue'
+import Notice from '@/components/Notice.vue'
 
 const props = defineProps<{ runId: number }>()
 const reportsQuery = useReports(computed(() => props.runId))
@@ -59,15 +60,14 @@ async function remove(report: Report): Promise<void> {
       </el-button>
     </div>
 
-    <el-alert
+    <Notice
       v-if="reportsQuery.isError.value"
-      type="warning"
-      :closable="false"
-      show-icon
+      severity="warning"
       title="报告列表加载失败"
-      :description="describeApiError(reportsQuery.error.value)"
       style="margin-bottom: 8px"
-    />
+    >
+      {{ describeApiError(reportsQuery.error.value) }}
+    </Notice>
 
     <el-empty v-if="reports.length === 0" description="还没有报告" :image-size="48" />
     <el-table v-else :data="reports" row-key="id" size="small">

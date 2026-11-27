@@ -6,6 +6,7 @@ import { computed, ref } from 'vue'
 import { useDebugRun, usePauseRun, useResumeCheck, useResumeRun, useStopRun, type ResumeCheckResult } from '@/api/runs'
 import type { RunDetail, Script } from '@/types/api'
 import { prettyJson, runStatusMeta } from '@/lib/format'
+import Notice from '@/components/Notice.vue'
 
 const props = defineProps<{
   run: RunDetail
@@ -161,15 +162,14 @@ const warnings = computed(() => {
         </el-button>
       </div>
 
-      <el-alert
+      <Notice
         v-if="isPaused"
-        type="warning"
-        :closable="false"
-        show-icon
+        severity="warning"
         title="运行已暂停（干预模式）"
-        description="点击「恢复（先检查）」会请求 resume-check，确认无 warning 后 hot resume；也可以选择从某个节点重跑。"
         style="margin-top: 10px"
-      />
+      >
+        点击「恢复（先检查）」会请求 resume-check，确认无 warning 后 hot resume；也可以选择从某个节点重跑。
+      </Notice>
 
       <div v-if="canRunFrom" style="margin-top: 10px">
         <div class="row wrap">
@@ -203,11 +203,9 @@ const warnings = computed(() => {
             恢复方式：
             <span class="tag blue">{{ String(checkResult.resume_kind ?? checkResult.kind) }}</span>
           </div>
-          <el-alert
+          <Notice
             v-if="warnings.length > 0"
-            type="warning"
-            :closable="false"
-            show-icon
+            severity="warning"
             title="恢复前确认（resume-check）"
           >
             <ul style="margin: 0; padding-left: 18px">
@@ -215,8 +213,8 @@ const warnings = computed(() => {
                 {{ typeof warning === 'string' ? warning : prettyJson(warning) }}
               </li>
             </ul>
-          </el-alert>
-          <el-alert v-else type="success" :closable="false" show-icon title="检查通过，可以恢复（hot resume）" />
+          </Notice>
+          <Notice v-else severity="success" title="检查通过，可以恢复（hot resume）" />
           <div v-if="checkResult.message" style="margin-top: 8px">{{ String(checkResult.message) }}</div>
           <pre class="pre-block" style="margin-top: 10px">{{ prettyJson(checkResult) }}</pre>
         </template>

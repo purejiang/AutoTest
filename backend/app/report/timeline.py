@@ -123,18 +123,26 @@ def read_network(path: Path) -> list[dict[str, Any]]:
         host = str(record.get("host") or "")
         port = record.get("port")
         scheme = str(record.get("scheme") or "")
-        entries.append(
-            {
-                "at": parsed.timestamp(),
-                "kind": "network",
-                "ts": parsed.isoformat(timespec="milliseconds"),
-                "host": host,
-                "port": port,
-                "scheme": scheme,
-                "text": f"{host}:{port} {scheme}".strip(),
-                "raw": record,
-            }
-        )
+        method = str(record.get("method") or "")
+        path = str(record.get("path") or "")
+        status = record.get("status")
+        entry: dict[str, Any] = {
+            "at": parsed.timestamp(),
+            "kind": "network",
+            "ts": parsed.isoformat(timespec="milliseconds"),
+            "host": host,
+            "port": port,
+            "scheme": scheme,
+            "text": f"{host}:{port} {scheme}".strip(),
+            "raw": record,
+        }
+        if method:
+            entry["method"] = method
+        if path:
+            entry["path"] = path
+        if isinstance(status, int):
+            entry["status"] = status
+        entries.append(entry)
     return entries
 
 

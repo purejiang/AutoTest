@@ -495,6 +495,14 @@ def test_sub_script_nested_execution(runner_env, monkeypatch):
     steps = get_steps(run_id)
     assert {step["step_id"] for step in steps} == {"c1", "p1"}
     assert {step["status"] for step in steps} == {"passed"}
+    child = next(step for step in steps if step["step_id"] == "c1")
+    meta = child["output"]["sub_script"]
+    assert meta["parent_step_id"] == "p1"
+    assert meta["depth"] == 1
+    assert meta["script_name"] == "子脚本"
+    assert meta["script_id"]
+    parent = next(step for step in steps if step["step_id"] == "p1")
+    assert "sub_script" not in (parent["output"] or {})
     assert len(runner_env.driver.calls_of("click")) == 1
 
 

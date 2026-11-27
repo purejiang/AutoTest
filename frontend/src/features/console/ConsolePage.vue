@@ -241,7 +241,7 @@ function openConnect(): void {
         >
           <template #extra>
             <p class="empty-note">手机已连接但仍看不到设备？请在「设置 → 工具链」检查 adb 路径与版本。</p>
-            <span v-if="devicesQuery.isError.value" class="empty-error">
+            <span v-if="devicesQuery.isError.value" class="inline-error empty-error">
               设备列表加载失败，请确认后端服务已启动。
             </span>
           </template>
@@ -367,8 +367,7 @@ function openConnect(): void {
 }
 
 .empty-error {
-  color: var(--red);
-  font-size: 10.5px;
+  margin-top: 2px;
 }
 
 .dock {

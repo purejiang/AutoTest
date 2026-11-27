@@ -21,6 +21,7 @@ import StatusTag from '@/components/StatusTag.vue'
 
 import RunMonitor from './RunMonitor.vue'
 import RunParamsDialog from './RunParamsDialog.vue'
+import Notice from '@/components/Notice.vue'
 
 const props = defineProps<{
   serial: string | null
@@ -309,7 +310,7 @@ watch(
         <div class="hint">
           默认覆盖：对所有脚本生效；运行参数弹窗会基于它预填并允许逐次修改。留空表示不覆盖，值按字符串发送。
         </div>
-        <div v-if="varsError" class="vars-error">{{ varsError }}</div>
+        <div v-if="varsError" class="inline-error vars-error">{{ varsError }}</div>
       </div>
 
       <div v-if="runId !== null" class="run-reopen">
@@ -318,14 +319,9 @@ watch(
         <el-button size="small" text @click="monitorVisible = true">查看监控</el-button>
       </div>
 
-      <el-alert
-        v-if="scriptsQuery.isError.value"
-        type="error"
-        :closable="false"
-        show-icon
-        title="脚本列表加载失败"
-        :description="describeApiError(scriptsQuery.error.value)"
-      />
+      <Notice v-if="scriptsQuery.isError.value" severity="danger" title="脚本列表加载失败">
+        {{ describeApiError(scriptsQuery.error.value) }}
+      </Notice>
 
       <div v-else-if="scriptsQuery.isLoading.value" class="script-loading">
         <el-skeleton :rows="4" animated />
@@ -474,8 +470,6 @@ watch(
 
 .vars-error {
   margin-top: 5px;
-  color: var(--red);
-  font-size: 10.5px;
 }
 
 .run-reopen {

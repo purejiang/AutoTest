@@ -29,6 +29,7 @@ import RunEventsPanel from './RunEventsPanel.vue'
 import RunReportsCard from './RunReportsCard.vue'
 import RunStepsTable from './RunStepsTable.vue'
 import './runs.css'
+import Notice from '@/components/Notice.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -176,14 +177,13 @@ function clearEvents(): void {
       </div>
     </div>
 
-    <el-alert
+    <Notice
       v-if="run.error?.message || run.error?.code"
-      type="error"
-      show-icon
-      :closable="false"
+      severity="danger"
       :title="`运行失败${run.error?.code ? `（${run.error.code}）` : ''}`"
-      :description="run.error?.message ?? '（无错误详情）'"
-    />
+    >
+      {{ run.error?.message ?? '（无错误详情）' }}
+    </Notice>
 
     <div class="run-grid">
       <div class="stack">

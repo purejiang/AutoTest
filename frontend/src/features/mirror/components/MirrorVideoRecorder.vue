@@ -14,6 +14,7 @@ import { ElMessage } from 'element-plus'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { formatBytes } from '@/lib/format'
+import Notice from '@/components/Notice.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -407,20 +408,14 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="card-body">
-      <el-alert
-        v-if="!supported"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="当前浏览器不支持浏览器端录制"
-        description="需要支持 MediaRecorder 与 canvas.captureStream 的 Chrome/Edge。"
-      />
-      <el-alert
+      <Notice v-if="!supported" severity="warning" title="当前浏览器不支持浏览器端录制">
+        需要支持 MediaRecorder 与 canvas.captureStream 的 Chrome/Edge。
+      </Notice>
+      <Notice
         v-else-if="error"
-        type="error"
-        :closable="true"
-        show-icon
+        severity="danger"
         :title="error"
+        closable
         style="margin-bottom: 8px"
         @close="error = null"
       />

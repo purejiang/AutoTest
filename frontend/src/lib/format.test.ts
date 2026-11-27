@@ -8,6 +8,7 @@ import {
   isTerminalRunStatus,
   numberOrNull,
   runDurationMs,
+  stepSubScriptContext,
   runEventLabel,
   runEventTone,
   runProgress,
@@ -154,5 +155,48 @@ describe('misc formatters', () => {
     expect(runDurationMs({ summary: { duration_ms: 123 } })).toBe(123)
     expect(runDurationMs({ started_at: '2026-01-01T00:00:00Z', ended_at: '2026-01-01T00:00:02Z' })).toBe(2000)
     expect(runDurationMs({})).toBeNull()
+  })
+})
+
+describe('stepSubScriptContext', () => {
+  const base = {
+    id: 1,
+    run_id: 1,
+    step_id: 'c1',
+    step_name: '子点击',
+    step_type: 'click',
+    step_index: 0,
+    status: 'passed',
+    attempts: 1,
+    started_at: null,
+    ended_at: null,
+    duration_ms: 1,
+    error: null,
+    output: null,
+  } as const
+
+  it('解析后端写入的父节点/深度/脚本名', () => {
+    const ctx = stepSubScriptContext({
+      ...base,
+      output: {
+        sub_script: {
+          parent_step_id: 'p1',
+          depth: 2,
+          script_id: 's-child',
+          script_name: '子脚本',
+        },
+      },
+    })
+    expect(ctx).toEqual({
+      parentStepId: 'p1',
+      depth: 2,
+      scriptId: 's-child',
+      scriptName: '子脚本',
+    })
+  })
+
+  it('普通节点/旧运行返回 null', () => {
+    expect(stepSubScriptContext({ ...base, output: { ok: true } })).toBeNull()
+    expect(stepSubScriptContext({ ...base, output: null })).toBeNull()
   })
 })

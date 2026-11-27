@@ -12,6 +12,8 @@ import { editRetry, resolveRetry, toggleRetry } from './lib/retry'
 import { NODE_TYPE_META, RERUN_SAFETY_OPTIONS } from './nodeDefaults'
 import ParamsEditor from './ParamsEditor.vue'
 import WhenEditor from './WhenEditor.vue'
+import HelpTip from '@/components/HelpTip.vue'
+import Notice from '@/components/Notice.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
 const props = withDefaults(
@@ -75,11 +77,11 @@ const gotoLabel = computed(() =>
 const retryState = computed(() => resolveRetry(props.node.retry, props.defaultRetry))
 const retryHint = computed(() => {
   if (retryState.value.mode === 'inherit') {
-    return '继承脚本默认；直接修改下面的次数/间隔即改为节点自定义。'
+    return '继承脚本默认；改次数/间隔即自定义。'
   }
-  if (retryState.value.mode === 'custom' && props.defaultRetry) return '该节点自定义，优先于脚本默认。'
+  if (retryState.value.mode === 'custom' && props.defaultRetry) return '优先于脚本默认。'
   if (retryState.value.mode === 'off' && retryState.value.overridden && props.defaultRetry) {
-    return '已显式关闭，不再继承脚本默认。'
+    return '已显式关闭。'
   }
   return ''
 })
@@ -87,6 +89,36 @@ const retryHint = computed(() => {
 const screenshotEffective = computed(
   () => props.node.screenshot_on_fail && props.scriptScreenshotOnFail,
 )
+
+/** wait 节点自身的等待时长（sleep 的 ms / until 的 timeout_ms）；非 wait 返回 null。 */
+const waitDurationMs = computed<number | null>(() => {
+  if (props.node.type !== 'wait') return null
+  const params = props.node.params as { mode?: string; ms?: number; timeout_ms?: number }
+  // 与 UI/后端 schema 默认值保持一致：until 默认 5000ms，sleep 默认 1000ms。
+  const duration = params.mode === 'sleep' ? (params.ms ?? 1000) : (params.timeout_ms ?? 5000)
+  if (typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0) return null
+  return Math.round(duration)
+})
+
+/** 继承节点超时时，引擎会把 wait 的等待时长 + 2s 作为下限。 */
+const autoNodeTimeoutMs = computed<number | null>(() => {
+  if (waitDurationMs.value === null) return null
+  return Math.min(waitDurationMs.value + 2000, 600000)
+})
+
+const nodeTimeoutPlaceholder = computed(() => {
+  if (autoNodeTimeoutMs.value !== null) return `自动 ${autoNodeTimeoutMs.value} ms（等待 + 2s）`
+  return `默认 ${props.defaultTimeoutMs} ms`
+})
+
+/** 显式节点超时小于「等待 + 2s」时会被提前截断，给出可操作的提醒。 */
+const waitTimeoutCut = computed<{ node: number; needed: number; wait: number } | null>(() => {
+  if (waitDurationMs.value === null || props.node.timeout_ms == null) return null
+  const needed = Math.min(waitDurationMs.value + 2000, 600000)
+  const node = Number(props.node.timeout_ms)
+  if (!Number.isFinite(node) || node >= needed) return null
+  return { node, needed, wait: waitDurationMs.value }
+})
 
 const flow = computed(() =>
   describeFailureFlow({
@@ -184,17 +216,15 @@ function delayPlaceholder(defaultValue: number): string {
     <el-form class="node-editor-form" label-position="top" size="small" @submit.prevent>
       <div class="section-label">动作参数</div>
       <ParamsEditor :type="node.type" :params="node.params" @change="patch({ params: $event })" />
-      <el-alert
+      <Notice
         v-if="nodeMissingVariables.length > 0"
         class="node-var-warning"
-        type="warning"
-        :closable="false"
-        show-icon
+        severity="warning"
         title="当前节点使用了未声明的脚本变量"
       >
         <div class="row wrap node-var-warning-body">
           <span class="hint">
-            运行时若没有覆盖，<code class="code-text" v-pre>{{var}}</code> 会原样传给设备：
+            运行时若没有覆盖，<code class="code-text" v-pre>{{var}}</code> 会原样传给设备
           </span>
           <el-button
             v-for="name in nodeMissingVariables"
@@ -207,7 +237,7 @@ function delayPlaceholder(defaultValue: number): string {
             {{ name }} · 声明
           </el-button>
         </div>
-      </el-alert>
+      </Notice>
 
       <div class="form-grid" style="margin-top: 6px">
         <el-form-item label="描述" class="full">
@@ -231,16 +261,29 @@ function delayPlaceholder(defaultValue: number): string {
 
       <div class="section-label">执行</div>
       <div class="form-grid">
-        <el-form-item label="节点超时 (ms)" class="hint">
+        <el-form-item>
+          <template #label>
+            节点超时 (ms)
+            <HelpTip text="整个节点的硬上限（含动作耗时）。留空时 wait 节点自动 = 等待超时 + 2s；显式设置更小会截断等待。" />
+          </template>
           <el-input-number
             :model-value="node.timeout_ms ?? undefined"
             :min="100"
             :max="600000"
-            :placeholder="`默认 ${defaultTimeoutMs} ms`"
+            :placeholder="nodeTimeoutPlaceholder"
             controls-position="right"
             style="width: 100%"
             @update:model-value="patch({ timeout_ms: numberOrNull($event) })"
           />
+          <Notice
+            v-if="waitTimeoutCut"
+            severity="warning"
+            variant="compact"
+            style="margin-top: 6px"
+          >
+            节点超时 {{ waitTimeoutCut.node }}ms 小于等待超时 + 2s（{{ waitTimeoutCut.needed }}ms），
+            等待可能被提前截断；建议留空或调到 ≥ {{ waitTimeoutCut.needed }}ms。
+          </Notice>
         </el-form-item>
       </div>
 
@@ -250,7 +293,11 @@ function delayPlaceholder(defaultValue: number): string {
         <span>{{ flow.summary }}</span>
       </div>
       <div class="form-grid">
-        <el-form-item label="重试" class="full">
+        <el-form-item class="full">
+          <template #label>
+            重试
+            <HelpTip text="1 = 额外重试 1 次（最多执行 2 次）；条件不满足也会直接进入失败策略。" />
+          </template>
           <div class="retry-row">
             <el-switch
               data-test="node-retry"
@@ -301,9 +348,13 @@ function delayPlaceholder(defaultValue: number): string {
             >恢复继承</el-button>
           </div>
           <div v-if="retryHint" class="hint" style="margin-top: 4px">{{ retryHint }}</div>
-          <div class="hint" style="margin-top: 2px">次数为额外重试次数，1 = 最多执行 2 次。</div>
+          <div v-if="retryState.enabled" class="hint" style="margin-top: 2px">额外次数，1 = 最多 2 次；断言失败不重试。</div>
         </el-form-item>
-        <el-form-item label="失败策略（重试用尽后）" class="full">
+        <el-form-item class="full">
+          <template #label>
+            失败策略（重试用尽后）
+            <HelpTip text="跳转是高级动作：失败后跳到目标节点，重入会重置目标及之后节点的重试计数；一般保持中止/继续即可。" />
+          </template>
           <div class="row wrap">
             <el-select
               data-test="on-fail"
@@ -335,7 +386,7 @@ function delayPlaceholder(defaultValue: number): string {
             </el-select>
           </div>
           <div v-if="onFailAction === 'goto'" class="hint" style="margin-top: 4px">
-            失败后跳到目标节点；重入会重置目标及之后节点的重试计数。一般保持中止/继续即可。
+            失败后跳到目标节点；重入会重置后续重试计数。
           </div>
         </el-form-item>
         <el-form-item label="失败时截图" class="full">
@@ -349,13 +400,12 @@ function delayPlaceholder(defaultValue: number): string {
               @update:model-value="patch({ screenshot_on_fail: Boolean($event) })"
             />
             <span v-if="!scriptScreenshotOnFail" class="hint">
-              脚本设置里已关闭「失败时自动截图」，此开关不生效。
+              脚本已关闭失败截图，此开关不生效。
             </span>
             <span v-else class="hint">{{ screenshotEffective ? '失败时保存截图' : '该节点不截图' }}</span>
           </div>
         </el-form-item>
       </div>
-      <div class="hint">断言失败 / 执行条件不满足不重试，直接进入失败策略。</div>
 
       <el-collapse v-model="advancedOpen" style="margin-top: 8px">
         <el-collapse-item name="advanced">
@@ -367,7 +417,11 @@ function delayPlaceholder(defaultValue: number): string {
             <el-form-item label="节点 ID" class="full">
               <code class="code-text">{{ node.id }}</code>
             </el-form-item>
-            <el-form-item label="重跑安全性">
+            <el-form-item>
+              <template #label>
+                重跑安全性
+                <HelpTip text="safe 可安全重跑；stateful 依赖运行状态；destructive 会清数据，恢复时必须确认。" />
+              </template>
               <el-select
                 :model-value="node.rerun_safety"
                 style="width: 100%"
@@ -422,8 +476,8 @@ function delayPlaceholder(defaultValue: number): string {
             </el-form-item>
           </div>
           <div class="hint">
-            停顿位于节点动作之外，只影响节奏；留空继承脚本设置里的默认停顿，填写大于 0 的值为该节点自定义。
-            真正等待界面变化时使用 wait 节点或执行条件。
+            留空继承脚本默认；大于 0 即节点自定义。
+            <HelpTip text="真正等待界面变化时用 wait 节点或执行条件。" />
           </div>
         </el-collapse-item>
       </el-collapse>

@@ -302,8 +302,9 @@ def test_build_report_timeline_groups_run_logcat_by_step(report_env, tmp_path) -
     result = build_report(seed["run_id"])
     with zipfile.ZipFile(Path(result["path"])) as archive:
         html = archive.read("index.html").decode("utf-8")
-        assert "节点时间线" in html
-        assert "合并时间线" in html
+        assert "节点列表" in html
+        assert "节点详情" in html
+        assert "全局时间线" in html
         assert "step one" in html
         assert "step two" in html
         steps = json.loads(archive.read("steps.json").decode("utf-8"))

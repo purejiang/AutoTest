@@ -189,8 +189,6 @@
 .mirror-errorline {
   min-height: 18px;
   overflow: hidden;
-  color: var(--red);
-  font-size: 12px;
   line-height: 18px;
   white-space: nowrap;
   text-overflow: ellipsis;

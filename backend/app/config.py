@@ -117,7 +117,13 @@ DEFAULTS: dict[str, Any] = {
 
 # 设置页展示白名单（GET /api/settings 渲染顺序）
 SETTINGS_SCHEMA: list[dict[str, Any]] = [
-    {"key": "adb.path", "type": "string", "title": "ADB 可执行文件", "desc": "留空自动探测系统 adb"},
+    {
+        "key": "adb.path",
+        "type": "string",
+        "title": "ADB 可执行文件",
+        "desc": "留空自动探测",
+        "help": "默认从 PATH 和常见 SDK 目录探测 adb；也可填绝对路径。",
+    },
     {
         "key": "adb.connect_timeout_s",
         "type": "int",
@@ -130,7 +136,8 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "key": "runtime.data_dir",
         "type": "string",
         "title": "数据目录",
-        "desc": "启动项：默认值见输入框占位路径；要改请写 ~/.autotest/config.json 或 AUTOTEST_DATA_DIR，然后重启",
+        "desc": "启动项；改动后需重启",
+        "help": "默认 ~/.autotest/data；也可写 ~/.autotest/config.json 或设置环境变量 AUTOTEST_DATA_DIR。",
     },
     {
         "key": "engine.poll_interval_ms",
@@ -147,6 +154,7 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "min": 500,
         "max": 600000,
         "desc": "节点未单独设置超时时使用",
+        "help": "脚本设置里的「默认节点超时」会覆盖此值。",
     },
     {
         "key": "engine.default_delay_before_ms",
@@ -154,7 +162,8 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "title": "新建脚本默认执行前停顿（ms）",
         "min": 0,
         "max": 600000,
-        "desc": "只作为新建脚本的初值；节点停顿留空时跟随脚本默认，录制脚本不受影响",
+        "desc": "只影响新建脚本；节点留空时继承脚本默认",
+        "help": "录制转换生成的脚本固定写 0，不受此设置影响。",
     },
     {
         "key": "engine.default_delay_after_ms",
@@ -162,7 +171,8 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "title": "新建脚本默认执行后停顿（ms）",
         "min": 0,
         "max": 600000,
-        "desc": "只作为新建脚本的初值；节点停顿留空时跟随脚本默认，录制脚本不受影响",
+        "desc": "只影响新建脚本；节点留空时继承脚本默认",
+        "help": "录制转换生成的脚本固定写 0，不受此设置影响。",
     },
     {
         "key": "engine.default_on_fail",
@@ -172,7 +182,8 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
             {"label": "中止整个运行（abort）", "value": "abort"},
             {"label": "继续下一步（continue）", "value": "continue"},
         ],
-        "desc": "重试用尽后的动作；只作为新建脚本的初值，脚本/节点可覆盖，已有脚本不受影响",
+        "desc": "重试用尽后的动作；仅新建脚本初值",
+        "help": "脚本设置和节点都可以单独覆盖；已有脚本不受影响。",
     },
     {
         "key": "engine.max_total_ms",
@@ -195,7 +206,8 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "title": "按设备长边缩放（%）",
         "min": 50,
         "max": 100,
-        "desc": "按设备长边百分比缩放；实际分辨率启动时计算，不放大",
+        "desc": "按设备长边百分比缩放，不放大",
+        "help": "实际分辨率在镜像启动时计算。",
     },
     {
         "key": "scrcpy.max_size",
@@ -203,7 +215,8 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "title": "镜像长边上限（px）",
         "min": 480,
         "max": 4096,
-        "desc": "缩放后的长边上限，越高越清晰、越费带宽",
+        "desc": "缩放后的长边上限",
+        "help": "越高越清晰，越费带宽。",
     },
     {
         "key": "scrcpy.max_fps",
@@ -211,7 +224,8 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "title": "镜像帧率（fps）",
         "min": 0,
         "max": 240,
-        "desc": "0 = 不限（跟随设备刷新率，与 scrcpy 默认一致）；只有在电脑解码跟不上时才需要限帧",
+        "desc": "0 = 跟随设备刷新率（不限）",
+        "help": "只有电脑解码跟不上时才需要限帧；与 scrcpy 默认一致。",
     },
     {
         "key": "scrcpy.video_bit_rate",
@@ -225,13 +239,15 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "key": "scrcpy.crop",
         "type": "string",
         "title": "裁剪区域（w:h:x:y）",
-        "desc": "留空不裁剪；格式为宽:高:x:y",
+        "desc": "留空不裁剪",
+        "help": "格式为 宽:高:x:y。",
     },
     {
         "key": "scrcpy.jar",
         "type": "string",
         "title": "scrcpy-server JAR 路径",
-        "desc": "留空使用内置 vendor 版本",
+        "desc": "留空使用内置版本",
+        "help": "一般无需修改；内置 vendor 版本与设置的 scrcpy 版本匹配。",
     },
     {
         "key": "recording.click_dump",
@@ -253,19 +269,22 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
             {"label": "绝对坐标（推荐）", "value": "point"},
             {"label": "元素定位（失败回退坐标）", "value": "element"},
         ],
-        "desc": "坐标最稳；元素定位更耐分辨率变化，失败会回退坐标",
+        "desc": "录制转脚本的默认定位方式",
+        "help": "坐标最稳；元素定位更耐分辨率变化，失败会回退坐标。",
     },
     {
         "key": "capture.logcat_auto_attach",
         "type": "bool",
         "title": "允许采集 logcat",
-        "desc": "总开关；开启后脚本里可勾选本次采集，也可在控制台手动开始；关闭时两处都置灰",
+        "desc": "总开关；关闭时脚本和控制台都置灰",
+        "help": "开启后脚本里可勾选本次采集，也可在控制台手动开始。",
     },
     {
         "key": "capture.network.enabled",
         "type": "bool",
         "title": "允许网络域名抓包",
-        "desc": "总开关；开启后脚本里可勾选本次抓取，也可在控制台手动开始；只记录 host/port，不抓 Header 与正文",
+        "desc": "总开关；只记录 host/port",
+        "help": "开启后脚本里可勾选本次抓取，也可在控制台手动开始；不抓 Header 与正文。",
     },
     {
         "key": "capture.network.port",
@@ -273,7 +292,8 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "title": "域名抓包端口",
         "min": 1024,
         "max": 65535,
-        "desc": "本机代理监听端口，默认 8080；被占用时修改",
+        "desc": "本机代理监听端口",
+        "help": "默认 8080；被占用时修改。",
     },
     {
         "key": "retention.days",
@@ -288,6 +308,7 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "type": "bool",
         "title": "报告中排除视频",
         "desc": "减小报告体积",
+        "help": "报告 zip 里不包含录屏视频。",
     },
     {
         "key": "retention.report_max_mb",
@@ -296,12 +317,14 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "min": 1,
         "max": 4096,
         "desc": "超过时排除大文件",
+        "help": "按报告体积上限排除视频等大文件。",
     },
     {
         "key": "security.token",
         "type": "string",
         "title": "访问令牌",
-        "desc": "留空不校验；对外暴露服务时建议设置并重启后端",
+        "desc": "留空不校验",
+        "help": "对外暴露服务时建议设置并重启后端。",
     },
 ]
 

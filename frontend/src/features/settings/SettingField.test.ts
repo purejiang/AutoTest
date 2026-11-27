@@ -10,6 +10,11 @@ const inputStub = {
   template: '<input class="fake-input" :placeholder="placeholder" />',
 }
 
+const helpStub = {
+  props: ['text'],
+  template: '<span class="fake-help">{{ text }}</span>',
+}
+
 function mountField(entry: SettingEntry, modelValue: string | number | boolean | null) {
   return mount(SettingField, {
     props: { entry, modelValue, source: 'default' },
@@ -21,6 +26,7 @@ function mountField(entry: SettingEntry, modelValue: string | number | boolean |
         'el-select': true,
         'el-option': true,
         'el-switch': true,
+        HelpTip: helpStub,
       },
     },
   })
@@ -41,6 +47,22 @@ describe('SettingField', () => {
       '/home/user/.autotest/data',
     )
     expect(wrapper.find('.setting-default').exists()).toBe(false)
+  })
+
+  it('短说明用统一 .hint；长说明进标题右侧 HelpTip', () => {
+    const wrapper = mountField(
+      {
+        key: 'runtime.data_dir',
+        type: 'string',
+        title: '数据目录',
+        desc: '启动项；改动后需重启',
+        help: '默认 ~/.autotest/data；也可写 config.json 或设置环境变量。',
+      },
+      '',
+    )
+    expect(wrapper.find('.field-desc').classes()).toContain('hint')
+    expect(wrapper.find('.field-desc').text()).toBe('启动项；改动后需重启')
+    expect(wrapper.find('.fake-help').text()).toContain('config.json')
   })
 
   it('数字项保留默认行，供空值时参考', () => {

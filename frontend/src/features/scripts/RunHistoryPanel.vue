@@ -18,6 +18,7 @@ import {
   runStatusMeta,
 } from '@/lib/format'
 import { notifyBulkDeleteResult } from '@/lib/bulk'
+import Notice from '@/components/Notice.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
 const router = useRouter()
@@ -172,20 +173,12 @@ function handleStatusChange(): void {
 
 <template>
   <div class="run-history-panel">
-    <el-alert
-      v-if="runsQuery.isError.value"
-      type="error"
-      show-icon
-      :closable="false"
-      title="运行记录加载失败"
-    >
-      <template #default>
-        <div class="row wrap">
-          <span>{{ describeApiError(runsQuery.error.value) }}</span>
-          <el-button size="small" @click="refreshRuns">重试</el-button>
-        </div>
-      </template>
-    </el-alert>
+    <Notice v-if="runsQuery.isError.value" severity="danger" title="运行记录加载失败">
+      <div class="row wrap">
+        <span>{{ describeApiError(runsQuery.error.value) }}</span>
+        <el-button size="small" @click="refreshRuns">重试</el-button>
+      </div>
+    </Notice>
 
     <div class="card table-card">
       <div class="panel-toolbar">

@@ -8,6 +8,8 @@ import { computed, onMounted, ref } from 'vue'
 
 import type { SettingEntry } from '@/types/api'
 import { numberOrNull, settingSourceMeta } from '@/lib/format'
+import HelpTip from '@/components/HelpTip.vue'
+import Notice from '@/components/Notice.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import RestartHint from './RestartHint.vue'
 
@@ -285,9 +287,10 @@ function defaultLabel(key: string): string {
       </div>
 
       <div class="preset-hint">
-        <strong>预设</strong>只决定画质（缩放 + 码率），选中后在卡片上直接显示取值；要逐项改缩放 /
-        长边上限 / 码率 / 裁剪时选「<strong>自定义</strong>」。<strong>帧率</strong>与画质正交，任何模式下都能单独设（0 = 不限）。<br />
-        100% 使用设备原生分辨率；低于 100% 时按设备长边比例缩放并受长边上限约束，实际分辨率在启动镜像时计算，不放大。
+        <strong>预设</strong>只决定画质；<strong>帧率</strong>独立可调，任何模式下都能单独设。
+        <HelpTip
+          text="100% 使用设备原生分辨率；低于 100% 按设备长边比例缩放并受长边上限约束；实际分辨率在镜像启动时计算，不放大。"
+        />
       </div>
 
       <div v-if="summary" class="mirror-summary">
@@ -328,12 +331,16 @@ function defaultLabel(key: string): string {
             :label="option.label"
           />
         </el-select>
-        <div v-if="fpsOverkill !== null" class="field-hint-warn">
-          本机屏幕约 {{ fpsOverkill }}Hz：设 0 会让设备按自身刷新率（可能 120Hz）推流，约一半解码是白费；
-          建议改成 {{ fpsOverkill }}。
-        </div>
+        <Notice
+          v-if="fpsOverkill !== null"
+          class="fps-warning"
+          severity="warning"
+          variant="compact"
+        >
+          本机约 {{ fpsOverkill }}Hz：0 会按设备刷新率推流，建议改成 {{ fpsOverkill }}。
+        </Notice>
         <div v-else-if="fpsIsUnlimited" class="field-default">
-          0 = 不限，跟随设备刷新率（与 scrcpy 默认一致）；画质预设不受影响
+          0 = 跟随设备刷新率；画质预设不受影响
         </div>
         <div v-else-if="hasDefault('scrcpy.max_fps')" class="field-default">
           默认：{{ defaultLabel('scrcpy.max_fps') }}（不限）
@@ -541,23 +548,21 @@ function defaultLabel(key: string): string {
 
 .preset-note {
   color: var(--muted-2);
-  font-size: 9.5px;
+  font-size: 10.5px;
 }
 
 .preset-hint {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   margin: 4px 0 8px;
   color: var(--muted-2);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
-.field-hint-warn {
-  padding: 4px 6px;
-  border-radius: 5px;
-  background: var(--amber-soft);
-  color: var(--amber);
-  font-size: 9.5px;
-  line-height: 1.45;
+.fps-warning {
+  grid-column: 1 / -1;
 }
 
 .preset-hint strong {
@@ -599,8 +604,7 @@ function defaultLabel(key: string): string {
   margin-bottom: 10px;
 }
 
-.field.fps-row .field-default,
-.field.fps-row .field-hint-warn {
+.field.fps-row .field-default {
   grid-column: 1 / -1;
 }
 
@@ -626,7 +630,7 @@ function defaultLabel(key: string): string {
 
 .field-default {
   color: var(--muted-2);
-  font-size: 10px;
+  font-size: 10.5px;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }

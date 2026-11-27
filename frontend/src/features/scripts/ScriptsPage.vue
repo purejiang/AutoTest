@@ -38,6 +38,7 @@ import { notifyBulkDeleteResult } from '@/lib/bulk'
 import type { Recording, Script } from '@/types/api'
 import AppTabs from '@/components/AppTabs.vue'
 import type { AppTabItem } from '@/components/appTabs'
+import Notice from '@/components/Notice.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
 import { scriptStepCount } from './nodeDefaults'
@@ -343,20 +344,12 @@ async function handleImportFile(event: Event): Promise<void> {
     </div>
 
     <template v-if="activeTab === 'library'">
-      <el-alert
-        v-if="scriptsQuery.isError.value"
-        type="error"
-        :closable="false"
-        show-icon
-        title="脚本列表加载失败"
-      >
-        <template #default>
-          <div class="row wrap">
-            <span>{{ describeApiError(scriptsQuery.error.value) }}</span>
-            <el-button size="small" @click="refreshScripts">重试</el-button>
-          </div>
-        </template>
-      </el-alert>
+      <Notice v-if="scriptsQuery.isError.value" severity="danger" title="脚本列表加载失败">
+        <div class="row wrap">
+          <span>{{ describeApiError(scriptsQuery.error.value) }}</span>
+          <el-button size="small" @click="refreshScripts">重试</el-button>
+        </div>
+      </Notice>
 
       <div class="card table-card">
         <div v-if="selectedScripts.length > 0" class="batch-bar">

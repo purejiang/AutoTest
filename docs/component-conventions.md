@@ -6,7 +6,8 @@
 ## 1. 目录与边界
 
 - `components/`：跨 feature 的通用视觉组件。当前：`AppTabs`、`EmptyState`、`PageHead`、`StatusTag`、
-  `VariableField`、`VariablePickerButton`。新增前先确认已有组件是否可扩展，不要复制一份。
+  `Notice`（状态/警告）、`HelpTip`（标题旁长说明）、`VariableField`、`VariablePickerButton`。
+  新增前先确认已有组件是否可扩展，不要复制一份。
 - `composables/`：跨 feature 的通用状态/浏览器能力（`useTheme`、`usePersistentFlag`、
   `useScriptVariables`）。域名相关逻辑放 `features/<域>/composables/`。
 - `lib/`：无 Vue 依赖、**跨 feature 复用**的纯函数（`format`、`scriptVars`、`bulk`、`clipboard`）。
@@ -61,6 +62,38 @@
   标签/说明、右侧放 280px 控件；容器更窄时自动上下堆叠（`@container`，不是写死视口断点）。
   不要再把设置字段排成固定两列，也不要把控件拉满整张卡片。
 - 错误提示沿用全局 `notifyApiError`；只有需要自定义交互（如逐字段错误）时才捕获 mutation 错误。
+
+### 4.1 说明、帮助与警告
+
+说明文字分五层，不要把所有解释都堆在字段下面：
+
+| 层 | 位置 | 用途 | 长度 |
+|---|---|---|---|
+| Label | 控件上方/左侧 | 名称 | 名词短语 |
+| Hint | 标题/控件下方，始终可见 | 影响、边界、继承关系 | 中文 ≤40 字，桌面 1 行、窄屏 ≤2 行 |
+| HelpTip | 标题右侧 `?` | 示例、长解释、链接 | 不限制，但不放关键前置条件 |
+| Default | 控件下方 | “默认：8000” | 只放值/来源 |
+| Notice | 页面/卡片顶部或字段旁 | 状态、风险、失败、操作 | 标题 ≤20 字，正文 ≤2 句 |
+
+- 短说明用全局 `.hint`；长说明用 [HelpTip](../frontend/src/components/HelpTip.vue)；
+  **关键信息不能只放在 tooltip 或 placeholder 里**（NN/g 表单建议）。
+- 同一事实只出现一次：label / hint / placeholder / default 不互相复述。
+- 说明要紧挨触发它的控件：动作/模式（如「清除数据」「grant」）的提示放在该下拉框下方，
+  不要放到后面的 package/参数字段下面；开关关闭时不再显示只对开启状态有意义的计数说明。
+- 状态提示统一用 [Notice](../frontend/src/components/Notice.vue)，四级语义：
+
+| severity | 颜色 | 图标 | 使用场景 |
+|---|---|---|---|
+| info | 蓝 `--accent` | info | 解释、只读、启动项 |
+| success | 绿 `--green` | check | 保存成功、检查通过 |
+| warning | 黄 `--amber` | warning | 非阻断风险、性能/成本提醒、依赖未开启 |
+| danger | 红 `--red` | error | 失败、阻断、数据丢失 |
+
+- 黄色只表示“注意/风险”，红色只表示“已失败/阻断”；颜色必须配合图标和文案，不能只靠颜色。
+- `variant="compact"` 用于字段旁，`block` 用于页面/卡片级；字段校验错误继续用 `el-form-item` 红字，
+  不再额外套 Notice；瞬时操作结果继续用 `ElMessage`；行内状态继续用 `StatusTag`。
+- 禁止新增 `.field-hint-warn` / `.inline-warning` / `.video-warning` 之类的 ad-hoc 警告盒子；
+  新增提示先判断能否用 `.hint` / HelpTip / Notice 三种。
 
 ## 5. 后端契约类型
 
