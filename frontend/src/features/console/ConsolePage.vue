@@ -82,13 +82,7 @@ function applyQueryState(query: LocationQuery): boolean {
     consumed = true
   }
   const manual = query.manual
-  if (
-    manual === 'video' ||
-    manual === 'record' ||
-    manual === 'text' ||
-    manual === 'app' ||
-    manual === 'tools'
-  ) {
+  if (manual === 'record' || manual === 'text' || manual === 'app' || manual === 'tools') {
     ui.setManualTab(manual)
     consumed = true
   }

@@ -56,12 +56,15 @@ const router = useRouter()
 const ui = useUiStore()
 
 const MANUAL_TABS = [
-  { value: 'video', label: '视频', icon: VideoCamera },
   { value: 'record', label: '镜像', icon: VideoPlay },
   { value: 'text', label: '文本', icon: EditPen },
   { value: 'app', label: '应用', icon: Link },
   { value: 'tools', label: '工具', icon: Grid },
 ] as const
+
+// 视频录制 / 设备信息不再占一级 tab，改为「工具」里的子项 + 侧边抽屉。
+const videoOpen = ref(false)
+const infoOpen = ref(false)
 
 const activeTab = computed({
   get: () => ui.manualTab,
@@ -244,33 +247,6 @@ function refreshDeviceInfo(): void {
     </div>
 
     <div class="manual-pages">
-      <!-- 视频录制 -->
-      <section v-show="activeTab === 'video'" class="manual-page">
-        <div class="section-head">
-          <h3>
-            <el-icon><VideoCamera /></el-icon>视频录制
-          </h3>
-          <StatusTag tone="blue">浏览器画面</StatusTag>
-          <StatusTag tone="amber">刷新即丢失</StatusTag>
-        </div>
-        <div class="video-warning">
-          <el-icon><InfoFilled /></el-icon>
-          <span>
-            <strong>视频暂不持久化：</strong
-            >只保存在当前浏览器内存，刷新或关闭页面即丢失；需要保留请停止后立即下载。
-          </span>
-        </div>
-        <MirrorVideoRecorder
-          :serial="serial"
-          :get-source="getSource"
-          :overlay="getOverlay"
-          :enabled="streaming"
-        />
-        <div class="section-sub">
-          录制当前镜像画面，支持暂停/继续；停止后可预览、拖动进度和下载，下载后才会保留。
-        </div>
-      </section>
-
       <!-- 镜像录制 -->
       <section v-show="activeTab === 'record'" class="manual-page">
         <div class="section-head">
@@ -431,6 +407,25 @@ function refreshDeviceInfo(): void {
               {{ recActive || recPending ? '刷新状态' : '查看状态' }}
             </el-button>
           </div>
+          <div class="tool-item">
+            <span class="tool-ico"
+              ><el-icon><VideoCamera /></el-icon
+            ></span>
+            <div class="tool-main">
+              <strong>视频录制</strong>
+              <small>录制镜像画面（含点击/滑动特效），停止后可下载；仅存浏览器内存</small>
+            </div>
+            <el-button size="small" :disabled="!streaming" @click="videoOpen = true">打开</el-button>
+          </div>
+          <div class="tool-item">
+            <span class="tool-ico"
+              ><el-icon><InfoFilled /></el-icon
+            ></span>
+            <div class="tool-main">
+              <strong>设备信息</strong><small>型号 / 系统 / 分辨率 / 占用与镜像状态</small>
+            </div>
+            <el-button size="small" @click="infoOpen = true">打开</el-button>
+          </div>
         </div>
 
         <div class="manual-divider" />
@@ -513,46 +508,6 @@ function refreshDeviceInfo(): void {
 
         <div class="manual-divider" />
 
-        <div class="section-head">
-          <h3>
-            <el-icon><InfoFilled /></el-icon>设备信息
-          </h3>
-        </div>
-        <div class="info-grid">
-          <div class="kv">
-            <span>serial</span><strong class="code-text">{{ info?.serial ?? serial }}</strong>
-          </div>
-          <div class="kv">
-            <span>型号</span
-            ><strong>{{ [info?.brand, info?.model].filter(Boolean).join(' ') || '—' }}</strong>
-          </div>
-          <div class="kv">
-            <span>Android</span
-            ><strong>{{ info?.android_version ?? '—' }} (SDK {{ info?.sdk ?? '—' }})</strong>
-          </div>
-          <div class="kv">
-            <span>分辨率</span
-            ><strong>{{ info?.screen_width ?? '—' }} × {{ info?.screen_height ?? '—' }}</strong>
-          </div>
-          <div class="kv">
-            <span>状态</span><strong>{{ busy ? (device?.busy_reason ?? '占用中') : '空闲' }}</strong>
-          </div>
-          <div class="kv">
-            <span>镜像</span><strong>{{ mirrorLabel }}</strong>
-          </div>
-        </div>
-        <el-button
-          size="small"
-          style="margin-top: 7px"
-          :icon="Refresh"
-          :loading="infoQuery.isFetching.value"
-          @click="refreshDeviceInfo"
-        >
-          刷新信息
-        </el-button>
-
-        <div class="manual-divider" />
-
         <label class="field">
           <span>Shell 命令</span>
           <el-input
@@ -571,9 +526,63 @@ function refreshDeviceInfo(): void {
           >执行</el-button
         >
         <pre v-if="shellOutput" class="pre-block" style="margin-top: 8px">{{ shellOutput }}</pre>
-        <div class="section-sub">层级树、logcat 和 shell 都作用于当前镜像设备。</div>
+        <div class="section-sub">以上工具都作用于当前选中设备。</div>
       </section>
     </div>
+
+    <el-drawer v-model="videoOpen" title="视频录制（浏览器画面）" size="min(540px, 94vw)" append-to-body>
+      <div class="video-warning">
+        <el-icon><InfoFilled /></el-icon>
+        <span>
+          <strong>视频暂不持久化：</strong
+          >只保存在当前浏览器内存，刷新或关闭页面即丢失；需要保留请停止后立即下载。
+        </span>
+      </div>
+      <MirrorVideoRecorder
+        :serial="serial"
+        :get-source="getSource"
+        :overlay="getOverlay"
+        :enabled="streaming"
+      />
+      <div class="section-sub">
+        录制当前镜像画面，支持暂停/继续；停止后可预览、拖动进度和下载，下载后才会保留。
+      </div>
+    </el-drawer>
+
+    <el-drawer v-model="infoOpen" title="设备信息" size="min(420px, 94vw)" append-to-body>
+      <div class="info-grid">
+        <div class="kv">
+          <span>serial</span><strong class="code-text">{{ info?.serial ?? serial }}</strong>
+        </div>
+        <div class="kv">
+          <span>型号</span
+          ><strong>{{ [info?.brand, info?.model].filter(Boolean).join(' ') || '—' }}</strong>
+        </div>
+        <div class="kv">
+          <span>Android</span
+          ><strong>{{ info?.android_version ?? '—' }} (SDK {{ info?.sdk ?? '—' }})</strong>
+        </div>
+        <div class="kv">
+          <span>分辨率</span
+          ><strong>{{ info?.screen_width ?? '—' }} × {{ info?.screen_height ?? '—' }}</strong>
+        </div>
+        <div class="kv">
+          <span>状态</span><strong>{{ busy ? (device?.busy_reason ?? '占用中') : '空闲' }}</strong>
+        </div>
+        <div class="kv">
+          <span>镜像</span><strong>{{ mirrorLabel }}</strong>
+        </div>
+      </div>
+      <el-button
+        size="small"
+        style="margin-top: 9px"
+        :icon="Refresh"
+        :loading="infoQuery.isFetching.value"
+        @click="refreshDeviceInfo"
+      >
+        刷新信息
+      </el-button>
+    </el-drawer>
   </div>
 </template>
 
