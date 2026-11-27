@@ -417,7 +417,12 @@ def test_network_capture_disabled_unsupported(core_client) -> None:
     assert response.status_code == 400
     error = response.json()["error"]
     assert error["code"] == "UNSUPPORTED"
-    assert error["details"]["setting"] == "capture.network.mode"
+    assert error["details"]["setting"] == "capture.network.enabled"
+
+    # 关闭开关后仍可读状态（enabled=false），方便停止残留会话。
+    status = core_client.get("/api/devices/fake-1/network/status")
+    assert status.status_code == 200
+    assert status.json()["enabled"] is False
 
 
 def test_connect_unavailable_without_adb_module(core_client, monkeypatch) -> None:

@@ -26,8 +26,8 @@ const { values, sources, schemaByKey, entriesFor, sourceOf, configFile, setValue
           <h2>运行节奏</h2>
           <span
             class="card-hint"
-            title="轮询间隔、默认超时/停顿、单次运行上限与最大步数。停顿只作为新建脚本的初值。"
-            >轮询 · 超时 · 停顿 · 步数</span
+            title="轮询间隔、默认超时/停顿、默认失败策略、单次运行上限与最大步数。默认值只作为新建脚本的初值。"
+            >轮询 · 超时 · 停顿 · 失败策略 · 步数</span
           >
         </div>
         <div class="card-body">

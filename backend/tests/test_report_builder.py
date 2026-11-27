@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import zipfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -175,6 +176,139 @@ def test_build_report_zip_contents_and_db_row(report_env, tmp_path) -> None:
         assert report.summary["failed_steps"] == 1
         assert report.summary["skipped_steps"] == 1
         assert report.summary["duration_ms"] == 1234
+
+
+def test_build_report_includes_step_logcat_and_domains(report_env, tmp_path) -> None:
+    seed = _seed_run(tmp_path)
+    log_path = tmp_path / "step2.log"
+    log_path.write_text("06-12 10:00:00.000 I/App: before\n06-12 10:00:01.000 E/App: FATAL EXCEPTION\n", encoding="utf-8")
+    domains_path = tmp_path / "step2.jsonl"
+    domains_path.write_text(
+        json.dumps(
+            {"ts": "2026-06-12T10:00:01+00:00", "host": "api.example.com", "port": 443, "scheme": "https"},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    run_log_path = tmp_path / "run.log"
+    run_log_path.write_text("06-12 09:59:00.000 I/App: run start\n", encoding="utf-8")
+    with session_scope() as db:
+        failed = db.scalars(
+            select(StepResult).where(StepResult.run_id == seed["run_id"], StepResult.step_id == "s2")
+        ).one()
+        db.add(
+            Artifact(
+                run_id=seed["run_id"],
+                step_result_id=failed.id,
+                kind="logcat",
+                name="s2-fail-logcat",
+                path=str(log_path),
+                size=log_path.stat().st_size,
+                created_at=now_iso(),
+            )
+        )
+        db.add(
+            Artifact(
+                run_id=seed["run_id"],
+                step_result_id=failed.id,
+                kind="network",
+                name="s2-fail-domains",
+                path=str(domains_path),
+                size=domains_path.stat().st_size,
+                created_at=now_iso(),
+            )
+        )
+        db.add(
+            Artifact(
+                run_id=seed["run_id"],
+                step_result_id=None,
+                kind="logcat",
+                name="run-logcat",
+                path=str(run_log_path),
+                size=run_log_path.stat().st_size,
+                created_at=now_iso(),
+            )
+        )
+
+    result = build_report(seed["run_id"])
+    with zipfile.ZipFile(Path(result["path"])) as archive:
+        names = archive.namelist()
+        evidence = [name for name in names if name.startswith("evidence/")]
+        assert any(name.endswith(".log") for name in evidence)
+        assert any(name.endswith(".jsonl") for name in evidence)
+        assert any(name.startswith("logs/") and name.endswith(".log") for name in names)
+        html = archive.read("index.html").decode("utf-8")
+        assert "FATAL EXCEPTION" in html
+        assert "api.example.com" in html
+        assert "失败现场" in html
+        junit = archive.read("junit.xml").decode("utf-8")
+        assert "<system-out>" in junit
+        assert "FATAL EXCEPTION" in junit
+        steps = json.loads(archive.read("steps.json").decode("utf-8"))
+        failed_step = next(item for item in steps if item["step_id"] == "s2")
+        assert {item["kind"] for item in failed_step["evidence"]} == {"logcat", "network"}
+        assert failed_step["evidence"][0]["preview"]
+
+
+def test_build_report_timeline_groups_run_logcat_by_step(report_env, tmp_path) -> None:
+    seed = _seed_run(tmp_path)
+    now = datetime.now(UTC).replace(microsecond=0)
+
+    def iso(value: datetime) -> str:
+        return value.astimezone(UTC).isoformat(timespec="milliseconds")
+
+    def log_line(value: datetime, message: str) -> str:
+        local = value.astimezone()
+        return f"{local.strftime('%m-%d %H:%M:%S')}.{local.microsecond // 1000:03d}  1  2 I App: {message}"
+
+    log_path = tmp_path / "run-timeline.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                log_line(now + timedelta(seconds=1), "step one"),
+                log_line(now + timedelta(seconds=3), "step two"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with session_scope() as db:
+        run = db.get(Run, seed["run_id"])
+        assert run is not None
+        run.started_at = iso(now)
+        run.ended_at = iso(now + timedelta(seconds=5))
+        steps = list(
+            db.scalars(select(StepResult).where(StepResult.run_id == seed["run_id"]).order_by(StepResult.step_index))
+        )
+        steps[0].started_at = iso(now)
+        steps[0].ended_at = iso(now + timedelta(seconds=2))
+        steps[1].started_at = iso(now + timedelta(seconds=2))
+        steps[1].ended_at = iso(now + timedelta(seconds=4))
+        steps[2].started_at = iso(now + timedelta(seconds=4))
+        steps[2].ended_at = iso(now + timedelta(seconds=5))
+        db.add(
+            Artifact(
+                run_id=seed["run_id"],
+                step_result_id=None,
+                kind="logcat",
+                name="run-logcat",
+                path=str(log_path),
+                size=log_path.stat().st_size,
+                created_at=now_iso(),
+            )
+        )
+
+    result = build_report(seed["run_id"])
+    with zipfile.ZipFile(Path(result["path"])) as archive:
+        html = archive.read("index.html").decode("utf-8")
+        assert "节点时间线" in html
+        assert "合并时间线" in html
+        assert "step one" in html
+        assert "step two" in html
+        steps = json.loads(archive.read("steps.json").decode("utf-8"))
+        assert steps[0]["timeline"]["logcat"][0]["text"] == "step one"
+        assert steps[1]["timeline"]["logcat"][0]["text"] == "step two"
 
 
 def test_build_report_video_excluded_by_default_but_includable(report_env, tmp_path) -> None:

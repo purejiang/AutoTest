@@ -187,6 +187,59 @@ def test_explicit_delay_settings_are_not_overwritten(core_client) -> None:
     assert settings["default_delay_after_ms"] == 0
 
 
+def test_new_script_seeds_global_default_on_fail(core_client) -> None:
+    """设置 → 执行 的默认失败策略只作为新建脚本的初值。"""
+    put = core_client.put("/api/settings", json={"values": {"engine.default_on_fail": "continue"}})
+    assert put.status_code == 200, put.text
+    created = _create(core_client, name="默认失败策略脚本")
+    assert created["data"]["settings"]["on_fail"] == "continue"
+
+    # 显式带了 on_fail 的 data（导入/模板）不被全局值覆盖。
+    data = json.loads(json.dumps(THREE_STEPS))
+    data["settings"]["on_fail"] = "abort"
+    response = core_client.post("/api/scripts", json={"name": "显式失败策略", "data": data})
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["settings"]["on_fail"] == "abort"
+
+
+def test_legacy_defaults_retry_folds_into_settings(core_client) -> None:
+    """旧脚本的 defaults.retry 落盘时折叠到 settings.retry，避免双源。"""
+    data = json.loads(json.dumps(THREE_STEPS))
+    data["settings"]["retry"] = None
+    data["defaults"]["retry"] = {"count": 2, "interval_ms": 500}
+    response = core_client.post("/api/scripts", json={"name": "旧重试脚本", "data": data})
+    assert response.status_code == 200, response.text
+    settings = response.json()["data"]["settings"]
+    assert settings["retry"] == {"count": 2, "interval_ms": 500}
+    assert response.json()["data"]["defaults"]["retry"] is None
+
+    # 已有 settings.retry 时以 settings 为准，defaults.retry 仍被清空。
+    data = json.loads(json.dumps(THREE_STEPS))
+    data["settings"]["retry"] = {"count": 1, "interval_ms": 1000}
+    data["defaults"]["retry"] = {"count": 9, "interval_ms": 9000}
+    response = core_client.post("/api/scripts", json={"name": "双源重试", "data": data})
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["settings"]["retry"] == {"count": 1, "interval_ms": 1000}
+    assert response.json()["data"]["defaults"]["retry"] is None
+
+
+def test_default_rerun_safety_roundtrip(core_client) -> None:
+    """脚本级「新建节点默认重跑安全性」可保存/读回，缺省为 safe。"""
+    created = _create(core_client, name="默认安全性")
+    assert created["data"]["settings"]["default_rerun_safety"] == "safe"
+
+    data = json.loads(json.dumps(THREE_STEPS))
+    data["settings"]["default_rerun_safety"] = "destructive"
+    response = core_client.post("/api/scripts", json={"name": "破坏性默认", "data": data})
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["settings"]["default_rerun_safety"] == "destructive"
+
+    bad = json.loads(json.dumps(THREE_STEPS))
+    bad["settings"]["default_rerun_safety"] = "unsafe"
+    response = core_client.post("/api/scripts", json={"name": "非法安全性", "data": bad})
+    assert response.status_code == 422
+
+
 def test_validation_error_message_points_to_node(core_client) -> None:
     """前端 toast 只展示 message：必须带节点 id/名称，否则用户不知道是哪个节点。"""
     script = _create(core_client)

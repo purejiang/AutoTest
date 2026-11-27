@@ -176,10 +176,10 @@ def _run(run_id: int) -> None:
     )
     _safe_emit(run_id, "run_state", {"status": "running", "step_index": 0})
 
-    # 运行生命周期挂接：按 capture.logcat_auto_attach + 脚本 settings.logcat 自动采集。
+    # 运行生命周期挂接：logcat 需总开关 + settings.logcat；域名抓包需总开关 + settings.network_capture。
     # 只 attach 本 run 拥有的会话；停止时也只停本 run 启动的采集（手动采集不误停）。
     _attach_run_logcat(run_id, snapshot)
-    _attach_run_network(run_id)
+    _attach_run_network(run_id, snapshot)
     summary: dict[str, Any] = {}
     status = "failed"
     error: dict[str, Any] | None = None
@@ -242,10 +242,34 @@ def _run(run_id: int) -> None:
         controls.cleanup(run_id)
 
 
+def _logcat_packages(snapshot: RunSnapshot) -> list[str]:
+    """脚本声明的 logcat 应用范围：显式包名优先，否则收集 app 节点里的包名。"""
+    settings = snapshot.settings
+    if str(getattr(settings, "logcat_scope", "device")) != "app":
+        return []
+    explicit = str(getattr(settings, "logcat_package", "") or "").strip()
+    if explicit:
+        return [explicit]
+    packages: list[str] = []
+    for step in snapshot.steps:
+        if str(getattr(step, "type", "")) != "app":
+            continue
+        params = getattr(step, "params", None)
+        package = params.get("package") if isinstance(params, dict) else getattr(params, "package", None)
+        package = str(package or "").strip()
+        if package and package not in packages:
+            packages.append(package)
+    if not packages:
+        logger.warning("logcat_scope=app but no package found; fallback to whole device")
+    return packages
+
+
 def _attach_run_logcat(run_id: int, snapshot: RunSnapshot) -> None:
     """自动 attach logcat；采集失败绝不能拖垮运行。"""
     try:
-        capture = logcat.attach_if_needed(run_id, snapshot.settings)
+        capture = logcat.attach_if_needed(
+            run_id, snapshot.settings, packages=_logcat_packages(snapshot)
+        )
         if capture is not None:
             logger.info("run %s attached logcat capture (serial=%s)", run_id, capture.serial)
     except Exception:
@@ -262,10 +286,10 @@ def _stop_run_logcat(run_id: int, serial: str) -> None:
         logger.exception("run %s failed to stop logcat capture", run_id)
 
 
-def _attach_run_network(run_id: int) -> None:
-    """按 capture.network.mode=run 自动开启域名抓包；失败绝不能拖垮运行。"""
+def _attach_run_network(run_id: int, snapshot: RunSnapshot) -> None:
+    """按总开关 + 脚本 settings.network_capture 开启域名抓包；失败绝不能拖垮运行。"""
     try:
-        capture = network.attach_if_needed(run_id)
+        capture = network.attach_if_needed(run_id, snapshot.settings)
         if capture is not None:
             logger.info(
                 "run %s attached network capture (serial=%s port=%s)",
@@ -595,6 +619,11 @@ def run_script_with_context(ctx: RunContext) -> dict[str, Any]:
                     outcomes[step.id] = "passed"
                     break
                 finally:
+                    if str(getattr(step, "type", "")) == "app":
+                        try:
+                            logcat.refresh_pids(ctx.driver.serial)
+                        except Exception:  # noqa: BLE001 - 刷新失败不影响运行
+                            pass
                     ctx.end_step()
 
             if fail_error is None:

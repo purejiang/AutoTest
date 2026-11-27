@@ -6,109 +6,125 @@
   <title>AutoTest 运行报告 - {{ run['script_name'] or ('run-' ~ run['id']) }}</title>
   <style>
     :root {
-      --bg: #0f1419; --panel: #1a2129; --panel-2: #212b35; --text: #e6edf3;
-      --muted: #8b98a5; --border: #2c3742; --accent: #4f8cff;
-      --passed: #2ea043; --failed: #e5534b; --skipped: #8b949e; --error: #d29922;
+      --bg: #f6f8fb; --panel: #ffffff; --panel-2: #f1f5f9; --text: #1f2937;
+      --muted: #6b7280; --border: #e5e7eb; --accent: #2563eb;
+      --passed: #15803d; --failed: #b91c1c; --skipped: #6b7280; --error: #b45309;
     }
     * { box-sizing: border-box; }
     body {
-      margin: 0; padding: 32px; background: var(--bg); color: var(--text);
+      max-width: 1100px; margin: 0 auto; padding: 28px 24px 40px;
+      background: var(--bg); color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-        "Hiragino Sans GB", "Microsoft YaHei", sans-serif; font-size: 14px; line-height: 1.55;
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif; font-size: 13px; line-height: 1.55;
     }
-    h1 { margin: 0 0 6px; font-size: 22px; }
-    h2 { margin: 28px 0 12px; font-size: 16px; color: var(--text); }
-    .meta { color: var(--muted); font-size: 13px; }
-    .meta span { margin-right: 18px; white-space: nowrap; }
-    .badge {
-      display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px;
-      font-weight: 600; color: #fff; background: var(--skipped);
-    }
+    h1 { margin: 0; font-size: 20px; }
+    h2 { margin: 26px 0 10px; font-size: 14px; color: var(--text); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+    .head { padding: 18px 20px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+    .title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .meta { margin-top: 6px; color: var(--muted); font-size: 12px; }
+    .meta span { margin-right: 16px; white-space: nowrap; }
+    .kpis { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .kpi { padding: 5px 10px; background: var(--panel-2); border-radius: 6px; font-size: 12px; color: var(--muted); }
+    .kpi strong { color: var(--text); margin-left: 4px; }
+    .kpi.passed strong { color: var(--passed); }
+    .kpi.failed strong { color: var(--failed); }
+    .kpi.skipped strong { color: var(--skipped); }
+    .kpi.error strong { color: var(--error); }
+    .badge { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: #fff; background: var(--skipped); }
     .badge.passed { background: var(--passed); }
     .badge.failed, .badge.error { background: var(--failed); }
-    .badge.aborted, .badge.stopped, .badge.interrupted { background: var(--error); }
-    .badge.running, .badge.paused, .badge.queued, .badge.stopping { background: var(--accent); }
-    .cards { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
-    .card {
-      min-width: 120px; padding: 12px 16px; background: var(--panel);
-      border: 1px solid var(--border); border-radius: 10px;
-    }
-    .card .label { color: var(--muted); font-size: 12px; }
-    .card .value { font-size: 22px; font-weight: 700; margin-top: 2px; }
-    .card.passed .value { color: var(--passed); }
-    .card.failed .value { color: var(--failed); }
-    .card.skipped .value { color: var(--skipped); }
-    table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; }
-    th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
-    th { color: var(--muted); font-weight: 600; font-size: 12px; background: var(--panel-2); }
+    .badge.running, .badge.paused, .badge.queued, .badge.stopping, .badge.stopped { background: var(--accent); }
+    .alert { margin-top: 14px; padding: 10px 14px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; color: var(--failed); }
+    .hint { color: var(--muted); font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: 11.5px; background: var(--panel-2); }
     tr:last-child td { border-bottom: none; }
-    tr.row-failed td { background: rgba(229, 83, 75, 0.08); }
-    tr.row-error td { background: rgba(210, 153, 34, 0.08); }
-    .status { font-weight: 600; font-size: 12px; text-transform: uppercase; }
+    tr.row-failed td, tr.row-error td { background: #fff7f7; }
+    .status { font-weight: 600; font-size: 11.5px; }
     .status.passed { color: var(--passed); }
     .status.failed { color: var(--failed); }
     .status.error { color: var(--error); }
     .status.skipped { color: var(--skipped); }
-    .type { color: var(--muted); font-size: 12px; }
-    .error-text { color: #ff9d97; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
-    .shots { display: flex; flex-wrap: wrap; gap: 14px; }
-    .shot {
-      width: 220px; padding: 10px; background: var(--panel); border: 1px solid var(--border);
-      border-radius: 10px;
+    .sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .error-text { color: var(--failed); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+    .node { margin: 8px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+    .node > summary { padding: 9px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .node > summary .idx { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .node > summary .counts { margin-left: auto; color: var(--muted); font-size: 11.5px; }
+    .node-body { padding: 2px 12px 12px; border-top: 1px solid var(--border); }
+    .block { margin-top: 10px; }
+    .block-head { color: var(--muted); font-size: 11.5px; margin-bottom: 5px; }
+    .logcat {
+      max-height: 240px; overflow: auto; margin: 0; padding: 8px 10px;
+      background: #0f172a; color: #dbeafe; border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+      line-height: 1.5; white-space: pre-wrap; word-break: break-all;
     }
-    .shot img { width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; }
-    .shot .caption { margin-top: 6px; font-size: 12px; color: var(--muted); word-break: break-word; }
+    .compact th, .compact td { padding: 5px 8px; font-size: 11.5px; }
+    .events { margin: 0; padding-left: 18px; font-size: 11.5px; }
+    .events li { margin: 2px 0; }
+    .evidence-links { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11.5px; }
+    .shots { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+    .shot { width: 170px; }
+    .shot img { width: 100%; display: block; border: 1px solid var(--border); border-radius: 6px; }
+    .shot .caption { color: var(--muted); font-size: 11px; margin-top: 4px; word-break: break-word; }
+    .merged { margin-top: 6px; }
+    .merged > summary { cursor: pointer; color: var(--accent); font-size: 12px; padding: 6px 0; }
+    .timeline .content { white-space: pre-wrap; word-break: break-word; font-size: 11.5px; }
+    .timeline tr.timeline-step_start td, .timeline tr.timeline-step_end td { background: #eff6ff; color: var(--accent); }
+    .timeline .level { font-weight: 700; margin-right: 3px; }
+    .timeline .level.W, .timeline .level.E { color: var(--failed); }
+    footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11.5px; }
+    footer .files { margin: 4px 0 8px; }
+    footer .files a { margin-right: 12px; }
     .empty { color: var(--muted); }
-    footer { margin-top: 36px; color: var(--muted); font-size: 12px; }
-    code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>{{ run['script_name'] or ('运行 #' ~ run['id']) }}</h1>
+  <header class="head">
+    <div class="title-row">
+      <h1>{{ run['script_name'] or ('运行 #' ~ run['id']) }}</h1>
+      <span class="badge {{ run['status'] }}">{{ run['status'] }}</span>
+    </div>
     <div class="meta">
-      <span>运行 ID：<code>{{ run['id'] }}</code></span>
-      <span>设备：<code>{{ run['device_serial'] or '-' }}</code></span>
-      <span>状态：<span class="badge {{ run['status'] }}">{{ run['status'] }}</span></span>
-      <span>开始：{{ run['started_at'] or '-' }}</span>
-      <span>结束：{{ run['ended_at'] or '-' }}</span>
-      <span>耗时：{{ '%.2f'|format(summary['duration_ms'] / 1000) }}s</span>
+      <span>运行 <code>{{ run['id'] }}</code></span>
+      <span>设备 <code>{{ run['device_serial'] or '-' }}</code></span>
+      <span>开始 {{ run['started_at_local'] }}</span>
+      <span>结束 {{ run['ended_at_local'] }}</span>
+      <span>耗时 {{ '%.2f'|format(summary['duration_ms'] / 1000) }}s</span>
+    </div>
+    <div class="kpis">
+      <span class="kpi passed">通过<strong>{{ summary['passed_steps'] }}</strong></span>
+      <span class="kpi failed">失败<strong>{{ summary['failed_steps'] }}</strong></span>
+      <span class="kpi error">错误<strong>{{ summary['error_steps'] }}</strong></span>
+      <span class="kpi skipped">跳过<strong>{{ summary['skipped_steps'] }}</strong></span>
+      <span class="kpi">总步骤<strong>{{ summary['total_steps'] }}</strong></span>
     </div>
   </header>
 
-  <section class="cards">
-    <div class="card passed"><div class="label">通过</div><div class="value">{{ summary['passed_steps'] }}</div></div>
-    <div class="card failed"><div class="label">失败</div><div class="value">{{ summary['failed_steps'] }}</div></div>
-    <div class="card skipped"><div class="label">跳过</div><div class="value">{{ summary['skipped_steps'] }}</div></div>
-    <div class="card"><div class="label">错误</div><div class="value">{{ summary['error_steps'] }}</div></div>
-    <div class="card"><div class="label">总步骤</div><div class="value">{{ summary['total_steps'] }}</div></div>
-  </section>
-
   {% if run['error'] %}
-  <h2>运行错误</h2>
-  <div class="card failed">
-    <div class="error-text">{{ run['error'] }}</div>
-  </div>
+  <div class="alert"><strong>运行错误：</strong>{{ run['error'] }}</div>
   {% endif %}
 
-  <h2>步骤明细</h2>
+  <h2>步骤</h2>
   {% if steps %}
   <table>
-    <thead>
-      <tr>
-        <th>#</th><th>名称</th><th>类型</th><th>状态</th>
-        <th>耗时</th><th>尝试</th><th>错误</th>
-      </tr>
-    </thead>
+    <thead><tr><th style="width:36px">#</th><th>节点</th><th style="width:70px">状态</th><th style="width:80px">耗时</th><th style="width:50px">尝试</th><th>错误</th></tr></thead>
     <tbody>
       {% for step in steps %}
       <tr class="row-{{ step['status'] }}">
         <td>{{ step['index'] }}</td>
         <td>
           {{ step['name'] }}
-          <div class="type"><code>{{ step['step_id'] }}</code></div>
+          <div class="sub">
+            <code>{{ step['step_id'] }}</code> · {{ step['type'] }}
+            {% if step['started_at'] %} · {{ step['started_at_local'] }} → {{ step['ended_at_local'] }}{% endif %}
+          </div>
         </td>
-        <td class="type">{{ step['type'] }}</td>
         <td><span class="status {{ step['status'] }}">{{ step['status'] }}</span></td>
         <td>{{ step['duration_ms'] }}ms</td>
         <td>{{ step['attempts'] }}</td>
@@ -121,33 +137,161 @@
   <p class="empty">没有步骤结果。</p>
   {% endif %}
 
-  <h2>失败截图</h2>
-  {% if failed_shots %}
-  <div class="shots">
-    {% for shot in failed_shots %}
-    <div class="shot">
-      <img src="{{ shot['file'] }}" alt="失败截图：{{ shot['step_name'] }}" />
-      <div class="caption">{{ shot['step_name'] }}{% if shot['message'] %} - {{ shot['message'] }}{% endif %}</div>
+  <h2>节点时间线</h2>
+  {% if steps | selectattr('timeline_logcat') | list or steps | selectattr('timeline_network') | list or steps | selectattr('timeline_events') | list or steps | selectattr('evidence') | list or steps | selectattr('screenshots') | list %}
+  <p class="hint">按节点时间窗归类的 logcat / 域名 / 操作事件；失败节点默认展开。完整文件在 zip 内。</p>
+  {% for step in steps %}
+  {% if step['timeline_logcat'] or step['timeline_network'] or step['timeline_events'] or step['evidence'] or step['screenshots'] %}
+  <details class="node" {% if step['status'] in ['failed', 'error'] %}open{% endif %}>
+    <summary>
+      <span class="idx">#{{ step['index'] }}</span>
+      <strong>{{ step['name'] }}</strong>
+      <span class="status {{ step['status'] }}">{{ step['status'] }}</span>
+      <span class="counts">
+        {% if step['timeline_logcat'] %}logcat {{ step['timeline_logcat_count'] }}{% endif %}
+        {% if step['timeline_logcat'] and step['timeline_network'] %} · {% endif %}
+        {% if step['timeline_network'] %}域名 {{ step['timeline_network_count'] }}{% endif %}
+        {% if step['timeline_events'] %} · 操作 {{ step['timeline_events_count'] }}{% endif %}
+        {% if step['screenshots'] %} · 截图 {{ step['screenshots'] | length }}{% endif %}
+      </span>
+    </summary>
+    <div class="node-body">
+      {% if step['error'] %}
+      <div class="error-text" style="margin-top:8px">{{ step['error'] }}</div>
+      {% endif %}
+
+      {% if step['screenshots'] %}
+      <div class="shots">
+        {% for file in step['screenshots'] %}
+        <div class="shot">
+          <a href="{{ file }}"><img src="{{ file }}" alt="截图：{{ step['name'] }}" loading="lazy" /></a>
+          <div class="caption">{{ file }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if step['evidence'] %}
+      <div class="block">
+        <div class="block-head">失败现场</div>
+        <div class="evidence-links">
+          {% for item in step['evidence'] %}
+          <a href="{{ item['file'] }}">
+            {{ item['kind'] }} · {{ item['name'] }}
+            {% if item['kind'] == 'logcat' %}（{{ item['lines'] }} 行）{% else %}（{{ item['records'] }} 条域名）{% endif %}
+          </a>
+          {% endfor %}
+        </div>
+        {% for item in step['evidence'] %}
+          {% if item['kind'] == 'logcat' and item['preview'] %}
+          <details style="margin-top:6px">
+            <summary class="hint">查看 logcat 末尾（{{ item['preview'] | length }} 行）</summary>
+            <pre class="logcat" style="margin-top:6px">{% for line in item['preview'] %}{{ line }}
+{% endfor %}</pre>
+          </details>
+          {% elif item['kind'] == 'network' and item['preview'] %}
+          <details style="margin-top:6px">
+            <summary class="hint">查看域名末尾（{{ item['preview'] | length }} 条）</summary>
+            <table class="compact" style="margin-top:6px">
+              <thead><tr><th>时间</th><th>host</th><th>端口</th><th>协议</th></tr></thead>
+              <tbody>
+                {% for record in item['preview'] %}
+                <tr><td>{{ record['ts'] }}</td><td>{{ record['host'] }}</td><td>{{ record['port'] }}</td><td>{{ record['scheme'] }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </details>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if step['timeline_events'] %}
+      <div class="block">
+        <div class="block-head">操作事件（{{ step['timeline_events_count'] }}）</div>
+        <ul class="events">
+          {% for item in step['timeline_events'] %}
+          <li>{{ item['ts'] }} · <code>{{ item['event_type'] }}</code> {{ item['text'] }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      {% if step['timeline_logcat'] %}
+      <div class="block">
+        <div class="block-head">logcat（{{ step['timeline_logcat_count'] }} 行，显示末尾 {{ step['timeline_logcat'] | length }} 行）</div>
+        <pre class="logcat">{% for item in step['timeline_logcat'] %}{{ item['ts'] }} {{ item['level'] }}/{{ item['tag'] }}: {{ item['text'] }}
+{% endfor %}</pre>
+      </div>
+      {% endif %}
+
+      {% if step['timeline_network'] %}
+      <div class="block">
+        <div class="block-head">域名（{{ step['timeline_network_count'] }} 条，显示末尾 {{ step['timeline_network'] | length }} 条）</div>
+        <table class="compact">
+          <thead><tr><th>时间</th><th>host</th><th>端口</th><th>协议</th></tr></thead>
+          <tbody>
+            {% for record in step['timeline_network'] %}
+            <tr><td>{{ record['ts'] }}</td><td>{{ record['host'] }}</td><td>{{ record['port'] }}</td><td>{{ record['scheme'] }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
     </div>
-    {% endfor %}
-  </div>
+  </details>
+  {% endif %}
+  {% endfor %}
   {% else %}
-  <p class="empty">没有失败截图。</p>
+  <p class="empty">没有可归到节点时间窗的日志/域名/操作。请确认脚本里开启了 logcat / 域名抓包。</p>
   {% endif %}
 
-  {% if include_video %}
-  <h2>视频</h2>
+  <details class="merged">
+    <summary>合并时间线：共 {{ timeline_total }} 条（logcat {{ timeline_counts['logcat'] }} 行 / 域名 {{ timeline_counts['network'] }} 条 / 操作 {{ timeline_counts['event'] }} 条）</summary>
+    {% if timeline %}
+    <p class="hint">按时间排序，显示前 {{ timeline | length }} 条；已归到节点 {{ timeline_counts['assigned'] }} 条，节点外 {{ timeline_counts['unassigned'] }} 条。</p>
+    <table class="timeline">
+      <thead><tr><th style="width:150px">时间</th><th style="width:170px">节点</th><th style="width:70px">类型</th><th>内容</th></tr></thead>
+      <tbody>
+        {% for item in timeline %}
+        <tr class="timeline-{{ item['kind'] }}">
+          <td>{{ item['ts'] }}</td>
+          <td>{% if item['step_index'] %}#{{ item['step_index'] }} {{ item['step_name'] }}{% else %}<span class="empty">节点外</span>{% endif %}</td>
+          <td>{{ item['kind'] }}</td>
+          <td class="content">
+            {% if item['kind'] == 'logcat' %}<span class="level {{ item['level'] }}">{{ item['level'] }}</span><code>{{ item['tag'] }}</code> {{ item['text'] }}
+            {% elif item['kind'] == 'network' %}<code>{{ item['host'] }}:{{ item['port'] }}</code> {{ item['scheme'] }}
+            {% elif item['kind'] == 'event' %}<code>{{ item['event_type'] }}</code> {{ item['text'] }}
+            {% else %}{{ item['text'] }}{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">没有 logcat / 域名 / 操作记录。</p>
+    {% endif %}
+  </details>
+
   {% if videos %}
+  <h2>视频</h2>
   <ul>
     {% for video in videos %}
     <li><a href="{{ video['file'] }}">{{ video['name'] }}</a></li>
     {% endfor %}
   </ul>
-  {% else %}
-  <p class="empty">没有视频产物。</p>
-  {% endif %}
   {% endif %}
 
-  <footer>AutoTest 报告 · 生成时间 {{ generated_at }} · junit.xml / steps.json 见报告包</footer>
+  <footer>
+    {% if run_evidence %}
+    <div class="files">
+      <strong>完整文件：</strong>
+      {% for item in run_evidence %}
+      <a href="{{ item['file'] }}">{{ item['name'] }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
+    AutoTest 报告 · 生成时间 {{ generated_at_local }} · junit.xml / steps.json 见报告包
+  </footer>
 </body>
 </html>

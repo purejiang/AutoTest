@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus'
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { describeApiError, toApiError } from '@/api/client'
+import { describeApiError } from '@/api/client'
 import { useNetworkStart, useNetworkStatus, useNetworkStop } from '@/api/network'
 import { formatBytes } from '@/lib/format'
 import StatusTag from '@/components/StatusTag.vue'
@@ -23,13 +23,8 @@ const stopMutation = useNetworkStop(computed(() => props.serial))
 const router = useRouter()
 
 const status = computed(() => statusQuery.data.value ?? null)
-/**
- * 抓包默认关闭（capture.network.mode=off），此时 status 接口返回 UNSUPPORTED。
- * 这不是故障，给一句明确的开启指引，而不是把通用错误码文案当成“不可用”。
- */
-const disabled = computed(
-  () => statusQuery.isError.value && toApiError(statusQuery.error.value).code === 'UNSUPPORTED',
-)
+// 总开关关闭时 status 仍可读（enabled=false），据此置灰开始按钮并给开启指引。
+const disabled = computed(() => status.value?.enabled === false)
 const errorText = computed(() => describeApiError(statusQuery.error.value))
 const active = computed(() => Boolean(status.value?.active))
 const domains = computed(() => status.value?.recent_domains ?? [])
@@ -102,7 +97,7 @@ async function stopCapture(): Promise<void> {
           type="primary"
           size="small"
           :loading="startMutation.isPending.value"
-          :disabled="!serial || active || disabled"
+          :disabled="!serial || active || disabled || statusQuery.isLoading.value || statusQuery.isError.value"
           @click="startCapture"
         >
           开始抓包
@@ -125,8 +120,8 @@ async function stopCapture(): Promise<void> {
           type="info"
           :closable="false"
           show-icon
-          title="网络抓包未启用（默认关闭）"
-          description="在「设置 → 执行 → 采集 → 网络域名抓包」选择「仅手动」或「跟随运行」，保存后立即生效，无需重启。"
+          title="网络抓包未启用"
+          description="在「设置 → 执行 → 采集 → 允许网络域名抓包」打开开关，保存后立即生效，无需重启。"
         />
         <el-button size="small" type="primary" plain @click="goSettings">去设置开启</el-button>
       </div>

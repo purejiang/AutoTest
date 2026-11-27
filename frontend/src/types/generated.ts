@@ -343,7 +343,7 @@ export interface paths {
         };
         /**
          * Network Status
-         * @description 域名抓包状态：active/port/path/size/domain_count/recent_domains（供 UI 展示）。
+         * @description 域名抓包状态：enabled/active/port/path/size/domain_count/recent_domains（供 UI 展示）。
          */
         get: operations["network_status_api_devices__serial__network_status_get"];
         put?: never;
@@ -1833,6 +1833,8 @@ export interface components {
         SettingEntryOut: {
             /** Default */
             default?: unknown;
+            /** Default Display */
+            default_display?: string | null;
             /** Desc */
             desc?: string | null;
             /** Env */

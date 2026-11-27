@@ -1,6 +1,14 @@
 // 12 类节点的元信息、默认 params、新建节点构造、脚本数据兜底（v0.2：when 默认关闭）。
 import { createDefaultWhen } from './lib/condition'
-import type { NodeType, Script, ScriptData, ScriptSettings, StepNode, When } from '@/types/api'
+import type {
+  NodeType,
+  RerunSafety,
+  Script,
+  ScriptData,
+  ScriptSettings,
+  StepNode,
+  When,
+} from '@/types/api'
 
 export interface NodeTypeMeta {
   label: string
@@ -8,6 +16,15 @@ export interface NodeTypeMeta {
   icon: string
   subtitle: string
 }
+
+/** 节点「重跑安全性」选项：NodeForm 与脚本默认（新建节点初值）共用。 */
+export const RERUN_SAFETY_OPTIONS: Array<{ value: RerunSafety; label: string }> = [
+  { value: 'safe', label: 'safe（可安全重跑）' },
+  { value: 'stateful', label: 'stateful（依赖状态）' },
+  { value: 'destructive', label: 'destructive（破坏性，禁止重跑）' },
+]
+
+const RERUN_SAFETY_VALUES = new Set<RerunSafety>(['safe', 'stateful', 'destructive'])
 
 export const NODE_TYPE_META: Record<NodeType, NodeTypeMeta> = {
   click: { label: '点击', tone: 'blue', icon: '👆', subtitle: 'click' },
@@ -133,11 +150,20 @@ const DEFAULT_SETTINGS: ScriptSettings = {
   default_delay_after_ms: 0,
   on_fail: 'abort',
   logcat: false,
+  logcat_scope: 'device',
+  logcat_package: '',
+  network_capture: false,
   retry: null,
   screenshot_on_fail: true,
+  default_rerun_safety: 'safe',
 }
 
 export const DEFAULT_SCRIPT_SETTINGS: ScriptSettings = { ...DEFAULT_SETTINGS }
+
+/** 新节点应用脚本默认值（目前是重跑安全性；清除数据快捷节点会再覆盖为 destructive）。 */
+export function applyNewNodeDefaults(step: StepNode, settings: ScriptSettings): StepNode {
+  return { ...step, rerun_safety: settings.default_rerun_safety }
+}
 
 export function normalizeScriptData(script: Script): ScriptData {
   return normalizeDraft({ ...(script.data ?? {}), name: script.data?.name ?? script.name })
@@ -145,13 +171,25 @@ export function normalizeScriptData(script: Script): ScriptData {
 
 /** 宽松兜底：后端返回的 data 可能缺字段（导入/迁移），前端补齐到完整 ScriptData。 */
 export function normalizeDraft(raw: Partial<ScriptData>): ScriptData {
+  const rawSafety = raw.settings?.default_rerun_safety
   return {
     schema_version: raw.schema_version ?? 1,
     name: raw.name ?? '未命名脚本',
     notes: raw.notes ?? '',
     variables: raw.variables ?? {},
-    settings: { ...DEFAULT_SETTINGS, ...(raw.settings ?? {}) },
-    defaults: { retry: null, ...(raw.defaults ?? {}) },
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...(raw.settings ?? {}),
+      // 旧脚本可能没有该字段或存过 null；统一按关闭处理。
+      network_capture: Boolean(raw.settings?.network_capture),
+      logcat_scope: raw.settings?.logcat_scope === 'app' ? 'app' : 'device',
+      logcat_package: String(raw.settings?.logcat_package ?? ''),
+      default_rerun_safety:
+        rawSafety && RERUN_SAFETY_VALUES.has(rawSafety) ? rawSafety : 'safe',
+      // 旧版同时支持 defaults.retry 与 settings.retry；折叠成单一来源。
+      retry: raw.settings?.retry ?? raw.defaults?.retry ?? null,
+    },
+    defaults: { retry: null },
     steps: Array.isArray(raw.steps)
       ? raw.steps.map((step) => ({ ...step, when: step.when ?? null }))
       : [],

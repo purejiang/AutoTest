@@ -175,6 +175,12 @@ class When(StrictModel):
 
 
 class Retry(StrictModel):
+    """重试策略：count 是额外重试次数（count=1 表示最多执行 2 次）。
+
+    - 节点 ``retry=null``：继承脚本默认重试；``retry={count:0}``：显式不重试；
+    - 脚本 ``settings.retry=null``：默认不重试；``count=0`` 没有独立语义，前端归一到 null。
+    """
+
     count: int = Field(default=1, ge=0, le=20)
     interval_ms: int = Field(default=1000, ge=0, le=60_000)
 
@@ -425,8 +431,16 @@ class ScriptSettings(LooseModel):
     default_delay_after_ms: int = Field(default=0, ge=0, le=600_000)
     on_fail: Literal["abort", "continue"] = "abort"
     logcat: bool = False
+    # logcat 范围：device=整机；app=只保留脚本涉及应用（按运行时 PID 过滤）。
+    logcat_scope: Literal["device", "app"] = "device"
+    # 可选显式包名；留空时从 app 节点 params.package 推断。
+    logcat_package: str = Field(default="", max_length=200)
+    # 域名抓包：本次运行是否启用；还要求全局 capture.network.enabled=true。
+    network_capture: bool = False
     retry: Retry | None = None
     screenshot_on_fail: bool = True
+    # 新建节点默认重跑安全性：只作为新节点初值，不参与运行时继承。
+    default_rerun_safety: Literal["safe", "destructive", "stateful"] = "safe"
 
 
 class ScriptDefaults(LooseModel):
@@ -441,6 +455,21 @@ class ScriptData(LooseModel):
     settings: ScriptSettings = Field(default_factory=ScriptSettings)
     defaults: ScriptDefaults = Field(default_factory=ScriptDefaults)
     steps: list[Step] = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def _fold_legacy_retry_defaults(self) -> "ScriptData":
+        """把旧版脚本的 defaults.retry 折叠到 settings.retry，保持单一来源。
+
+        旧版曾同时支持 defaults.retry 与 settings.retry，且引擎优先读 defaults.retry；
+        编辑器只编辑 settings.retry，导致“脚本里看着没开、节点却继承了重试”。这里在
+        解析时统一：settings.retry 已有值则保留，否则继承 defaults.retry，然后清空
+        defaults.retry。存储层由前端 normalizeDraft 同步迁移，运行时这里兜底旧文件。
+        """
+        if self.defaults.retry is not None:
+            if self.settings.retry is None:
+                self.settings.retry = self.defaults.retry
+            self.defaults.retry = None
+        return self
 
     def step_ids(self) -> set[str]:
         return {step.id for step in self.steps}
@@ -571,8 +600,12 @@ def empty_script(name: str = "未命名脚本") -> dict[str, Any]:
             "default_delay_after_ms": 0,
             "on_fail": "abort",
             "logcat": False,
+            "logcat_scope": "device",
+            "logcat_package": "",
+            "network_capture": False,
             "retry": None,
             "screenshot_on_fail": True,
+            "default_rerun_safety": "safe",
         },
         "defaults": {"retry": None},
         "steps": [

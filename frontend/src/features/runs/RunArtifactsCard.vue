@@ -51,7 +51,7 @@ function hrefOf(artifact: Artifact): string | null {
 
       <div v-for="group in [
         { key: 'video', label: '视频 / 录屏', items: videos },
-        { key: 'log', label: '日志 / 层级', items: logs },
+        { key: 'log', label: '日志 / 层级 / 域名', items: logs },
         { key: 'other', label: '其他', items: others },
       ]" :key="group.key">
         <template v-if="group.items.length > 0">

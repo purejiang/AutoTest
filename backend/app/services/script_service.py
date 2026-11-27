@@ -194,6 +194,27 @@ def _last_runs(session: Session, script_ids: list[str]) -> dict[str, dict[str, A
     return {str(row.script_id): _last_run_payload(row) for row in rows}
 
 
+def _fold_legacy_retry_defaults(payload: dict[str, Any]) -> None:
+    """把旧版 `defaults.retry` 折叠进 `settings.retry`，与 `ScriptData` 解析时保持一致。
+
+    旧脚本可能只有 defaults.retry；编辑器只编辑 settings.retry。落盘前折叠，避免
+    “脚本设置里没开、节点却继承了重试”的双源问题。settings.retry 已有值时以它为准。
+    """
+    defaults = payload.get("defaults")
+    if not isinstance(defaults, dict):
+        return
+    legacy = defaults.get("retry")
+    if legacy is None:
+        return
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        settings = {}
+        payload["settings"] = settings
+    if settings.get("retry") is None:
+        settings["retry"] = copy.deepcopy(legacy)
+    defaults["retry"] = None
+
+
 def _normalize_payload(data: Any, *, name: str, notes: str | None = None) -> dict[str, Any]:
     if data is None:
         payload = schemas.empty_script(name or "未命名脚本")
@@ -209,6 +230,7 @@ def _normalize_payload(data: Any, *, name: str, notes: str | None = None) -> dic
         payload["notes"] = str(notes)
     payload.setdefault("notes", "")
     payload.setdefault("schema_version", 1)
+    _fold_legacy_retry_defaults(payload)
     return payload
 
 
@@ -264,13 +286,15 @@ def export_script(session: Session, script_id: str) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- 写入
 _DEFAULT_DELAY_KEYS = ("default_delay_before_ms", "default_delay_after_ms")
+_VALID_ON_FAIL = ("abort", "continue")
 
 
-def _seed_default_delays(payload: dict[str, Any], *, force: bool = False) -> None:
-    """新建脚本时把 App 级默认停顿（设置 → 执行 → 运行节奏）写成脚本初值。
+def _seed_new_script_defaults(payload: dict[str, Any], *, force: bool = False) -> None:
+    """新建脚本时把 App 级默认值（设置 → 执行 → 运行节奏）写成脚本初值。
 
-    只影响「新建」：已显式带了这两个字段的 data（导入/模板）保持原样；
-    运行时不做兜底，所以录制转换、复制出来的脚本不会被全局值改变节奏。
+    目前播种：默认执行前/后停顿 + 默认失败策略（重试用尽后的动作）。
+    只影响「新建」：已显式带了这些字段的 data（导入/模板）保持原样；运行时不做兜底，
+    所以录制转换、复制出来的脚本不会被全局值改变节奏/失败策略。
     """
     settings = payload.get("settings")
     if not isinstance(settings, dict):
@@ -285,6 +309,9 @@ def _seed_default_delays(payload: dict[str, Any], *, force: bool = False) -> Non
         except (TypeError, ValueError):
             value = 0
         settings[key] = max(0, min(600_000, value))
+    if "on_fail" not in settings or force:
+        value = str(config.get("engine.default_on_fail", "abort") or "abort").strip().lower()
+        settings["on_fail"] = value if value in _VALID_ON_FAIL else "abort"
 
 
 def _save_record(
@@ -321,7 +348,7 @@ def create_script(
     source: str = "manual",
 ) -> dict[str, Any]:
     payload = _normalize_payload(data, name=name, notes=notes)
-    _seed_default_delays(payload, force=data is None)
+    _seed_new_script_defaults(payload, force=data is None)
     _ensure_valid(session, payload)
     record = _save_record(
         data=payload,
@@ -375,6 +402,7 @@ def update_script(
     else:
         payload["notes"] = str(notes)
     payload.setdefault("schema_version", int(record.get("schema_version") or 1))
+    _fold_legacy_retry_defaults(payload)
     _ensure_valid(session, payload)
     record["name"] = target_name
     record["notes"] = str(payload.get("notes") or "")
@@ -402,6 +430,7 @@ def duplicate_script(session: Session, script_id: str, name: str | None = None) 
     new_name = (name or "").strip() or f"{record.get('name') or '脚本'} 副本"
     payload = copy.deepcopy(record.get("data") or {})
     payload["name"] = new_name
+    _fold_legacy_retry_defaults(payload)
     _ensure_valid(session, payload)
     clone = _save_record(
         data=payload,

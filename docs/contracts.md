@@ -54,7 +54,7 @@ backend/app/
     session.py         [be-report] 录制会话（web/physical）、事件落库、转换脚本
     convert.py         [be-report] 手势分类 + 节点解析 + 低置信度标注
   report/
-    builder.py         [be-report] 报告生成（zip: index.html/junit.xml/screenshots）
+    builder.py         [be-report] 报告生成（zip: index.html/junit.xml/steps.json/screenshots/evidence/logs/network）
     templates/report.html [be-report]
   capture/
     logcat.py          [be-report] logcat 采集（运行期 + 手动）
@@ -156,9 +156,25 @@ goto 目标、sub_script 存在性 warning）用 `schemas.validate_script()`。
   **0 = 跟随脚本默认**（`settings.default_delay_before_ms` / `settings.default_delay_after_ms`，默认 0 即不停顿），
   **非 0 = 该节点自定义**（覆盖默认，不叠加）。录制转换把真实操作间隔还原进节点 `delay_before_ms`
   （这些值 >0 即自定义），生成脚本的 `settings.default_delay_*` 固定写 0，所以录制回放节奏不受默认停顿影响。
+- 失败处理顺序（与 UI 文案一致）：
+  1. `when` 条件：`require` 不满足 → 节点直接 failed，**不重试**；`optional` 不满足 → skipped。
+  2. 动作异常：可重试且已有重试次数未用完 → 等待 `interval_ms` 后重试同一动作；`retry.count` 是
+     **额外重试次数**（1 = 最多执行 2 次）。断言失败、when 不满足、运行被停止、超时后线程未收尾等
+     属于不可重试。
+  3. 重试用尽 / 不可重试 → 节点 failed。
+  4. `on_fail`（节点优先，其次脚本 `settings.on_fail`）：`abort` 中止整个运行 / `continue` 继续下一
+     节点 / `goto` 跳到目标节点（重入会重置目标及之后节点的重试计数）。
+  5. `screenshot_on_fail`：节点开关 **且** 脚本 `settings.screenshot_on_fail` 都为真才保存截图。
+  节点 `retry=null` 表示继承脚本默认；节点 `retry={count:0}` 表示显式不重试；脚本
+  `settings.retry=null` 表示默认不重试。旧字段 `defaults.retry` 在读取/落盘时折叠进
+  `settings.retry`（`ScriptData` validator + `script_service`），不再作为第二个来源。
+  `rerun_safety` 只用于手动「从该节点重跑」的安全判断，不参与运行时失败处理。
 - 新建脚本初值：`POST /api/scripts` 建空脚本时，`create_script` 会把 `engine.default_delay_before_ms` /
-  `engine.default_delay_after_ms`（设置页 → 执行 → 运行节奏）写进脚本 `settings`；传入的 data 已显式带该字段时
-  （导入/模板/复制）不覆盖。这是**只写一次初值**，运行时不做第三层兜底，所以全局值改动不会影响已有脚本与录制脚本。
+  `engine.default_delay_after_ms` / `engine.default_on_fail`（设置页 → 执行 → 运行节奏）写进脚本
+  `settings`；传入的 data 已显式带这些字段时（导入/模板/复制）不覆盖。这是**只写一次初值**，
+  运行时不做第三层兜底，所以全局值改动不会影响已有脚本与录制脚本。
+- 脚本 `settings.default_rerun_safety`（safe/stateful/destructive）：新建节点的 `rerun_safety` 初值，
+  只影响之后新增的节点；已有节点保持自己的值，不参与运行时继承。
 - Target：`{"by": "...", "value": "...", "index": 0}` 或 `{"by": "point", "x": 540, "y": 1200}`。
 - `source` / `origin_recording_id` 是 DB 资源元数据（见 §2.1），不属于脚本 JSON。
 - when：`null` 或一个新的条件树对象；**不接受** v0.1 的 `when.target/state` 结构。
@@ -265,8 +281,14 @@ client→server：`{"kind":"ping"}`→`{"kind":"pong"}`；`{"kind":"ack","last_s
 GET /api/devices；POST /api/devices/connect {address}；POST /api/devices/{serial}/disconnect；
 GET /api/devices/{serial}/info|hierarchy?raw=|screenshot(png)|apps?keyword=&type=(all|system|third_party，`third` 为兼容别名)|logcat?lines=200；
 POST /api/devices/{serial}/logcat/start|stop；GET /api/devices/{serial}/logcat/status
-（start 可带 run_id/max_lines/package；P0 package 仅记录不生效）。运行期自动采集由
-`capture.logcat_auto_attach` + 脚本 settings.logcat 控制，artifact 关联 run。
+（start 可带 run_id/max_lines/package；package 按运行时 PID 过滤）。
+`capture.logcat_auto_attach` 是采集总开关：关闭时 start 返回 UNSUPPORTED，脚本 settings.logcat 也无效（编辑器置灰）；
+stop/status 不受开关限制（避免关开关后残留会话停不掉），status 带 `enabled`。运行期采集需
+总开关 + 脚本 settings.logcat 同时为 true，artifact 关联 run。
+脚本可设 `settings.logcat_scope`：`device`（默认，整机日志）或 `app`（只保留脚本涉及应用）；
+`settings.logcat_package` 显式指定包名，留空时从 `app` 节点的 `params.package` 推断（多个包合并监听）。
+app 范围按运行时 PID 过滤：开始采集解析一次、后台每 1.5s 刷新（App 重启后 PID 变化自动跟上），
+日志行按 PID 保留、堆栈续行跟随上一条；手动 start 的 `package` 参数同样按 PID 过滤。
   hierarchy 响应：`{"node": HierarchyNode, "raw": str|null, "elapsed_ms": int, "node_count": int}`
   （raw=true 时**只 dump 一次**：用原始 XML 解析成树；取不到 raw 时为 null 并带 `"raw_unavailable"`。
   `elapsed_ms`/`node_count` 供前端显示"刷新慢在哪"；后端对 >800ms 的 dump、>1500ms 的截图打 WARNING）；
@@ -275,11 +297,13 @@ POST /api/devices/{serial}/screenrecord/start {name,bit_rate,time_limit_s} / sto
 GET /api/devices/{serial}/screenrecord/status → {active,pending,name,time_limit_s,elapsed_s,remaining_s,started_at,last:{name,size,url}}；
   last 为最近一次录屏产物直链（/artifacts/screenrecord/…，支持 Range 播放/拖动）；
 POST /api/devices/{serial}/network/start|stop；GET /api/devices/{serial}/network/status
-（未启用→UNSUPPORTED）。域名模式：本机 stdlib 代理 + 设备 http_proxy + adb reverse，
+（start 在总开关关闭时→UNSUPPORTED；stop/status 不受限，status 带 `enabled`）。
+域名模式：本机 stdlib 代理 + 设备 http_proxy + adb reverse，
 只记录 host/port/scheme，不安装 CA、不抓 Header/正文；同一时间只允许一台设备抓包；
-停止时恢复设备原 http_proxy。`capture.network.mode=off|manual|run`：
-off 完全关闭；manual 仅控制台手动；run 随 run 自动启停并关联 `run_id`；
-手动抓包不会被运行结束误停。
+停止时恢复设备原 http_proxy。
+`capture.network.enabled` 是总开关；脚本 `settings.network_capture`（bool，默认 false）决定本次运行是否抓：
+两者同时为 true 才在运行中自动启停并关联 run_id；手动抓包还需总开关打开，且不会被运行结束误停。
+旧配置键 `capture.network.mode`（off|manual|run）在读取时映射为 enabled（off=false，其余=true）。
 POST /api/devices/{serial}/mirror/start|stop；GET /api/devices/{serial}/mirror/status；
 POST /api/devices/{serial}/mirror/diag：浏览器每 5s 上报一条诊断采样（渲染 fps/绘制耗时/解码队列/丢帧），
 落盘 `<data_dir>/diag/mirror-YYYYMMDD.jsonl`（`source=client`；后端每 10s 的 perf 打点为 `source=server`），
@@ -339,10 +363,20 @@ POST /api/recordings/{id}/to_script {name?,include_kinds?,exclude_seqs?}
 POST /api/runs/{id}/report {include_video?}；GET /api/reports?run_id=；
 GET /api/reports/{id}/download（zip，支持 Range）；DELETE /api/reports/{id}；
 GET /api/maintenance/stats；POST /api/maintenance/cleanup {retention_days?,dry_run?}。
+报告 zip：`index.html` / `junit.xml` / `steps.json` / `screenshots/` /（可选）`videos/`；
+节点证据按 `artifact.step_result_id` 关联：失败节点的 logcat 与域名清单进 `evidence/`，并在
+`index.html` 节点时间线的「失败现场」、`steps.json[].evidence`、junit `<system-out>` 中呈现；
+运行级 logcat / 域名采集分别放 `logs/`、`network/`。
+时间线：运行级 logcat（`adb logcat -v time`，设备本地时间）、域名 JSONL 的 `ts` 与
+`run_events`（操作/状态事件）按 `StepResult.started_at/ended_at` 归入节点；`index.html` 提供
+「节点时间线」和「合并时间线」两种视图，`steps.json[].timeline` 带节点窗口内的
+logcat/network/events 条目；落在所有窗口外的记录进入「节点外」。设备时区需与后端一致，
+否则 logcat 时间线整体偏移（原始文件仍在 zip 内）。
 
 ### 7.6 设置（be-core）
 GET /api/settings → {effective, sources, schema, config_file}
-  （schema 每项含 additive `default` / `layer`(bootstrap|runtime) / `writable` / `env`）；
+  （schema 每项含 additive `default` / `default_display`（空值默认的可读展示，如数据目录绝对路径） /
+  `layer`(bootstrap|runtime) / `writable` / `env`）；
 PUT /api/settings {values}（写 config.json；null=从文件移除该项；bootstrap 项 → 400 INVALID_ARGUMENT）；
 DELETE /api/settings/{key}（从文件移除；bootstrap 项 → 400）；
 POST /api/settings/reset（移除文件里所有设置页管理的项，启动项不动）；

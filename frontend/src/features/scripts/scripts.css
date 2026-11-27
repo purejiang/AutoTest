@@ -573,3 +573,32 @@
   font-weight: 600;
 }
 
+
+/* 失败处理：流程摘要 + 重试行（NodeForm / ScriptSettingsForm 共用）。 */
+.failure-flow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.failure-flow-arrow {
+  flex: none;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.retry-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  width: 100%;
+}

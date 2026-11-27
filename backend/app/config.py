@@ -83,6 +83,8 @@ DEFAULTS: dict[str, Any] = {
     # （录制转换/复制的脚本保留自己的值，回放节奏不受影响）。
     "engine.default_delay_before_ms": 0,
     "engine.default_delay_after_ms": 0,
+    # 新建脚本的默认失败策略初值：重试用尽后的动作，只在 create_script 时写入脚本 settings。
+    "engine.default_on_fail": "abort",
     "engine.max_total_ms": 1800_000,
     "engine.max_steps": 2000,
     "engine.step_min_timeout_ms": 100,
@@ -103,7 +105,7 @@ DEFAULTS: dict[str, Any] = {
     "recording.target_mode": "point",
     "capture.logcat_auto_attach": False,
     "capture.logcat_max_lines": 5000,
-    "capture.network.mode": "off",
+    "capture.network.enabled": False,
     "capture.network.port": 8080,
     "retention.days": 30,
     "retention.report_exclude_video": True,
@@ -128,7 +130,7 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "key": "runtime.data_dir",
         "type": "string",
         "title": "数据目录",
-        "desc": "启动项：留空使用 ~/.autotest/data；要改请写 ~/.autotest/config.json 或 AUTOTEST_DATA_DIR，然后重启",
+        "desc": "启动项：默认值见输入框占位路径；要改请写 ~/.autotest/config.json 或 AUTOTEST_DATA_DIR，然后重启",
     },
     {
         "key": "engine.poll_interval_ms",
@@ -152,7 +154,7 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "title": "新建脚本默认执行前停顿（ms）",
         "min": 0,
         "max": 600000,
-        "desc": "只作为新建脚本的初值；节点停顿填 0 时跟随脚本默认，录制脚本不受影响",
+        "desc": "只作为新建脚本的初值；节点停顿留空时跟随脚本默认，录制脚本不受影响",
     },
     {
         "key": "engine.default_delay_after_ms",
@@ -160,7 +162,17 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
         "title": "新建脚本默认执行后停顿（ms）",
         "min": 0,
         "max": 600000,
-        "desc": "只作为新建脚本的初值；节点停顿填 0 时跟随脚本默认，录制脚本不受影响",
+        "desc": "只作为新建脚本的初值；节点停顿留空时跟随脚本默认，录制脚本不受影响",
+    },
+    {
+        "key": "engine.default_on_fail",
+        "type": "enum",
+        "title": "新建脚本默认失败策略",
+        "options": [
+            {"label": "中止整个运行（abort）", "value": "abort"},
+            {"label": "继续下一步（continue）", "value": "continue"},
+        ],
+        "desc": "重试用尽后的动作；只作为新建脚本的初值，脚本/节点可覆盖，已有脚本不受影响",
     },
     {
         "key": "engine.max_total_ms",
@@ -246,19 +258,14 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
     {
         "key": "capture.logcat_auto_attach",
         "type": "bool",
-        "title": "运行自动采集 logcat",
-        "desc": "还需脚本设置 logcat=true；关闭后仍可手动查看",
+        "title": "允许采集 logcat",
+        "desc": "总开关；开启后脚本里可勾选本次采集，也可在控制台手动开始；关闭时两处都置灰",
     },
     {
-        "key": "capture.network.mode",
-        "type": "enum",
-        "title": "网络域名抓包",
-        "options": [
-            {"label": "关闭（不抓包）", "value": "off"},
-            {"label": "仅手动（控制台开始/停止）", "value": "manual"},
-            {"label": "跟随运行（每次运行自动抓包）", "value": "run"},
-        ],
-        "desc": "只记录访问的 host/port，不抓 Header 与正文；跟随运行会随脚本自动启停",
+        "key": "capture.network.enabled",
+        "type": "bool",
+        "title": "允许网络域名抓包",
+        "desc": "总开关；开启后脚本里可勾选本次抓取，也可在控制台手动开始；只记录 host/port，不抓 Header 与正文",
     },
     {
         "key": "capture.network.port",
@@ -303,6 +310,27 @@ def home_dir() -> Path:
     return Path.home() / ".autotest"
 
 
+def default_display(key: str) -> str | None:
+    """设置项“空值默认”的可读展示（给前端占位符用，不触发 mkdir）。
+
+    只处理空字符串代表“用默认”的项；数字/枚举默认值前端自己展示。
+    """
+    if key == "runtime.data_dir":
+        return str(home_dir() / "data")
+    if key == "adb.path":
+        try:
+            return find_adb() or "自动探测"
+        except Exception:  # pragma: no cover - 探测失败不影响设置页
+            return "自动探测"
+    if key == "scrcpy.jar":
+        return "内置版本"
+    if key == "scrcpy.crop":
+        return "不裁剪"
+    if key == "security.token":
+        return "不校验"
+    return None
+
+
 def config_file_path() -> Path:
     env = os.getenv("AUTOTEST_CONFIG")
     if env:
@@ -336,7 +364,15 @@ def load_file_layer(path: Path | None = None) -> dict[str, Any]:
         return {}
     if not isinstance(raw, dict):
         return {}
-    return _flatten(raw)
+    return _migrate_legacy_keys(_flatten(raw))
+
+
+def _migrate_legacy_keys(layer: dict[str, Any]) -> dict[str, Any]:
+    """把旧的三态抓包开关映射成新 bool；新键已存在时以新键为准。"""
+    mode = layer.pop("capture.network.mode", None)
+    if mode is not None and "capture.network.enabled" not in layer:
+        layer["capture.network.enabled"] = str(mode).strip().lower() != "off"
+    return layer
 
 
 def _coerce(key: str, value: Any) -> Any:
@@ -421,6 +457,9 @@ def write_file_values(values: dict[str, Any]) -> Path:
     with _LOCK:
         raw = _read_config_raw()
         for key, value in values.items():
+            if key == "capture.network.enabled":
+                # 新开关一旦被保存/清除，就不再保留旧 mode，避免删除后旧值把开关重新点亮。
+                _delete_dotted(raw, "capture.network.mode")
             if value is None:
                 _delete_dotted(raw, key)
             else:

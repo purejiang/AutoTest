@@ -55,15 +55,14 @@ def _safe_serial(serial: str) -> str:
     return _SAFE_RE.sub("_", str(serial or "")) or "device"
 
 
-def mode() -> str:
-    """网络抓包模式：off / manual / run；非法值按 off 处理。"""
-    value = str(config.get("capture.network.mode") or "off").strip().lower()
-    return value if value in {"off", "manual", "run"} else "off"
+def enabled() -> bool:
+    """网络抓包总开关（设置页 → 执行 → 采集）。"""
+    return bool(config.get("capture.network.enabled"))
 
 
 def available() -> bool:
-    """抓包是否可用：manual/run 模式；域名代理为 stdlib 实现，无第三方依赖。"""
-    return mode() != "off"
+    """抓包是否可用：总开关打开即可；域名代理为 stdlib 实现，无第三方依赖。"""
+    return enabled()
 
 
 def _ensure_available() -> None:
@@ -756,6 +755,7 @@ class NetworkCapture:
             "serial": self.serial,
             "status": "running" if active else "stopped",
             "active": active,
+            "enabled": available(),
             "mode": "domain",
             "format": "jsonl",
             "port": self.port,
@@ -859,13 +859,29 @@ def _stop_capture(serial: str) -> dict[str, Any]:
 
 
 def stop(serial: str) -> dict[str, Any]:
-    _ensure_available()
+    # 开关关闭后仍允许停止：否则用户关掉总开关，残留的采集会话就停不掉了。
     return _stop_capture(str(serial))
 
 
-def attach_if_needed(run_id: int) -> NetworkCapture | None:
-    """运行期自动开启域名抓包；仅 mode=run 生效，不抢占手动/其他 run 的采集。"""
-    if mode() != "run":
+def script_flag(script_settings: Any) -> bool:
+    """从脚本 settings 读 network_capture；缺省/null 一律按关闭处理。"""
+    if isinstance(script_settings, dict):
+        value = script_settings.get("network_capture")
+    elif script_settings is not None:
+        value = getattr(script_settings, "network_capture", False)
+    else:
+        value = False
+    return bool(value)
+
+
+def wants_run_capture(script_settings: Any = None) -> bool:
+    """本次运行是否要开域名抓包：总开关打开 + 脚本显式打开，缺一不可。"""
+    return enabled() and script_flag(script_settings)
+
+
+def attach_if_needed(run_id: int, script_settings: Any = None) -> NetworkCapture | None:
+    """运行期按总开关 + 脚本开关开启域名抓包，不抢占手动/其他 run 的采集。"""
+    if not wants_run_capture(script_settings):
         return None
     try:
         run_key = int(run_id)
@@ -936,7 +952,7 @@ def recent_records(
 
 
 def status(serial: str) -> dict[str, Any]:
-    _ensure_available()
+    # 状态读取不受开关限制：关闭后仍要能看到/停止残留会话。
     serial = str(serial)
     with _LOCK:
         capture = _ACTIVE.get(serial)
@@ -949,6 +965,7 @@ def status(serial: str) -> dict[str, Any]:
         "serial": serial,
         "status": "stopped",
         "active": False,
+        "enabled": available(),
         "mode": "domain",
         "format": "jsonl",
         "port": _configured_port(),

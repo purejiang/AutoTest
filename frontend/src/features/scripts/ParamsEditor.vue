@@ -284,7 +284,7 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
       <VariableField
         :model-value="p.activity ?? ''"
         size="small"
-        placeholder=".MainActivity（留空用 launcher activity）"
+        placeholder="默认：launcher activity（也可填 .MainActivity）"
         style="max-width: 360px"
         @update:model-value="patch({ activity: $event || null })"
       />
@@ -381,7 +381,7 @@ const needsAssertValue = computed(() => p.value.kind === 'text_contains' || p.va
       <VariableField
         :model-value="p.name ?? ''"
         size="small"
-        placeholder="留空自动命名，或 {{name}}"
+        placeholder="默认：自动命名（也可填 {{name}}）"
         style="max-width: 360px"
         @update:model-value="patch({ name: $event || null })"
       />

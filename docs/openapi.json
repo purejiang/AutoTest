@@ -1386,6 +1386,17 @@
           "default": {
             "title": "Default"
           },
+          "default_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Display"
+          },
           "desc": {
             "anyOf": [
               {
@@ -2853,7 +2864,7 @@
     },
     "/api/devices/{serial}/network/status": {
       "get": {
-        "description": "域名抓包状态：active/port/path/size/domain_count/recent_domains（供 UI 展示）。",
+        "description": "域名抓包状态：enabled/active/port/path/size/domain_count/recent_domains（供 UI 展示）。",
         "operationId": "network_status_api_devices__serial__network_status_get",
         "parameters": [
           {

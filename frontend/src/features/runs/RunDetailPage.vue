@@ -208,6 +208,7 @@ function clearEvents(): void {
             v-if="activeTab === 'steps'"
             :steps="run.steps ?? []"
             :current-step-id="run.current_step_id"
+            :artifacts="run.artifacts ?? []"
           />
           <RunEventsPanel
             v-else

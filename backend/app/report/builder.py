@@ -1,7 +1,8 @@
 """运行报告生成（契约 §7.5 / §14.5）。
 
-产物为 zip：`index.html`（汇总 + 步骤表 + 失败截图缩略图）、`junit.xml`
-（每 step 一个 testcase，整体一个 testsuite）、`steps.json`、截图文件（可选视频）。
+产物为 zip：`index.html`（汇总 + 步骤表 + 节点时间线/合并时间线）、`junit.xml`
+（每 step 一个 testcase，整体一个 testsuite；节点证据写 `<system-out>`）、`steps.json`、
+截图 / 视频、`evidence/`（失败节点的 logcat 与域名清单）、`logs/` + `network/`（运行级采集）。
 视频默认排除（`retention.report_exclude_video` 由 API 层决定默认值）；
 zip 超过 `retention.report_max_mb` 时删文件并抛 `ApiError("INVALID_ARGUMENT")`。
 报告落 `config.reports_dir()`，并 insert `reports` 行。
@@ -25,7 +26,8 @@ from .. import config
 from ..db import session_scope
 from ..errors import ApiError, not_found
 from ..logs import logger
-from ..models import Artifact, Report, Run, StepResult, now_iso
+from ..models import Artifact, Report, Run, RunEvent, StepResult, now_iso
+from .timeline import build_timeline
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _ENV = Environment(
@@ -37,7 +39,10 @@ _ENV = Environment(
 
 _UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9\u4e00-\u9fff_.-]+")
 _VIDEO_KINDS = {"video", "screenrecord"}
+_EVIDENCE_KINDS = {"logcat", "network"}
 _FAILED_STATUSES = {"failed", "error"}
+_PREVIEW_LOG_LINES = 200
+_PREVIEW_NETWORK_RECORDS = 100
 
 
 # ================================================================ 小工具
@@ -122,6 +127,18 @@ def _error_detail(error: Any) -> str:
     return _error_message(error)
 
 
+def _display_time(value: str | None) -> str:
+    if not value:
+        return "-"
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _run_view(run: Run) -> dict[str, Any]:
     return {
         "id": run.id,
@@ -131,15 +148,68 @@ def _run_view(run: Run) -> dict[str, Any]:
         "status": run.status,
         "started_at": run.started_at,
         "ended_at": run.ended_at,
-        "error": run.error,
+        "started_at_local": _display_time(run.started_at),
+        "ended_at_local": _display_time(run.ended_at),
+        "error": _error_message(run.error),
         "summary": run.summary,
         "total_steps": run.total_steps,
         "created_at": run.created_at,
     }
 
 
+def _read_logcat(path: Path) -> tuple[list[str], int]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:  # pragma: no cover - 读取失败不拖垮报告
+        return [], 0
+    return lines[-_PREVIEW_LOG_LINES:], len(lines)
+
+
+def _read_network(path: Path) -> tuple[list[dict[str, Any]], int]:
+    records: list[dict[str, Any]] = []
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict):
+                records.append(item)
+    except OSError:  # pragma: no cover
+        return [], 0
+    return records[-_PREVIEW_NETWORK_RECORDS:], len(records)
+
+
+def _evidence_view(artifact: Artifact, source: Path, arcname: str) -> dict[str, Any]:
+    """把 logcat / 域名抓包转成报告里可预览、可下载的证据条目。"""
+    entry: dict[str, Any] = {
+        "kind": artifact.kind,
+        "name": artifact.name or source.name,
+        "file": arcname,
+        "size": int(artifact.size or 0),
+    }
+    if artifact.kind == "logcat":
+        preview, total = _read_logcat(source)
+        entry["lines"] = total
+        entry["preview"] = preview
+    else:
+        preview, total = _read_network(source)
+        entry["records"] = total
+        entry["preview"] = preview
+    return entry
+
+
 # ================================================================ junit.xml
-def _junit_xml(run: Run, steps: list[StepResult], summary: dict[str, Any]) -> bytes:
+def _junit_xml(
+    run: Run,
+    steps: list[StepResult],
+    summary: dict[str, Any],
+    evidence_map: dict[int, list[dict[str, Any]]] | None = None,
+) -> bytes:
+    evidence_map = evidence_map or {}
     suite = ET.Element(
         "testsuite",
         {
@@ -168,6 +238,22 @@ def _junit_xml(run: Run, steps: list[StepResult], summary: dict[str, Any]) -> by
             node.text = _error_detail(step.error)
         elif step.status == "skipped":
             ET.SubElement(case, "skipped", {"message": _error_message(step.error) or "skipped"})
+        evidence = evidence_map.get(step.id)
+        if evidence:
+            lines: list[str] = []
+            for item in evidence:
+                if item["kind"] == "logcat":
+                    lines.append(f"--- logcat（共 {item.get('lines', 0)} 行，末尾预览）---")
+                    lines.extend(str(line) for line in item.get("preview", []))
+                else:
+                    lines.append(f"--- network domains（共 {item.get('records', 0)} 条，末尾预览）---")
+                    for record in item.get("preview", []):
+                        lines.append(
+                            f"{record.get('ts', '')} {record.get('host', '')}:"
+                            f"{record.get('port', '')} {record.get('scheme', '')}".strip()
+                        )
+            if lines:
+                ET.SubElement(case, "system-out").text = "\n".join(lines)
     ET.indent(suite, space="  ")
     return ET.tostring(suite, encoding="utf-8", xml_declaration=True)
 
@@ -177,7 +263,10 @@ def _steps_payload(
     run: Run,
     steps: list[StepResult],
     screenshot_map: dict[int, list[str]],
+    evidence_map: dict[int, list[dict[str, Any]]],
+    timeline_map: dict[int, dict[str, list[dict[str, Any]]]] | None = None,
 ) -> list[dict[str, Any]]:
+    timeline_map = timeline_map or {}
     payload: list[dict[str, Any]] = []
     for step in steps:
         payload.append(
@@ -191,10 +280,18 @@ def _steps_payload(
                 "attempts": step.attempts,
                 "started_at": step.started_at,
                 "ended_at": step.ended_at,
+                "started_at_local": _display_time(step.started_at),
+                "ended_at_local": _display_time(step.ended_at),
                 "duration_ms": step.duration_ms,
                 "error": step.error,
                 "output": step.output,
                 "screenshots": screenshot_map.get(step.id, []),
+                "evidence": evidence_map.get(step.id, []),
+                "timeline": {
+                    "logcat": timeline_map.get(int(step.id), {}).get("logcat", []),
+                    "network": timeline_map.get(int(step.id), {}).get("network", []),
+                    "events": timeline_map.get(int(step.id), {}).get("event", []),
+                },
             }
         )
     return payload
@@ -216,12 +313,22 @@ def build_report(run_id: int, include_video: bool = False) -> dict[str, Any]:
             )
         )
         artifacts = list(db.scalars(select(Artifact).where(Artifact.run_id == run_id).order_by(Artifact.id)))
+        run_events = list(
+            db.scalars(select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.seq))
+        )
 
     duration_ms = _run_duration_ms(run, steps)
     summary = _step_summary(steps, duration_ms)
 
+    step_by_result_id = {int(step.id): step for step in steps}
     screenshot_entries: list[tuple[Artifact, Path, str]] = []
     video_entries: list[tuple[Artifact, Path, str]] = []
+    evidence_files: dict[int, list[tuple[Path, str]]] = {}
+    evidence_map: dict[int, list[dict[str, Any]]] = {}
+    run_evidence_files: list[tuple[Path, str]] = []
+    run_evidence: list[dict[str, Any]] = []
+    timeline_logcat_paths: list[Path] = []
+    timeline_network_paths: list[Path] = []
     for artifact in artifacts:
         if artifact.kind == "screenshot":
             source = _resolve_artifact_path(artifact)
@@ -243,14 +350,58 @@ def build_report(run_id: int, include_video: bool = False) -> dict[str, Any]:
                 f"{_safe_filename(artifact.name, fallback)}{_artifact_extension(source, '.mp4')}"
             )
             video_entries.append((artifact, source, f"videos/{filename}"))
+        elif artifact.kind in _EVIDENCE_KINDS:
+            source = _resolve_artifact_path(artifact)
+            if source is None:
+                continue
+            default_ext = ".log" if artifact.kind == "logcat" else ".jsonl"
+            fallback = f"artifact_{artifact.id}"
+            filename = (
+                f"{_safe_filename(artifact.name, fallback)}_{artifact.id}"
+                f"{_artifact_extension(source, default_ext)}"
+            )
+            step = (
+                step_by_result_id.get(int(artifact.step_result_id))
+                if artifact.step_result_id is not None
+                else None
+            )
+            if step is not None:
+                arcname = f"evidence/{step.step_index:03d}_{_safe_filename(step.step_id, 'step')}_{filename}"
+                evidence_files.setdefault(step.id, []).append((source, arcname))
+                evidence_map.setdefault(step.id, []).append(
+                    _evidence_view(artifact, source, arcname)
+                )
+            else:
+                folder = "logs" if artifact.kind == "logcat" else "network"
+                arcname = f"{folder}/{filename}"
+                run_evidence_files.append((source, arcname))
+                run_evidence.append(_evidence_view(artifact, source, arcname))
+                if artifact.kind == "logcat":
+                    timeline_logcat_paths.append(source)
+                else:
+                    timeline_network_paths.append(source)
 
     screenshot_map: dict[int, list[str]] = {}
     for artifact, _source, arcname in screenshot_entries:
         if artifact.step_result_id is not None:
             screenshot_map.setdefault(int(artifact.step_result_id), []).append(arcname)
 
+    timeline = build_timeline(
+        steps,
+        timeline_logcat_paths,
+        timeline_network_paths,
+        run.started_at,
+        run.ended_at,
+        run_events,
+    )
+    timeline_steps = timeline["steps"]
+
     steps_view: list[dict[str, Any]] = []
     for step in steps:
+        step_timeline = timeline_steps.get(int(step.id), {})
+        step_logcat = step_timeline.get("logcat", [])
+        step_network = step_timeline.get("network", [])
+        step_events = step_timeline.get("event", [])
         steps_view.append(
             {
                 "index": step.step_index,
@@ -258,35 +409,45 @@ def build_report(run_id: int, include_video: bool = False) -> dict[str, Any]:
                 "name": step.step_name or step.step_id,
                 "type": step.step_type,
                 "status": step.status,
+                "started_at": step.started_at,
+                "ended_at": step.ended_at,
                 "duration_ms": step.duration_ms,
                 "attempts": step.attempts,
                 "error": _error_message(step.error),
                 "output": step.output,
                 "screenshots": screenshot_map.get(step.id, []),
+                "evidence": evidence_map.get(step.id, []),
+                "timeline_logcat": step_logcat[-80:],
+                "timeline_logcat_count": len(step_logcat),
+                "timeline_network": step_network[-50:],
+                "timeline_network_count": len(step_network),
+                "timeline_events": step_events[-50:],
+                "timeline_events_count": len(step_events),
             }
         )
-    failed_shots = [
-        {"step_name": item["name"], "file": file_name, "message": item["error"]}
-        for item in steps_view
-        if item["status"] in _FAILED_STATUSES
-        for file_name in item["screenshots"]
-    ]
-
     generated_at = now_iso()
     html = _ENV.get_template("report.html").render(
         run=_run_view(run),
         summary=summary,
         steps=steps_view,
-        failed_shots=failed_shots,
         videos=[
             {"name": artifact.name or source.name, "file": arcname}
             for artifact, source, arcname in video_entries
         ],
         generated_at=generated_at,
+        generated_at_local=_display_time(generated_at),
         include_video=bool(include_video),
+        run_evidence=run_evidence,
+        timeline=timeline["timeline"][:500],
+        timeline_total=len(timeline["timeline"]),
+        timeline_counts=timeline["counts"],
     )
-    junit = _junit_xml(run, steps, summary)
-    steps_json = json.dumps(_steps_payload(run, steps, screenshot_map), ensure_ascii=False, indent=2)
+    junit = _junit_xml(run, steps, summary, evidence_map)
+    steps_json = json.dumps(
+        _steps_payload(run, steps, screenshot_map, evidence_map, timeline_steps),
+        ensure_ascii=False,
+        indent=2,
+    )
 
     report_id = f"rep_{uuid.uuid4().hex[:12]}"
     reports_dir = config.reports_dir()
@@ -299,6 +460,11 @@ def build_report(run_id: int, include_video: bool = False) -> dict[str, Any]:
             for _artifact, source, arcname in screenshot_entries:
                 archive.write(source, arcname=arcname)
             for _artifact, source, arcname in video_entries:
+                archive.write(source, arcname=arcname)
+            for entries in evidence_files.values():
+                for source, arcname in entries:
+                    archive.write(source, arcname=arcname)
+            for source, arcname in run_evidence_files:
                 archive.write(source, arcname=arcname)
         size = path.stat().st_size
     except OSError as exc:  # pragma: no cover - 磁盘异常

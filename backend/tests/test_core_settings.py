@@ -15,6 +15,15 @@ def _config_json() -> dict:
     return json.loads(config.config_file_path().read_text(encoding="utf-8"))
 
 
+def test_default_display_for_empty_paths(core_client) -> None:
+    """空值默认直接给出可读值：数据目录是绝对路径，供前端做占位符。"""
+    body = core_client.get("/api/settings").json()
+    entries = {entry["key"]: entry for entry in body["schema"]}
+    assert entries["runtime.data_dir"]["default_display"] == str(config.home_dir() / "data")
+    assert entries["scrcpy.crop"]["default_display"] == "不裁剪"
+    assert entries["security.token"]["default_display"] == "不校验"
+
+
 def test_default_response_shape(core_client) -> None:
     response = core_client.get("/api/settings")
     assert response.status_code == 200
@@ -48,20 +57,61 @@ def test_default_delay_settings_exposed(core_client) -> None:
     assert out_of_range.status_code == 422
 
 
-def test_network_mode_migrates_old_switches(core_client) -> None:
-    """旧版 DB 开关（enabled/auto_attach）迁移成 capture.network.mode，再整体迁到文件。"""
+def test_default_on_fail_setting(core_client) -> None:
+    """设置页可配「新建脚本默认失败策略」，且只接受 abort/continue。"""
+    body = core_client.get("/api/settings").json()
+    schema = {item["key"]: item for item in body["schema"]}
+    entry = schema["engine.default_on_fail"]
+    assert entry["type"] == "enum"
+    assert entry["default"] == "abort"
+    assert [option["value"] for option in entry["options"]] == ["abort", "continue"]
+    assert body["effective"]["engine.default_on_fail"] == "abort"
+    assert body["sources"]["engine.default_on_fail"] == "default"
+
+    put = core_client.put("/api/settings", json={"values": {"engine.default_on_fail": "continue"}})
+    assert put.status_code == 200, put.text
+    assert put.json()["effective"]["engine.default_on_fail"] == "continue"
+    assert put.json()["sources"]["engine.default_on_fail"] == "file"
+
+    bad = core_client.put("/api/settings", json={"values": {"engine.default_on_fail": "retry"}})
+    assert bad.status_code == 422
+    assert "可选值" in bad.text
+
+
+def test_network_enabled_migrates_old_switches(core_client) -> None:
+    """旧版 DB 开关（enabled/auto_attach）迁移成单一的 capture.network.enabled。"""
     with db.session_scope() as session:
         session.add(models.Setting(key="capture.network.enabled", value=True))
         session.add(models.Setting(key="capture.network.auto_attach", value=True))
     migrated = settings_service.migrate_db_settings_to_file()
 
-    assert migrated["capture.network.mode"] == "run"
+    assert migrated["capture.network.enabled"] is True
     body = core_client.get("/api/settings").json()
-    assert body["effective"]["capture.network.mode"] == "run"
-    assert body["sources"]["capture.network.mode"] == "file"
-    assert _config_json()["capture"]["network"]["mode"] == "run"
+    assert body["effective"]["capture.network.enabled"] is True
+    assert body["sources"]["capture.network.enabled"] == "file"
+    assert _config_json()["capture"]["network"]["enabled"] is True
+    with db.session_scope() as session:
+        assert session.get(models.Setting, "capture.network.auto_attach") is None
+
+
+def test_network_legacy_mode_migrates_to_enabled(core_client) -> None:
+    """旧的三态 mode 行也收敛成 bool；off 以外都按开启处理。"""
+    with db.session_scope() as session:
+        session.add(models.Setting(key="capture.network.mode", value="manual"))
+    migrated = settings_service.migrate_db_settings_to_file()
+
+    assert migrated["capture.network.enabled"] is True
     with db.session_scope() as session:
         assert session.get(models.Setting, "capture.network.mode") is None
+
+
+def test_legacy_network_mode_in_config_file_maps_to_enabled(tmp_path) -> None:
+    """配置文件里的旧 mode 在读取时映射成新 bool，不要求用户手改文件。"""
+    path = tmp_path / "config.json"
+    path.write_text('{"capture": {"network": {"mode": "manual"}}}', encoding="utf-8")
+    layer = config.load_file_layer(path)
+    assert layer["capture.network.enabled"] is True
+    assert "capture.network.mode" not in layer
 
 
 def test_new_toolchain_keys_are_editable(core_client) -> None:

@@ -41,12 +41,12 @@ def net_env(tmp_path, temp_db):
     config.reset_to_defaults()
 
 
-def _enable(port: int = 0, mode: str = "manual") -> None:
-    # 保留夹具设置的数据目录，只覆盖抓包模式（set_file_layer 是整层替换）。
+def _enable(port: int = 0, enabled: bool = True) -> None:
+    # 保留夹具设置的数据目录，只覆盖抓包总开关（set_file_layer 是整层替换）。
     config.set_file_layer(
         {
             "runtime.data_dir": str(config.data_dir()),
-            "capture.network.mode": mode,
+            "capture.network.enabled": enabled,
             "capture.network.port": port,
         }
     )
@@ -150,17 +150,20 @@ class _RunningProxy:
 # ---------------------------------------------------------------- 可用性 / 关闭配置
 
 
-def test_disabled_by_default_raises_unsupported(net_env) -> None:
+def test_disabled_blocks_start_but_allows_status_and_stop(net_env) -> None:
     assert network.available() is False
-    for action in (
-        lambda: network.start("fake-1"),
-        lambda: network.stop("fake-1"),
-        lambda: network.status("fake-1"),
-    ):
-        with pytest.raises(ApiError) as excinfo:
-            action()
-        assert excinfo.value.code == "UNSUPPORTED"
-        assert "网络抓包未启用" in excinfo.value.message
+    with pytest.raises(ApiError) as excinfo:
+        network.start("fake-1")
+    assert excinfo.value.code == "UNSUPPORTED"
+    assert "网络抓包未启用" in excinfo.value.message
+
+    # 状态读取与停止不受开关限制，避免关掉开关后残留会话停不掉。
+    status = network.status("fake-1")
+    assert status["enabled"] is False
+    assert status["active"] is False
+    with pytest.raises(ApiError) as stop_info:
+        network.stop("fake-1")
+    assert stop_info.value.code == "NOT_FOUND"
 
 
 def test_enabled_without_mitmproxy_is_supported(net_env, monkeypatch) -> None:
@@ -240,18 +243,11 @@ def test_artifact_run_id_links_when_provided(net_env, monkeypatch) -> None:
 
 def test_attach_if_needed_links_run(net_env, monkeypatch) -> None:
     _enable()
-    config.set_file_layer(
-        {
-            "runtime.data_dir": str(config.data_dir()),
-            "capture.network.mode": "run",
-            "capture.network.port": 0,
-        }
-    )
     monkeypatch.setattr(network, "_adb_module", lambda: _StubAdb())
     with session_scope() as db:
         db.add(Run(id=7, script_name="network", device_serial="fake-run", status="running"))
 
-    capture = network.attach_if_needed(7)
+    capture = network.attach_if_needed(7, {"network_capture": True})
     assert capture is not None
     assert capture.run_id == 7
     assert capture.started_by_run is True
@@ -272,20 +268,32 @@ def test_attach_if_needed_links_run(net_env, monkeypatch) -> None:
     network.stop("manual-device")
 
 
+def test_attach_if_needed_requires_global_and_script_switch(net_env, monkeypatch) -> None:
+    """全局总开关 + 脚本 network_capture 必须同时打开；缺一不可。"""
+    monkeypatch.setattr(network, "_adb_module", lambda: _StubAdb())
+    with session_scope() as db:
+        db.add(Run(id=9, script_name="network", device_serial="fake-run", status="running"))
+
+    _enable(enabled=False)
+    assert network.wants_run_capture({"network_capture": True}) is False
+    assert network.attach_if_needed(9, {"network_capture": True}) is None
+
+    _enable(enabled=True)
+    assert network.wants_run_capture(None) is False
+    assert network.wants_run_capture({"network_capture": False}) is False
+    capture = network.attach_if_needed(9, {"network_capture": True})
+    assert capture is not None
+    assert capture.started_by_run is True
+    network.stop_run_capture(9, "fake-run")
+
+
 def test_attach_if_needed_skips_manual_capture(net_env, monkeypatch) -> None:
     _enable()
-    config.set_file_layer(
-        {
-            "runtime.data_dir": str(config.data_dir()),
-            "capture.network.mode": "run",
-            "capture.network.port": 0,
-        }
-    )
     monkeypatch.setattr(network, "_adb_module", lambda: _StubAdb())
     with session_scope() as db:
         db.add(Run(id=8, script_name="network", device_serial="fake-run", status="running"))
     network.start("fake-run")
-    assert network.attach_if_needed(8) is None
+    assert network.attach_if_needed(8, {"network_capture": True}) is None
     assert network.stop_run_capture(8, "fake-run") is None
     assert network.status("fake-run")["active"] is True
     network.stop("fake-run")
@@ -505,6 +513,18 @@ def test_connect_forwards_payload_buffered_with_handshake(net_env, monkeypatch, 
     network.stop("fake-early")
 
 
+def test_disable_switch_still_allows_stop(net_env, monkeypatch) -> None:
+    """关掉总开关后，已经开始的采集仍要能停止并保存。"""
+    _enable()
+    runtime = _RunningProxy(monkeypatch, serial="fake-stop")
+    _enable(enabled=False)
+    assert network.status("fake-stop")["enabled"] is False
+    stopped = network.stop("fake-stop")
+    assert stopped["active"] is False
+    assert Path(str(stopped["path"])).exists()
+    assert runtime.info["path"] == stopped["path"]
+
+
 def test_status_without_capture(net_env) -> None:
     _enable()
     status = network.status("never-started")
@@ -519,7 +539,7 @@ def test_status_without_capture(net_env) -> None:
 
 
 def _core_net_enable() -> None:
-    config.set_file_layer({"capture.network.mode": "manual", "capture.network.port": 0})
+    config.set_file_layer({"capture.network.enabled": True, "capture.network.port": 0})
 
 
 @pytest.fixture()
@@ -534,12 +554,17 @@ def core_net(core_client, monkeypatch):
     network_module._LAST.clear()
 
 
-def test_api_network_status_requires_enabled(core_client) -> None:
-    response = core_client.get("/api/devices/fake-1/network/status")
-    assert response.status_code == 400
-    error = response.json()["error"]
+def test_api_network_start_requires_enabled_but_status_is_readable(core_client) -> None:
+    started = core_client.post("/api/devices/fake-1/network/start")
+    assert started.status_code == 400
+    error = started.json()["error"]
     assert error["code"] == "UNSUPPORTED"
-    assert error["details"]["setting"] == "capture.network.mode"
+    assert error["details"]["setting"] == "capture.network.enabled"
+
+    status = core_client.get("/api/devices/fake-1/network/status")
+    assert status.status_code == 200
+    assert status.json()["enabled"] is False
+    assert status.json()["active"] is False
 
 
 def test_api_network_start_status_stop(core_net) -> None:

@@ -66,6 +66,12 @@ def _coerce_value(key: str, value: Any) -> Any:
         if high is not None and number > int(high):
             raise ValueError(f"不能大于 {high}")
         return number
+    if kind == "enum":
+        allowed = [str(option.get("value")) for option in entry.get("options") or []]
+        text = str(value)
+        if allowed and text not in allowed:
+            raise ValueError(f"可选值：{'、'.join(allowed)}")
+        return text
     if isinstance(value, (dict, list, tuple)):
         raise ValueError("必须是字符串")
     return str(value)
@@ -84,22 +90,26 @@ def _old_bool(row: Setting | None) -> bool:
 
 
 def _migrate_network_mode(session: Session) -> None:
-    """把旧的 enabled + auto_attach 两个开关迁移成单一下拉 mode。
+    """把旧的三态网络抓包设置收敛成单一 bool 开关。
 
-    enabled=false -> off（删除旧行即可，默认值就是 off）
-    enabled=true + auto_attach=false -> manual
-    enabled=true + auto_attach=true  -> run
-    已有 mode 时只清掉旧行，不覆盖新值。
+    - 旧 ``enabled=true``（无论 auto_attach）-> ``capture.network.enabled=true``；
+    - 旧 ``mode``：off -> false，manual/run -> true（新键已存在时以新键为准）；
+    - 删除 ``auto_attach`` / ``mode``，不再保留“手动/自动”语义。
     """
-    mode_row = session.get(Setting, "capture.network.mode")
     enabled_row = session.get(Setting, "capture.network.enabled")
+    mode_row = session.get(Setting, "capture.network.mode")
     auto_row = session.get(Setting, "capture.network.auto_attach")
-    if enabled_row is None and auto_row is None:
+    if enabled_row is None and mode_row is None and auto_row is None:
         return
-    if mode_row is None and _old_bool(enabled_row):
-        value = "run" if _old_bool(auto_row) else "manual"
-        session.add(Setting(key="capture.network.mode", value=value, updated_at=now_iso()))
-    for row in (enabled_row, auto_row):
+    if enabled_row is None:
+        if mode_row is not None:
+            value = str(mode_row.value or "off").strip().lower() != "off"
+        else:
+            value = _old_bool(auto_row)
+        session.add(
+            Setting(key="capture.network.enabled", value=value, updated_at=now_iso())
+        )
+    for row in (mode_row, auto_row):
         if row is not None:
             session.delete(row)
     session.flush()
@@ -158,6 +168,7 @@ def response() -> dict[str, Any]:
         {
             **entry,
             "default": config.DEFAULTS.get(entry["key"]),
+            "default_display": config.default_display(entry["key"]),
             "layer": config.layer_of(entry["key"]),
             "writable": config.db_writable(entry["key"]),
             "env": config.env_var_for(entry["key"]),

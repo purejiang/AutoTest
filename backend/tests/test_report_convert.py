@@ -158,6 +158,9 @@ def test_events_to_script_is_valid_and_one_node_per_event() -> None:
     # 录制脚本不继承全节点默认停顿：节奏只由录制还原的节点间隔决定
     assert script["settings"]["default_delay_before_ms"] == 0
     assert script["settings"]["default_delay_after_ms"] == 0
+    assert script["settings"]["default_rerun_safety"] == "safe"
+    assert script["settings"]["logcat_scope"] == "device"
+    assert script["settings"]["network_capture"] is False
     # 一事件一节点：两个 tap 不合并
     assert script["steps"][0]["params"]["target"] == _node_target()
     assert script["steps"][1]["params"]["duration_ms"] == 900

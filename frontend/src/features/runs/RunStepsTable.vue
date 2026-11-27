@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import type { StepResult } from '@/types/api'
-import { formatDuration, prettyJson, stepConditionOutcome, stepStatusMeta, stepWaitMs } from '@/lib/format'
+import type { Artifact, StepResult } from '@/types/api'
+import {
+  artifactHref,
+  artifactKindMeta,
+  formatDuration,
+  prettyJson,
+  stepConditionOutcome,
+  stepStatusMeta,
+  stepWaitMs,
+} from '@/lib/format'
 import StatusTag from '@/components/StatusTag.vue'
 
 const props = defineProps<{
   steps: StepResult[]
   currentStepId?: string | null
+  artifacts?: Artifact[]
 }>()
 
 const outcomeMap = computed(
@@ -17,6 +26,30 @@ const outcomeMap = computed(
 const waitMap = computed(
   () => new Map(props.steps.map((step) => [step.id, stepWaitMs(step)] as const)),
 )
+
+// 节点证据：失败 logcat / 域名抓包 / 截图都按 step_result_id 关联到节点。
+const artifactsByStep = computed(() => {
+  const map = new Map<number, Artifact[]>()
+  for (const artifact of props.artifacts ?? []) {
+    if (artifact.step_result_id === null || artifact.step_result_id === undefined) continue
+    const list = map.get(artifact.step_result_id) ?? []
+    list.push(artifact)
+    map.set(artifact.step_result_id, list)
+  }
+  return map
+})
+
+function evidenceFor(step: StepResult): Artifact[] {
+  return artifactsByStep.value.get(step.id) ?? []
+}
+
+function hrefOf(artifact: Artifact): string | null {
+  return artifactHref(artifact)
+}
+
+function nameOf(artifact: Artifact): string {
+  return artifact.name || artifact.path.split(/[\\/]/).pop() || String(artifact.id)
+}
 
 function outcomeFor(step: StepResult) {
   return outcomeMap.value.get(step.id) ?? null
@@ -44,7 +77,33 @@ function rowClassName({ row }: { row: StepResult }): string {
     <el-table-column type="expand">
       <template #default="{ row }">
         <div style="padding: 4px 12px 10px">
-          <div class="hint" style="margin-bottom: 4px">节点输出 output</div>
+          <template v-if="evidenceFor(row).length">
+            <div class="hint" style="margin-bottom: 4px">节点证据</div>
+            <div class="step-evidence">
+              <template v-for="artifact in evidenceFor(row)" :key="artifact.id">
+                <a
+                  v-if="hrefOf(artifact)"
+                  class="step-evidence-item"
+                  :href="hrefOf(artifact) ?? undefined"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <StatusTag :tone="artifactKindMeta(artifact.kind).tone">
+                    {{ artifactKindMeta(artifact.kind).label }}
+                  </StatusTag>
+                  <span>{{ nameOf(artifact) }}</span>
+                </a>
+                <span v-else class="step-evidence-item">
+                  <StatusTag :tone="artifactKindMeta(artifact.kind).tone">
+                    {{ artifactKindMeta(artifact.kind).label }}
+                  </StatusTag>
+                  <span>{{ nameOf(artifact) }}</span>
+                  <span class="muted small">无直链</span>
+                </span>
+              </template>
+            </div>
+          </template>
+          <div class="hint" style="margin-bottom: 4px; margin-top: 8px">节点输出 output</div>
           <pre class="pre-block">{{ row.output ? prettyJson(row.output) : '（无 output）' }}</pre>
         </div>
       </template>

@@ -7,21 +7,28 @@ import { useScriptVariables } from '@/composables/useScriptVariables'
 import { numberOrNull } from '@/lib/format'
 import { collectUsedVariables, missingVariables } from '@/lib/scriptVars'
 
-import { NODE_TYPE_META } from './nodeDefaults'
+import { describeFailureFlow } from './lib/failure'
+import { editRetry, resolveRetry, toggleRetry } from './lib/retry'
+import { NODE_TYPE_META, RERUN_SAFETY_OPTIONS } from './nodeDefaults'
 import ParamsEditor from './ParamsEditor.vue'
 import WhenEditor from './WhenEditor.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
-const props = defineProps<{
-  node: StepNode
-  total: number
-  steps: StepNode[]
-  defaultOnFail: 'abort' | 'continue'
-  defaultTimeoutMs: number
-  defaultDelayBeforeMs: number
-  defaultDelayAfterMs: number
-  defaultRetry: Retry | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    node: StepNode
+    total: number
+    steps: StepNode[]
+    defaultOnFail: 'abort' | 'continue'
+    defaultTimeoutMs: number
+    defaultDelayBeforeMs: number
+    defaultDelayAfterMs: number
+    defaultRetry: Retry | null
+    /** 脚本设置里的失败截图主开关；关闭时节点开关不生效。 */
+    scriptScreenshotOnFail: boolean
+  }>(),
+  { scriptScreenshotOnFail: true },
+)
 
 const emit = defineEmits<{
   change: [node: StepNode]
@@ -46,24 +53,73 @@ function declareNodeVariable(name: string): void {
 }
 const onFailAction = computed(() => props.node.on_fail?.action ?? 'none')
 
-const RERUN_SAFETY_OPTIONS = [
-  { value: 'safe', label: 'safe（可安全重跑）' },
-  { value: 'stateful', label: 'stateful（依赖状态）' },
-  { value: 'destructive', label: 'destructive（破坏性，禁止重跑）' },
-]
-const ON_FAIL_OPTIONS = [
-  { value: 'none', label: '继承/不设置' },
-  { value: 'abort', label: '中止 abort' },
-  { value: 'continue', label: '继续 continue' },
-  { value: 'goto', label: '跳转 goto' },
-]
+const onFailOptions = computed(() => {
+  const inherited = props.defaultOnFail === 'abort' ? '中止整个运行' : '继续下一步'
+  return [
+    { value: 'none', label: `继承脚本默认（${inherited}）` },
+    { value: 'abort', label: '中止整个运行（abort）' },
+    { value: 'continue', label: '继续下一步（continue）' },
+    ...(otherSteps.value.length > 0 || onFailAction.value === 'goto'
+      ? [{ value: 'goto', label: '跳转到节点（高级）' }]
+      : []),
+  ]
+})
+
+const gotoStep = computed(
+  () => otherSteps.value.find((step) => step.id === props.node.on_fail?.target_id) ?? null,
+)
+const gotoLabel = computed(() =>
+  gotoStep.value ? `${gotoStep.value.id} · ${gotoStep.value.name || gotoStep.value.type}` : null,
+)
+
+const retryState = computed(() => resolveRetry(props.node.retry, props.defaultRetry))
+const retryHint = computed(() => {
+  if (retryState.value.mode === 'inherit') {
+    return '继承脚本默认；直接修改下面的次数/间隔即改为节点自定义。'
+  }
+  if (retryState.value.mode === 'custom' && props.defaultRetry) return '该节点自定义，优先于脚本默认。'
+  if (retryState.value.mode === 'off' && retryState.value.overridden && props.defaultRetry) {
+    return '已显式关闭，不再继承脚本默认。'
+  }
+  return ''
+})
+
+const screenshotEffective = computed(
+  () => props.node.screenshot_on_fail && props.scriptScreenshotOnFail,
+)
+
+const flow = computed(() =>
+  describeFailureFlow({
+    retry: retryState.value.effective,
+    retryInherited: retryState.value.mode === 'inherit',
+    onFail: onFailAction.value === 'none' ? props.defaultOnFail : onFailAction.value,
+    onFailInherited: onFailAction.value === 'none',
+    gotoLabel: gotoLabel.value,
+    screenshot: screenshotEffective.value,
+    screenshotBlocked: !props.scriptScreenshotOnFail,
+  }),
+)
 
 function patch(partial: Partial<StepNode>): void {
   emit('change', { ...props.node, ...partial })
 }
 
-function toggleRetry(checked: boolean): void {
-  patch({ retry: checked ? { count: 1, interval_ms: 1000 } : null })
+function setRetryEnabled(enabled: boolean): void {
+  patch({ retry: toggleRetry(enabled, props.node.retry, props.defaultRetry) })
+}
+
+function setRetryCount(value: number | null | undefined): void {
+  patch({ retry: editRetry('count', numberOrNull(value) ?? 0, props.node.retry, props.defaultRetry) })
+}
+
+function setRetryInterval(value: number | null | undefined): void {
+  patch({
+    retry: editRetry('interval_ms', numberOrNull(value) ?? 0, props.node.retry, props.defaultRetry),
+  })
+}
+
+function restoreRetry(): void {
+  patch({ retry: null })
 }
 
 function setOnFail(value: string): void {
@@ -81,10 +137,9 @@ function setWhen(value: StepNode['when']): void {
   patch({ when: value })
 }
 
-/** 节点停顿的继承说明：0 = 跟随脚本默认，>0 = 该节点自定义。 */
-function delayHint(value: number, defaultValue: number): string {
-  if (value > 0) return defaultValue > 0 ? `自定义 ${value} ms（覆盖脚本默认 ${defaultValue} ms）` : `自定义 ${value} ms`
-  return defaultValue > 0 ? `0 = 跟随脚本默认 ${defaultValue} ms` : '0 = 该节点不停顿'
+/** 节点停顿留空时继承脚本默认；占位符直接显示会生效的值。 */
+function delayPlaceholder(defaultValue: number): string {
+  return defaultValue > 0 ? `默认 ${defaultValue} ms` : '默认：不停顿'
 }
 </script>
 
@@ -174,71 +229,100 @@ function delayHint(value: number, defaultValue: number): string {
       </div>
       <WhenEditor :model-value="node.when" @update:model-value="setWhen" />
 
-      <div class="section-label">执行与容错</div>
+      <div class="section-label">执行</div>
       <div class="form-grid">
         <el-form-item label="节点超时 (ms)" class="hint">
           <el-input-number
             :model-value="node.timeout_ms ?? undefined"
             :min="100"
             :max="600000"
-            :placeholder="`继承脚本默认（${defaultTimeoutMs} ms）`"
+            :placeholder="`默认 ${defaultTimeoutMs} ms`"
             controls-position="right"
             style="width: 100%"
             @update:model-value="patch({ timeout_ms: numberOrNull($event) })"
           />
         </el-form-item>
-        <el-form-item label="失败截图">
-          <el-switch
-            :model-value="node.screenshot_on_fail"
-            size="small"
-            @update:model-value="patch({ screenshot_on_fail: Boolean($event) })"
-          />
-        </el-form-item>
+      </div>
+
+      <div class="section-label">失败处理</div>
+      <div class="failure-flow" role="note" :title="flow.summary">
+        <span class="failure-flow-arrow" aria-hidden="true">↳</span>
+        <span>{{ flow.summary }}</span>
+      </div>
+      <div class="form-grid">
         <el-form-item label="重试" class="full">
-          <div class="row wrap">
+          <div class="retry-row">
             <el-switch
-              :model-value="node.retry !== null"
+              data-test="node-retry"
+              :model-value="retryState.enabled"
               size="small"
-              @update:model-value="toggleRetry(Boolean($event))"
+              aria-label="启用/关闭节点重试"
+              @update:model-value="setRetryEnabled(Boolean($event))"
             />
-            <template v-if="node.retry">
+            <template v-if="retryState.enabled">
               <el-input-number
-                :model-value="node.retry.count"
+                data-test="retry-count"
+                :model-value="retryState.effective?.count ?? 1"
                 size="small"
                 :min="0"
                 :max="20"
                 controls-position="right"
-                style="width: 100px"
-                @update:model-value="patch({ retry: { ...node.retry!, count: numberOrNull($event) ?? 0 } })"
+                style="width: 108px"
+                @update:model-value="setRetryCount"
               >
                 <template #prefix>次数</template>
               </el-input-number>
               <el-input-number
-                :model-value="node.retry.interval_ms"
+                data-test="retry-interval"
+                :model-value="retryState.effective?.interval_ms ?? 1000"
                 size="small"
                 :min="0"
                 :max="60000"
                 controls-position="right"
-                style="width: 130px"
-                @update:model-value="patch({ retry: { ...node.retry!, interval_ms: numberOrNull($event) ?? 0 } })"
+                style="width: 136px"
+                @update:model-value="setRetryInterval"
               >
                 <template #prefix>间隔</template>
               </el-input-number>
             </template>
-            <span v-else class="hint">
-              {{ defaultRetry ? `继承脚本默认：${defaultRetry.count} 次 / ${defaultRetry.interval_ms} ms` : '不重试' }}
-            </span>
+            <StatusTag v-if="retryState.mode === 'inherit'" tone="gray">继承脚本默认</StatusTag>
+            <StatusTag v-else-if="retryState.mode === 'custom'" tone="blue">自定义</StatusTag>
+            <StatusTag
+              v-else-if="retryState.overridden && defaultRetry"
+              tone="gray"
+            >已覆盖：不重试</StatusTag>
+            <span v-else class="hint">不重试</span>
+            <el-button
+              v-if="node.retry !== null && defaultRetry"
+              data-test="retry-restore"
+              text
+              size="small"
+              @click="restoreRetry"
+            >恢复继承</el-button>
           </div>
+          <div v-if="retryHint" class="hint" style="margin-top: 4px">{{ retryHint }}</div>
+          <div class="hint" style="margin-top: 2px">次数为额外重试次数，1 = 最多执行 2 次。</div>
         </el-form-item>
-        <el-form-item label="失败策略 on_fail" class="full">
+        <el-form-item label="失败策略（重试用尽后）" class="full">
           <div class="row wrap">
-            <el-select :model-value="onFailAction" style="width: 160px" @update:model-value="setOnFail($event)">
-              <el-option v-for="option in ON_FAIL_OPTIONS" :key="option.value" :value="option.value" :label="option.label" />
+            <el-select
+              data-test="on-fail"
+              :model-value="onFailAction"
+              style="width: 220px"
+              @update:model-value="setOnFail($event)"
+            >
+              <el-option
+                v-for="option in onFailOptions"
+                :key="option.value"
+                :value="option.value"
+                :label="option.label"
+              />
             </el-select>
             <el-select
-              v-if="onFailAction === 'goto'"
+              v-if="onFailAction === 'goto' && otherSteps.length > 0"
+              data-test="goto-target"
               :model-value="node.on_fail?.target_id ?? ''"
-              placeholder="选择 goto 目标节点"
+              placeholder="选择跳转目标节点"
               style="width: 220px"
               @update:model-value="patch({ on_fail: { action: 'goto', target_id: $event } })"
             >
@@ -250,11 +334,28 @@ function delayHint(value: number, defaultValue: number): string {
               />
             </el-select>
           </div>
-          <div v-if="onFailAction === 'none'" class="hint" style="margin-top: 4px">
-            继承脚本默认：{{ defaultOnFail === 'abort' ? '中止运行' : '继续下一步' }}
+          <div v-if="onFailAction === 'goto'" class="hint" style="margin-top: 4px">
+            失败后跳到目标节点；重入会重置目标及之后节点的重试计数。一般保持中止/继续即可。
+          </div>
+        </el-form-item>
+        <el-form-item label="失败时截图" class="full">
+          <div class="row wrap">
+            <el-switch
+              data-test="node-screenshot"
+              :model-value="screenshotEffective"
+              :disabled="!scriptScreenshotOnFail"
+              size="small"
+              aria-label="失败时是否截图"
+              @update:model-value="patch({ screenshot_on_fail: Boolean($event) })"
+            />
+            <span v-if="!scriptScreenshotOnFail" class="hint">
+              脚本设置里已关闭「失败时自动截图」，此开关不生效。
+            </span>
+            <span v-else class="hint">{{ screenshotEffective ? '失败时保存截图' : '该节点不截图' }}</span>
           </div>
         </el-form-item>
       </div>
+      <div class="hint">断言失败 / 执行条件不满足不重试，直接进入失败策略。</div>
 
       <el-collapse v-model="advancedOpen" style="margin-top: 8px">
         <el-collapse-item name="advanced">
@@ -296,32 +397,32 @@ function delayHint(value: number, defaultValue: number): string {
             <el-form-item label="执行前停顿（ms）">
               <div style="width: 100%">
                 <el-input-number
-                  :model-value="node.delay_before_ms"
+                  :model-value="node.delay_before_ms || undefined"
                   :min="0"
                   :max="600000"
+                  :placeholder="delayPlaceholder(defaultDelayBeforeMs)"
                   controls-position="right"
                   style="width: 100%"
                   @update:model-value="patch({ delay_before_ms: numberOrNull($event) ?? 0 })"
                 />
-                <div class="hint" style="margin-top: 4px">{{ delayHint(node.delay_before_ms, defaultDelayBeforeMs) }}</div>
               </div>
             </el-form-item>
             <el-form-item label="执行后停顿（ms）">
               <div style="width: 100%">
                 <el-input-number
-                  :model-value="node.delay_after_ms"
+                  :model-value="node.delay_after_ms || undefined"
                   :min="0"
                   :max="600000"
+                  :placeholder="delayPlaceholder(defaultDelayAfterMs)"
                   controls-position="right"
                   style="width: 100%"
                   @update:model-value="patch({ delay_after_ms: numberOrNull($event) ?? 0 })"
                 />
-                <div class="hint" style="margin-top: 4px">{{ delayHint(node.delay_after_ms, defaultDelayAfterMs) }}</div>
               </div>
             </el-form-item>
           </div>
           <div class="hint">
-            停顿位于节点动作之外，只影响节奏；填 0 表示跟随脚本设置里的默认停顿，填非 0 值即该节点自定义。
+            停顿位于节点动作之外，只影响节奏；留空继承脚本设置里的默认停顿，填写大于 0 的值为该节点自定义。
             真正等待界面变化时使用 wait 节点或执行条件。
           </div>
         </el-collapse-item>
@@ -344,4 +445,6 @@ function delayHint(value: number, defaultValue: number): string {
   gap: 4px;
   margin-top: 3px;
 }
+
+
 </style>

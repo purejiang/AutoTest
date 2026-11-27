@@ -203,8 +203,16 @@ export interface ScriptSettings {
   default_delay_after_ms: number
   on_fail: 'abort' | 'continue'
   logcat: boolean
+  /** logcat 范围：device=整机；app=只保留脚本涉及应用（运行时按 PID 过滤）。 */
+  logcat_scope: 'device' | 'app'
+  /** app 范围的显式包名；留空时从 app 节点推断。 */
+  logcat_package: string
+  /** 本次运行是否抓取域名；还要求全局 `capture.network.enabled=true`，否则编辑器置灰。 */
+  network_capture: boolean
   retry: Retry | null
   screenshot_on_fail: boolean
+  /** 新建节点默认重跑安全性：只作为新节点初值，不参与运行时继承。 */
+  default_rerun_safety: RerunSafety
 }
 
 export interface ScriptData {
@@ -469,6 +477,8 @@ export interface SettingEntry {
   options?: Array<{ label: string; value: string }> | null
   /** 代码默认值（GET /api/settings 的 additive 字段） */
   default?: unknown
+  /** 空值默认值的可读展示（如数据目录绝对路径），作为输入框占位符 */
+  default_display?: string | null
   /** bootstrap = 启动项（只读，改配置文件/环境变量）；runtime = 设置页可保存 */
   layer?: 'bootstrap' | 'runtime' | string | null
   /** 是否允许在设置页保存（启动项为 false） */

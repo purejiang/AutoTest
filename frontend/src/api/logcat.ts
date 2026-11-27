@@ -9,11 +9,13 @@ export interface LogcatStartPayload {
   run_id?: number
   /** 环形缓冲最大行数（可选，后端默认 capture.logcat_max_lines）。 */
   max_lines?: number
-  /** P0 只接受不生效：后端响应 package_filter=false。 */
+  /** 只保留该包名的日志（后端按运行时 PID 过滤；App 重启后自动重新解析）。 */
   package?: string
 }
 
 export interface LogcatCaptureStatus {
+  /** 全局总开关是否打开（关闭时仍可读状态/停止残留采集）。 */
+  enabled?: boolean
   ok?: boolean
   serial: string
   active: boolean
@@ -27,6 +29,9 @@ export interface LogcatCaptureStatus {
   run_id?: number | null
   started_by_run?: boolean
   package?: string | null
+  packages?: string[]
+  package_filter?: boolean
+  pids?: string[]
   stopped_at?: string | null
   /** 最近一次已保存的采集摘要（无活跃采集时用于显示路径）。 */
   last?: LogcatCaptureStatus | null
@@ -36,7 +41,6 @@ export interface LogcatStartResult extends LogcatCaptureStatus {
   started?: boolean
   package_requested?: string | null
   package_filter?: boolean
-  package_ignored?: boolean
   capture?: LogcatCaptureStatus | null
 }
 

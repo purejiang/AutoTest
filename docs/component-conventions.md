@@ -53,6 +53,13 @@
 - 不要在 `<style scoped>` 里写 `:global(html.dark) .x` 这种前缀式补丁（会被编译成错误选择器），
   深色差异一律通过新增 token 解决。
 - 布尔偏好用 `usePersistentFlag`，不要在组件里直写 localStorage。
+- 表单控件（`el-select` / `el-input` / `el-input-number`）必须是 `el-form-item` 的直接子元素；
+  需要「控件 + 标题下提示」时，用一个显式 `width:100%` 的列容器（如 `.capture-field`）包住控件和
+  `.hint`。不要给无宽度的 flex 包裹里的 `el-select` 写 `width:100%`：它会以自身内容宽度作为百分比
+  基准，塌缩成几十像素（v0.2.6 脚本设置「Logcat 范围」即此问题，实测 34px）。
+- 设置页采用可读宽度 + 单列设置行：内容列最大 840px，`SettingField` 在容器 ≥640px 时左侧放
+  标签/说明、右侧放 280px 控件；容器更窄时自动上下堆叠（`@container`，不是写死视口断点）。
+  不要再把设置字段排成固定两列，也不要把控件拉满整张卡片。
 - 错误提示沿用全局 `notifyApiError`；只有需要自定义交互（如逐字段错误）时才捕获 mutation 错误。
 
 ## 5. 后端契约类型

@@ -28,11 +28,12 @@ export const GROUP_KEYS: Record<KeyGroup, string[]> = {
     'engine.default_timeout_ms',
     'engine.default_delay_before_ms',
     'engine.default_delay_after_ms',
+    'engine.default_on_fail',
     'engine.max_total_ms',
     'engine.max_steps',
   ],
   recording: ['recording.click_dump', 'recording.confirm_before_save', 'recording.target_mode'],
-  capture: ['capture.logcat_auto_attach', 'capture.network.mode', 'capture.network.port'],
+  capture: ['capture.logcat_auto_attach', 'capture.network.enabled', 'capture.network.port'],
   security: ['security.token'],
   storage: ['retention.days', 'retention.report_exclude_video', 'retention.report_max_mb'],
 }

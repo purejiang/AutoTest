@@ -273,6 +273,54 @@ def test_retry_exhausted_aborts(runner_env, monkeypatch):
     assert [event["type"] for event in get_events(run_id)].count("step_retry") == 1
 
 
+def test_script_default_retry_applies_when_node_inherits(runner_env, monkeypatch):
+    """节点 retry=null 时继承脚本 settings.retry。"""
+    stub = install_selectors(monkeypatch)
+    stub.resolve_errors = [executors.TargetNotFound("first"), None]
+    script = make_script(
+        [click_step("s1")],
+        settings={"retry": {"count": 1, "interval_ms": 10}},
+    )
+
+    run_id, run = run_script(script)
+
+    assert run["status"] == "succeeded"
+    assert get_steps(run_id)[0]["attempts"] == 2
+    assert [event["type"] for event in get_events(run_id)].count("step_retry") == 1
+
+
+def test_node_retry_zero_disables_script_default(runner_env, monkeypatch):
+    """节点 retry={count:0} 是显式覆盖：不再继承脚本默认重试。"""
+    stub = install_selectors(monkeypatch)
+    stub.resolve_errors = [executors.TargetNotFound("only attempt")]
+    script = make_script(
+        [click_step("s1", retry={"count": 0, "interval_ms": 10})],
+        settings={"retry": {"count": 3, "interval_ms": 10}},
+    )
+
+    run_id, run = run_script(script)
+
+    assert run["status"] == "failed"
+    steps = get_steps(run_id)
+    assert steps[0]["attempts"] == 1
+    assert [event["type"] for event in get_events(run_id)].count("step_retry") == 0
+
+
+def test_legacy_defaults_retry_is_used_at_runtime(runner_env, monkeypatch):
+    """旧脚本只有 defaults.retry：运行时应折叠到 settings.retry 后生效。"""
+    stub = install_selectors(monkeypatch)
+    stub.resolve_errors = [executors.TargetNotFound("first"), None]
+    script = make_script([click_step("s1")])
+    script["settings"] = {"retry": None}
+    script["defaults"] = {"retry": {"count": 1, "interval_ms": 10}}
+
+    run_id, run = run_script(script)
+
+    assert run["status"] == "succeeded"
+    assert get_steps(run_id)[0]["attempts"] == 2
+    assert [event["type"] for event in get_events(run_id)].count("step_retry") == 1
+
+
 def test_goto_jumps_and_resets_retry(runner_env, monkeypatch):
     stub = install_selectors(monkeypatch)
     stub.resolve_errors = [None, executors.TargetNotFound("fail once"), None, None]
@@ -324,10 +372,40 @@ def test_assert_failure_is_not_retried(runner_env, monkeypatch):
     assert types.count("step_started") == 1
 
 
+def test_logcat_packages_from_script_settings() -> None:
+    """logcat_scope=app：显式包名优先，否则收集 app 节点包名。"""
+    app_step = make_step("s1", "app", {"action": "launch", "package": "com.example.one"})
+    second = make_step("s2", "app", {"action": "restart", "package": "com.example.two"})
+    explicit = RunSnapshot.from_data(
+        make_script(
+            [app_step, second],
+            settings={"logcat": True, "logcat_scope": "app", "logcat_package": "com.explicit"},
+        )
+    )
+    assert engine._logcat_packages(explicit) == ["com.explicit"]
+
+    inferred = RunSnapshot.from_data(
+        make_script([app_step, second], settings={"logcat": True, "logcat_scope": "app"})
+    )
+    assert engine._logcat_packages(inferred) == ["com.example.one", "com.example.two"]
+
+    device = RunSnapshot.from_data(
+        make_script([app_step], settings={"logcat": True, "logcat_scope": "device"})
+    )
+    assert engine._logcat_packages(device) == []
+
+
 def test_runner_hooks_network_capture_lifecycle(runner_env, monkeypatch):
     install_selectors(monkeypatch)
     calls: list[tuple] = []
-    monkeypatch.setattr(network, "attach_if_needed", lambda run_id: calls.append(("attach", run_id)))
+    # 引擎必须把脚本 settings 传给抓包决策（network_capture 默认 false）。
+    monkeypatch.setattr(
+        network,
+        "attach_if_needed",
+        lambda run_id, settings=None: calls.append(
+            ("attach", run_id, getattr(settings, "network_capture", "missing"))
+        ),
+    )
     monkeypatch.setattr(
         network,
         "stop_run_capture",
@@ -335,7 +413,7 @@ def test_runner_hooks_network_capture_lifecycle(runner_env, monkeypatch):
     )
     run_id, run = run_script(make_script([click_step("s1")]))
     assert run["status"] == "succeeded"
-    assert calls[0] == ("attach", run_id)
+    assert calls[0] == ("attach", run_id, False)
     assert calls[-1] == ("stop", run_id, "fake-test")
 
 

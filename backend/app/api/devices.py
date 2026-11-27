@@ -1016,11 +1016,11 @@ def screenrecord_stop(serial: str) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- 网络抓包（可选，M8）
 def _ensure_network_enabled() -> None:
-    if not config.get("capture.network.mode") or config.get("capture.network.mode") == "off":
+    if not bool(config.get("capture.network.enabled")):
         raise ApiError(
             "UNSUPPORTED",
-            "network capture is disabled (capture.network.mode=off)",
-            {"setting": "capture.network.mode"},
+            "network capture is disabled (capture.network.enabled=false)",
+            {"setting": "capture.network.enabled"},
         )
 
 
@@ -1051,7 +1051,7 @@ def network_start(serial: str) -> dict[str, Any]:
 
 @router.post("/{serial}/network/stop")
 def network_stop(serial: str) -> dict[str, Any]:
-    _ensure_network_enabled()
+    # 关闭总开关后仍要能停止残留会话，所以 stop 不检查开关。
     fn = _network_fn("stop")
     if fn is None:
         raise ApiError("UNSUPPORTED", "network capture module is not available")
@@ -1066,8 +1066,8 @@ def network_stop(serial: str) -> dict[str, Any]:
 
 @router.get("/{serial}/network/status")
 def network_status(serial: str) -> dict[str, Any]:
-    """域名抓包状态：active/port/path/size/domain_count/recent_domains（供 UI 展示）。"""
-    _ensure_network_enabled()
+    """域名抓包状态：enabled/active/port/path/size/domain_count/recent_domains（供 UI 展示）。"""
+    # 状态读取不受总开关限制：关闭后仍要能看到/停止残留会话。
     fn = _network_fn("status")
     if fn is None:
         raise ApiError("UNSUPPORTED", "network capture module is not available")
@@ -1085,6 +1085,8 @@ def network_status(serial: str) -> dict[str, Any]:
         body.update(payload)
     else:  # pragma: no cover - 模块契约保证 dict
         body["capture"] = payload
+    # 用当前开关覆盖旧 _LAST 里可能过期的 enabled。
+    body["enabled"] = bool(config.get("capture.network.enabled"))
     return body
 
 

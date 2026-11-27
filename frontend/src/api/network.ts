@@ -9,6 +9,8 @@ export interface NetworkCaptureInfo {
   serial: string
   status?: 'running' | 'stopped'
   active: boolean
+  /** 全局总开关是否打开（关闭时状态仍可读，便于停止残留会话）。 */
+  enabled?: boolean
   mode?: string
   format?: string
   /** 代理监听端口（127.0.0.1） */

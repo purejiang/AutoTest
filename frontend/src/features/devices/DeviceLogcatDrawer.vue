@@ -5,6 +5,7 @@ import { computed, ref, watch } from 'vue'
 
 import { describeApiError } from '@/api/client'
 import { useDeviceLogcat } from '@/api/devices'
+import { useSettings } from '@/api/settings'
 import { useLogcatCaptureStatus, useStartLogcatCapture, useStopLogcatCapture, type LogcatStopResult } from '@/api/logcat'
 import { useUiStore } from '@/stores/ui'
 
@@ -21,6 +22,13 @@ const query = useDeviceLogcat(computed(() => props.serial), 200, {
   refetchInterval: computed(() => (ui.logcatAutoRefresh ? 3000 : false)),
 })
 const lines = computed(() => query.data.value ?? [])
+
+const settingsQuery = useSettings()
+// 总开关关闭时脚本与手动采集都不可用；最近日志查看不受影响。
+const logcatEnabled = computed(
+  () => settingsQuery.data.value?.effective?.['capture.logcat_auto_attach'] === true,
+)
+const logcatKnown = computed(() => settingsQuery.data.value !== undefined)
 
 const statusQuery = useLogcatCaptureStatus(computed(() => props.serial), {
   enabled: computed(() => props.open),
@@ -81,7 +89,7 @@ async function startCapture(): Promise<void> {
   try {
     const result = await startMutation.mutateAsync({})
     lastSaved.value = null
-    ElMessage.success(result.package_ignored ? '已开始采集（package 过滤暂未生效）' : '已开始采集 logcat')
+    ElMessage.success(result.package_filter ? '已开始采集 logcat（按应用 PID 过滤）' : '已开始采集 logcat')
     await statusQuery.refetch()
   } catch (error) {
     ElMessage.error(describeApiError(error))
@@ -129,6 +137,9 @@ function formatSize(size: number): string {
       <span class="hint">
         缓冲 {{ captureLines }} 行<template v-if="active && capture?.max_lines"> · 上限 {{ capture.max_lines }}</template>
       </span>
+      <span v-if="active && capture?.package_filter" class="hint">
+        仅 {{ (capture.packages ?? []).join('、') || capture.package }} 的 PID
+      </span>
       <span v-if="active && capture?.started_at" class="hint">开始于 {{ capture.started_at }}</span>
       <span class="spacer" />
       <el-button
@@ -137,7 +148,7 @@ function formatSize(size: number): string {
         type="primary"
         :icon="VideoPlay"
         :loading="startMutation.isPending.value"
-        :disabled="!serial"
+        :disabled="!serial || !logcatEnabled"
         @click="startCapture"
       >
         开始采集
@@ -152,6 +163,12 @@ function formatSize(size: number): string {
       >
         停止并保存
       </el-button>
+    </div>
+
+    <div v-if="logcatKnown && !logcatEnabled" class="hint" style="margin-bottom: 8px">
+      全局未开启 logcat 采集：先到
+      <RouterLink to="/settings?tab=execution">设置 → 执行 → 采集</RouterLink>
+      打开「允许采集 logcat」。最近日志仍可查看。
     </div>
 
     <div class="row" style="margin-bottom: 8px; flex-wrap: wrap">

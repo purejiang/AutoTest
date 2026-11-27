@@ -38,6 +38,9 @@ _ACTIVE: dict[str, LogcatCapture] = {}
 _LAST: dict[str, dict[str, Any]] = {}
 _LOCK = threading.RLock()
 _LINE_LIMIT = 5000
+# `-v time` 行首：MM-DD HH:MM:SS.mmm  PID ...；部分格式把 PID 放在 Tag 后的括号里。
+_LINE_PID = re.compile(r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3}\s+(\d+)\b")
+_LINE_PID_PAREN = re.compile(r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3}.*?\(\s*(\d+)\s*\)")
 
 
 def _safe_serial(serial: str) -> str:
@@ -104,6 +107,59 @@ def _tail_lines(text: str, lines: int) -> list[str]:
     return values[-int(lines) :] if lines else values
 
 
+def _adb_binary() -> str:
+    try:
+        from ..android.adb import adb_path
+
+        return str(adb_path())
+    except Exception:
+        return str(config.find_adb())
+
+
+def _resolve_pids(serial: str, packages: list[str]) -> set[str]:
+    """解析包名当前 PID：pidof 优先，ps 兜底。失败返回空集合（不抛异常）。"""
+    pids: set[str] = set()
+    if not packages:
+        return pids
+    binary = _adb_binary()
+    for package in packages:
+        for args in (["pidof", package], ["ps", "-A", "-o", "PID,NAME"]):
+            try:
+                result = subprocess.run(
+                    [binary, "-s", str(serial), "shell", *args],
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                )
+            except Exception:  # pragma: no cover - adb 不可用
+                continue
+            if result.returncode != 0:
+                continue
+            if args[0] == "pidof":
+                pids.update(re.findall(r"\b\d+\b", result.stdout or ""))
+            else:
+                for line in (result.stdout or "").splitlines():
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[0].isdigit() and parts[-1] == package:
+                        pids.add(parts[0])
+            if pids:
+                break
+    return pids
+
+
+def _line_pid(line: str) -> str | None:
+    match = _LINE_PID.match(line) or _LINE_PID_PAREN.match(line)
+    return match.group(1) if match else None
+
+
+def refresh_pids(serial: str) -> None:
+    """应用节点执行后立即刷新 PID，避免等下一次轮询。"""
+    with _LOCK:
+        capture = _ACTIVE.get(str(serial))
+    if capture is not None and capture.running and capture.packages:
+        capture.refresh_pids()
+
+
 # ================================================================ 采集会话
 class LogcatCapture:
     """单个 serial 的 logcat 后台采集。"""
@@ -114,19 +170,25 @@ class LogcatCapture:
         run_id: int | None = None,
         max_lines: int | None = None,
         package: str | None = None,
+        packages: list[str] | None = None,
         started_by_run: bool = False,
     ) -> None:
         self.serial = str(serial)
         self.run_id = run_id
         # 只有运行引擎自动 attach 的采集才归该 run；手动 API 启动的采集即使带 run_id 也不归引擎管
         self.started_by_run = bool(started_by_run and run_id is not None)
-        self.package = str(package).strip() or None
+        raw_packages = packages if packages is not None else ([package] if package else [])
+        self.packages = [str(item).strip() for item in raw_packages if str(item).strip()]
+        self.package = self.packages[0] if len(self.packages) == 1 else None
         self.max_lines = int(max_lines or config.get("capture.logcat_max_lines") or _LINE_LIMIT)
         self._lines: deque[str] = deque(maxlen=self.max_lines)
         self._lock = threading.Lock()
         self._stop_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._pid_thread: threading.Thread | None = None
+        self._pids: set[str] = set()
+        self._pid_lock = threading.Lock()
         self._proc: Any = None
         self._path: Path | None = None
         self._stopped = False
@@ -148,6 +210,18 @@ class LogcatCapture:
     def path(self) -> Path | None:
         return self._path
 
+    @property
+    def pids(self) -> set[str]:
+        with self._pid_lock:
+            return set(self._pids)
+
+    def refresh_pids(self, packages: list[str] | None = None) -> None:
+        """重新解析 PID；App 重启/切换后调用（也由后台监视线程周期调用）。"""
+        targets = self.packages if packages is None else list(packages)
+        pids = _resolve_pids(self.serial, targets)
+        with self._pid_lock:
+            self._pids = pids
+
     def state(self) -> dict[str, Any]:
         """采集状态摘要（API status / stop 响应用）。"""
         path = self._path
@@ -168,6 +242,9 @@ class LogcatCapture:
             "run_id": self.run_id,
             "started_by_run": self.started_by_run,
             "package": self.package,
+            "packages": list(self.packages),
+            "package_filter": bool(self.packages),
+            "pids": sorted(self.pids),
             "stopped_at": self._stopped_at,
         }
 
@@ -179,6 +256,8 @@ class LogcatCapture:
     def start(self) -> LogcatCapture:
         if self.running:
             return self
+        if self.packages:
+            self.refresh_pids()
         try:
             self._proc = _spawn_logcat(self.serial)
         except Exception as exc:
@@ -194,13 +273,26 @@ class LogcatCapture:
             daemon=True,
         )
         self._thread.start()
-        logger.info("logcat capture started: %s", self.serial)
+        if self.packages:
+            self._pid_thread = threading.Thread(
+                target=self._pid_loop,
+                name=f"logcat-pids-{_safe_serial(self.serial)}",
+                daemon=True,
+            )
+            self._pid_thread.start()
+        logger.info("logcat capture started: %s (packages=%s)", self.serial, self.packages)
         return self
+
+    def _pid_loop(self) -> None:
+        while not self._stop_event.wait(1.5):
+            self.refresh_pids()
 
     def _read_loop(self) -> None:
         process = self._proc
         stream = getattr(process, "stdout", None)
         try:
+            # package 模式下，时间戳行按 PID 决定是否保留；堆栈续行沿用上一行。
+            include_line = not self.packages
             if stream is not None:
                 for raw in stream:
                     if self._stop_event.is_set():
@@ -209,8 +301,13 @@ class LogcatCapture:
                     line = line.rstrip("\r\n")
                     if not line:
                         continue
-                    with self._lock:
-                        self._lines.append(line)
+                    if self.packages:
+                        pid = _line_pid(line)
+                        if pid is not None:
+                            include_line = pid in self.pids
+                    if include_line:
+                        with self._lock:
+                            self._lines.append(line)
         except Exception as exc:  # pragma: no cover - 流异常
             logger.debug("logcat read loop ended: %s", exc)
         finally:
@@ -248,7 +345,11 @@ class LogcatCapture:
             thread = self._thread
             if thread is not None and thread.is_alive():
                 thread.join(timeout=3)
+            pid_thread = self._pid_thread
+            if pid_thread is not None and pid_thread.is_alive():
+                pid_thread.join(timeout=2)
             self._thread = None
+            self._pid_thread = None
             self._proc = None
 
             with self._lock:
@@ -308,24 +409,30 @@ class LogcatCapture:
 
 
 # ================================================================ 模块级入口
+def enabled() -> bool:
+    """logcat 采集总开关（设置页 → 执行 → 采集）：脚本采集与手动采集都受它约束。"""
+    return bool(config.get("capture.logcat_auto_attach"))
+
+
 def attach_if_needed(
     run_id: int,
     script_settings: Any,
     max_lines: int | None = None,
+    packages: list[str] | None = None,
 ) -> LogcatCapture | None:
     """运行期按设置自动开始采集；返回会话或 None。
 
     幂等：本 run 已 attach 过则返回同一会话；若该 serial 已有**用户手动**采集
     （或别的 run 的采集），不抢占，返回 None。
     """
-    if not bool(config.get("capture.logcat_auto_attach")):
+    if not enabled():
         return None
-    enabled = False
+    script_enabled = False
     if isinstance(script_settings, dict):
-        enabled = bool(script_settings.get("logcat"))
+        script_enabled = bool(script_settings.get("logcat"))
     elif script_settings is not None:
-        enabled = bool(getattr(script_settings, "logcat", False))
-    if not enabled:
+        script_enabled = bool(getattr(script_settings, "logcat", False))
+    if not script_enabled:
         return None
     try:
         run_key = int(run_id)
@@ -354,7 +461,13 @@ def attach_if_needed(
                 run_key,
             )
             return None
-        capture = LogcatCapture(serial, run_id=run_key, max_lines=max_lines, started_by_run=True)
+        capture = LogcatCapture(
+            serial,
+            run_id=run_key,
+            max_lines=max_lines,
+            packages=list(packages or []),
+            started_by_run=True,
+        )
         capture.start()
         _ACTIVE[serial] = capture
         return capture
@@ -372,7 +485,12 @@ def start_capture(
         existing = _ACTIVE.get(serial)
         if existing is not None and existing.running:
             return existing
-        capture = LogcatCapture(serial, run_id=run_id, max_lines=max_lines, package=package)
+        capture = LogcatCapture(
+            serial,
+            run_id=run_id,
+            max_lines=max_lines,
+            package=package,
+        )
         capture.start()
         _ACTIVE[serial] = capture
         return capture

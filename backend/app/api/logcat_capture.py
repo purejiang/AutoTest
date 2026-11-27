@@ -7,8 +7,9 @@
 - `POST /api/devices/{serial}/logcat/stop`：停止并写出 `artifacts/logcat/*.log` + Artifact 行；
 - `GET  /api/devices/{serial}/logcat/status`：active/lines/started_at/path/size。
 
-P0 限制：`package` 参数会被接受并记录在状态里，但 **不做按包过滤** —— adb logcat
-没有原生的包名过滤参数（需要先解析 pid 再 `--pid`），响应中 `package_filter=false`。
+`package` 参数会按运行时 PID 过滤：开始采集时解析一次，后台每 1.5s 刷新（App 重启后
+PID 变化自动跟上），日志行按 PID 保留，续行跟随上一条。响应 `package_filter=true`；
+不传 package 时仍是整机日志。
 停止接口幂等：没有活跃采集时返回最近一次保存结果（`already_stopped=true`）。
 """
 
@@ -25,7 +26,6 @@ from ..api_schemas import ApiModel
 from ..capture import logcat
 from ..deps import get_driver_or_503
 from ..errors import ApiError, device_unavailable
-from ..logs import logger
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 
@@ -58,6 +58,7 @@ def _ensure_device_alive(serial: str, driver: Driver) -> None:
 def _state_body(serial: str) -> dict[str, Any]:
     state = logcat.capture_status(serial)
     state["ok"] = True
+    state["enabled"] = logcat.enabled()
     return state
 
 
@@ -68,12 +69,16 @@ def start_logcat(
     driver: Driver = Depends(get_driver_or_503),
 ) -> dict[str, Any]:
     """启动（或复用）该 serial 的后台 logcat 采集。"""
+    if not logcat.enabled():
+        raise ApiError(
+            "UNSUPPORTED",
+            "logcat capture is disabled (capture.logcat_auto_attach=false)",
+            {"setting": "capture.logcat_auto_attach"},
+        )
     _ensure_device_alive(serial, driver)
     max_lines = payload.max_lines if payload is not None else None
     package = ((payload.package or "").strip() or None) if payload is not None else None
     run_id = payload.run_id if payload is not None else None
-    if package:
-        logger.info("logcat start: package filter requested but ignored (P0): %s", package)
     capture = logcat.start_capture(
         serial,
         run_id=run_id,
@@ -85,9 +90,7 @@ def start_logcat(
         {
             "started": True,
             "package_requested": package,
-            # P0：package 只记录不生效，显式返回避免前端误解
-            "package_filter": False,
-            "package_ignored": bool(package),
+            "package_filter": bool(capture.state().get("package_filter")),
             "capture": capture.state(),
         }
     )

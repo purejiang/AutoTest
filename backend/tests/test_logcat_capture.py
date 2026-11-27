@@ -88,7 +88,9 @@ def _wait_for(predicate, timeout: float = 2.0, message: str = "condition"):
 def logcat_env(tmp_path, temp_db):
     config.reset_to_defaults()
     data_dir = tmp_path / "data"
-    config.set_file_layer({"runtime.data_dir": str(data_dir)})
+    config.set_file_layer(
+        {"runtime.data_dir": str(data_dir), "capture.logcat_auto_attach": True}
+    )
     logcat.shutdown_all()
     logcat._ACTIVE.clear()
     logcat._LAST.clear()
@@ -128,7 +130,7 @@ def test_logcat_api_start_status_stop_and_idempotent_stop(api_client, logcat_env
 
     response = api_client.post(
         "/api/devices/fake-logcat/logcat/start",
-        json={"run_id": 7, "max_lines": 2, "package": "com.example.app"},
+        json={"run_id": 7, "max_lines": 2},
     )
     assert response.status_code == 200, response.text
     started = response.json()
@@ -136,10 +138,8 @@ def test_logcat_api_start_status_stop_and_idempotent_stop(api_client, logcat_env
     assert started["started"] is True
     assert started["max_lines"] == 2
     assert started["run_id"] == 7
-    # P0：package 接受并记录，但不过滤
-    assert started["package_requested"] == "com.example.app"
+    assert started["package_requested"] is None
     assert started["package_filter"] is False
-    assert started["package_ignored"] is True
 
     status = _wait_for(
         lambda: (
@@ -193,6 +193,49 @@ def test_logcat_api_start_status_stop_and_idempotent_stop(api_client, logcat_env
     assert status["last"]["path"] == str(path)
 
 
+def test_logcat_package_filter_keeps_only_matching_pid(api_client, logcat_env, monkeypatch) -> None:
+    """package 过滤按 PID 保留日志；堆栈续行跟随上一条，其他进程丢弃。"""
+    process = _FakeProcess(
+        [
+            "06-12 10:00:00.000  111  222 I App: keep",
+            "    at com.example.keep(File.kt:1)",
+            "06-12 10:00:00.100  999  222 I Other: drop",
+            "06-12 10:00:00.200  111  222 E App: keep2",
+        ]
+    )
+    monkeypatch.setattr(logcat, "_spawn_logcat", lambda serial: process)
+    monkeypatch.setattr(logcat, "_resolve_pids", lambda serial, packages: {"111"})
+
+    response = api_client.post(
+        "/api/devices/fake-logcat/logcat/start",
+        json={"package": "com.example.app", "max_lines": 10},
+    )
+    assert response.status_code == 200, response.text
+    started = response.json()
+    assert started["package_requested"] == "com.example.app"
+    assert started["package_filter"] is True
+    assert started["packages"] == ["com.example.app"]
+    assert started["pids"] == ["111"]
+
+    status = _wait_for(
+        lambda: (
+            body
+            if (body := api_client.get("/api/devices/fake-logcat/logcat/status").json())["lines"] == 3
+            else None
+        ),
+        message="filtered ring buffer to reach 3 lines",
+    )
+    assert status["package_filter"] is True
+
+    stopped = api_client.post("/api/devices/fake-logcat/logcat/stop").json()
+    path = Path(stopped["path"])
+    assert path.read_text(encoding="utf-8").splitlines() == [
+        "06-12 10:00:00.000  111  222 I App: keep",
+        "    at com.example.keep(File.kt:1)",
+        "06-12 10:00:00.200  111  222 E App: keep2",
+    ]
+
+
 def test_logcat_api_start_accepts_empty_body(api_client, monkeypatch) -> None:
     process = _FakeProcess(["only"])
     monkeypatch.setattr(logcat, "_spawn_logcat", lambda serial: process)
@@ -202,6 +245,22 @@ def test_logcat_api_start_accepts_empty_body(api_client, monkeypatch) -> None:
     assert body["active"] is True
     assert body["run_id"] is None
     api_client.post("/api/devices/fake-empty/logcat/stop")
+
+
+def test_logcat_api_start_requires_enabled(api_client, logcat_env) -> None:
+    """总开关关闭时手动采集也被拒绝；状态仍可读，方便停止残留会话。"""
+    config.set_file_layer(
+        {"runtime.data_dir": str(logcat_env), "capture.logcat_auto_attach": False}
+    )
+    response = api_client.post("/api/devices/fake-empty/logcat/start")
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "UNSUPPORTED"
+    assert error["details"]["setting"] == "capture.logcat_auto_attach"
+
+    status = api_client.get("/api/devices/fake-empty/logcat/status")
+    assert status.status_code == 200
+    assert status.json()["enabled"] is False
 
 
 def test_logcat_api_start_rejects_offline_device(api_client) -> None:

@@ -620,7 +620,11 @@ watch(
     <el-dialog v-model="convertOpen" :title="hasScript ? '重新生成脚本' : '转脚本'" width="540px" append-to-body>
       <el-form label-position="top" size="small">
         <el-form-item label="脚本名称">
-          <el-input v-model="convertName" placeholder="留空由后端自动命名" maxlength="200" />
+          <el-input
+            v-model="convertName"
+            :placeholder="recording ? `默认：${recording.name}` : '默认：录制名称'"
+            maxlength="200"
+          />
         </el-form-item>
         <el-form-item label="点击定位方式">
           <el-radio-group v-model="convertTargetMode">

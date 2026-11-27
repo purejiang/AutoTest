@@ -95,6 +95,8 @@ class SettingEntryOut(OutModel):
     max: int | float | None = None
     options: list[dict[str, Any]] | None = None
     default: Any = None
+    # 空值默认值的人类可读展示（如数据目录绝对路径），供前端占位符使用。
+    default_display: str | None = None
     layer: str | None = None
     writable: bool | None = None
     env: str | None = None

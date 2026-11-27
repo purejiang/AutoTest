@@ -472,7 +472,7 @@ function defaultLabel(key: string): string {
             :model-value="cropValue()"
             size="small"
             clearable
-            placeholder="留空不裁剪"
+            placeholder="默认：不裁剪"
             class="code-text"
             :disabled="disabled"
             @update:model-value="emit('change', 'scrcpy.crop', $event)"

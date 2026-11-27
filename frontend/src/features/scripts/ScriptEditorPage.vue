@@ -31,6 +31,7 @@ import NodeForm from './NodeForm.vue'
 import NodeList from './NodeList.vue'
 import ScriptSettingsForm from './ScriptSettingsForm.vue'
 import {
+  applyNewNodeDefaults,
   cloneScriptData,
   createStep,
   defaultParams,
@@ -229,9 +230,12 @@ function insertStep(step: StepNode): void {
 function addNode(type: NodeType): void {
   const data = draft.value
   if (!data) return
-  const step = createStep(
-    type,
-    data.steps.map((item) => item.id),
+  const step = applyNewNodeDefaults(
+    createStep(
+      type,
+      data.steps.map((item) => item.id),
+    ),
+    data.settings,
   )
   step.name = nextNodeName(type, data.steps)
   insertStep(step)
@@ -668,7 +672,8 @@ function jumpToPath(path: string): void {
               :total="stepCount"
               :steps="draft.steps"
               :default-on-fail="draft.settings.on_fail"
-              :default-retry="draft.defaults.retry ?? draft.settings.retry"
+              :default-retry="draft.settings.retry"
+              :script-screenshot-on-fail="draft.settings.screenshot_on_fail"
               :default-timeout-ms="draft.settings.default_timeout_ms"
               :default-delay-before-ms="draft.settings.default_delay_before_ms"
               :default-delay-after-ms="draft.settings.default_delay_after_ms"
