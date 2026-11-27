@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Document, Monitor, Moon, Setting, Sunny, VideoCamera } from '@element-plus/icons-vue'
+import { Moon, Sunny } from '@element-plus/icons-vue'
 
 import { setAuthToken } from '@/api/client'
 import { useHealth, useSettings } from '@/api/settings'
 import { useTheme } from '@/composables/useTheme'
 import { formatDateTime } from '@/lib/format'
+import { NAV_ITEMS } from '@/navigation'
 
 const APP_VERSION = __APP_VERSION__
 const APP_COMMIT = __APP_COMMIT__
@@ -87,12 +88,7 @@ function openHealth(): void {
       </div>
       <nav class="nav" aria-label="主导航">
         <button
-          v-for="item in [
-            { path: '/console', label: '控制台', icon: Monitor },
-            { path: '/scripts', label: '脚本', icon: Document },
-            { path: '/recorder', label: '录制', icon: VideoCamera },
-            { path: '/settings', label: '设置', icon: Setting },
-          ]"
+          v-for="item in NAV_ITEMS"
           :key="item.path"
           type="button"
           :class="['nav-item', { active: activeNav === item.path }]"

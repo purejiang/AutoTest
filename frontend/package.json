@@ -9,8 +9,12 @@
     "typecheck": "vue-tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "format": "prettier --write .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "types:gen": "openapi-typescript ../docs/openapi.json -o src/types/generated.ts",
+    "types:check": "openapi-typescript ../docs/openapi.json -o /tmp/autotest-generated.ts && diff -q /tmp/autotest-generated.ts src/types/generated.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -33,13 +37,17 @@
     "@eslint/js": "^9.39.5",
     "@types/node": "^26.6.6",
     "@vitejs/plugin-vue": "^6.0.11",
+    "@vue/test-utils": "^2.6.0",
     "eslint": "^9.39.5",
     "eslint-plugin-vue": "^10.12.1",
+    "happy-dom": "^20.14.6",
+    "openapi-typescript": "^7.13.0",
     "prettier": "^3.10.1",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.73.0",
     "vite": "^8.3.8",
-    "vue-tsc": "^3.3.14",
-    "vue-eslint-parser": "^10.3.0"
+    "vitest": "^5.1.2",
+    "vue-eslint-parser": "^10.3.0",
+    "vue-tsc": "^3.3.14"
   }
 }

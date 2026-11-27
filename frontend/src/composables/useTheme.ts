@@ -9,6 +9,9 @@ export type ThemeChoice = 'light' | 'dark' | 'system'
 export type ResolvedTheme = 'light' | 'dark'
 
 export const THEME_STORAGE_KEY = 'autotest.theme'
+// 与 index.html 的 boot script 保持一致：浅/深主题对应的浏览器地址栏颜色。
+const THEME_COLOR_LIGHT = '#f2f4f7'
+const THEME_COLOR_DARK = '#0f151d'
 
 const media =
   typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -36,7 +39,11 @@ const systemDark = ref(media?.matches ?? false)
 
 function applyTheme(): void {
   if (typeof document === 'undefined') return
-  document.documentElement.classList.toggle('dark', resolve(choice.value, systemDark.value) === 'dark')
+  const resolved = resolve(choice.value, systemDark.value)
+  document.documentElement.classList.toggle('dark', resolved === 'dark')
+  // 移动端/浏览器 UI 的地址栏颜色跟随实际主题，避免浅色主题下仍是深色。
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (meta) meta.setAttribute('content', resolved === 'dark' ? THEME_COLOR_DARK : THEME_COLOR_LIGHT)
 }
 
 if (media) {

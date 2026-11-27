@@ -3,16 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f151d" />
+    <meta name="theme-color" content="#f2f4f7" />
     <title>AutoTest · Android 自动化测试</title>
     <script>
       // 主题尽早生效，避免刷新时先闪一帧浅色再切深色。
+      // 常量与 src/composables/useTheme.ts 的 THEME_COLOR_* 保持一致。
       try {
         var choice = localStorage.getItem('autotest.theme') || 'light'
         var dark =
           choice === 'dark' ||
           (choice === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
         document.documentElement.classList.toggle('dark', dark)
+        var meta = document.querySelector('meta[name="theme-color"]')
+        if (meta) meta.setAttribute('content', dark ? '#0f151d' : '#f2f4f7')
       } catch (error) {}
     </script>
   </head>

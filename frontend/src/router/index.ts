@@ -10,14 +10,6 @@ import RecordingDetailPage from '@/features/recorder/RecordingDetailPage.vue'
 import SettingsPage from '@/features/settings/SettingsPage.vue'
 import NotFoundPage from '@/features/NotFoundPage.vue'
 
-/** 左侧主导航：v0.2.5 只保留四项，运行记录合并进脚本页。 */
-export const NAV_ITEMS = [
-  { path: '/console', label: '控制台', section: '控制台', page: '工作台' },
-  { path: '/scripts', label: '脚本', section: '脚本', page: '列表' },
-  { path: '/recorder', label: '录制', section: '录制', page: '草稿' },
-  { path: '/settings', label: '设置', section: '设置', page: '配置' },
-] as const
-
 const routes: RouteRecordRaw[] = [
   {
     path: '/',

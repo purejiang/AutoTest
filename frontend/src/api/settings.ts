@@ -2,7 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 
-import type { HealthResponse, MaintenanceStats, SettingsResponse } from '@/types/api'
+import type { HealthResponse, MaintenanceStats, SettingEntry, SettingsResponse } from '@/types/api'
 
 import { del, get, post, put } from './client'
 
@@ -13,9 +13,27 @@ export interface CleanupPayload {
 
 export type CleanupResult = Record<string, unknown>
 
+export type SettingSource = 'default' | 'file' | 'env'
+
+/** GET /api/settings/scrcpy/options 的单项：设置 schema + 当前生效值/来源。 */
+export interface ScrcpyOptionEntry extends SettingEntry {
+  value: unknown
+  source: SettingSource
+}
+
+/** 镜像参数白名单 + scrcpy-server 版本/内置 jar 信息（后端为唯一事实来源）。 */
+export interface ScrcpyOptionsResponse {
+  server_version: string
+  codec: string
+  jar: string
+  jar_present: boolean
+  items: ScrcpyOptionEntry[]
+}
+
 export const settingsKeys = {
   all: ['settings'] as const,
   detail: () => [...settingsKeys.all, 'detail'] as const,
+  scrcpyOptions: () => [...settingsKeys.all, 'scrcpy-options'] as const,
   health: ['health'] as const,
   maintenance: ['maintenance'] as const,
 }
@@ -27,6 +45,15 @@ export function useSettings() {
     queryKey: settingsKeys.detail(),
     queryFn: ({ signal }) => get<SettingsResponse>('/settings', { signal }),
     staleTime: 5000,
+  })
+}
+
+/** scrcpy-server 版本/内置 jar 由后端返回，避免前端再写一份版本号。 */
+export function useScrcpyOptions() {
+  return useQuery({
+    queryKey: settingsKeys.scrcpyOptions(),
+    queryFn: ({ signal }) => get<ScrcpyOptionsResponse>('/settings/scrcpy/options', { signal }),
+    staleTime: 60_000,
   })
 }
 
