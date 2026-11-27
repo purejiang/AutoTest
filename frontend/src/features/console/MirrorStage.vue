@@ -1,32 +1,12 @@
 <script setup lang="ts">
-import {
-  ArrowDown,
-  Back,
-  Bell,
-  Camera,
-  ChatDotRound,
-  Check,
-  Close,
-  Delete,
-  Grid,
-  HomeFilled,
-  Link,
-  Lock,
-  Menu as MenuIcon,
-  MoreFilled,
-  Promotion,
-  Refresh,
-  SwitchButton,
-  TurnOff,
-  VideoPause,
-  VideoPlay,
-} from '@element-plus/icons-vue'
+import { Lock, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import { onClickOutside } from '@vueuse/core'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { useDevices, useDisconnectDevice, useDeviceKey } from '@/api/devices'
+import { useDevices, useDeviceKey } from '@/api/devices'
 import { useSettings } from '@/api/settings'
+import { usePersistentFlag } from '@/composables/usePersistentFlag'
 import type { Device } from '@/types/api'
 
 import { useKeyboardInput } from '../mirror/composables/useKeyboardInput'
@@ -38,6 +18,9 @@ import MirrorStatusLine from '../mirror/components/MirrorStatusLine.vue'
 import MirrorStatusOverlay from '../mirror/components/MirrorStatusOverlay.vue'
 import TouchEffectOverlay from '../mirror/components/TouchEffectOverlay.vue'
 import UnsupportedNotice from '../mirror/components/UnsupportedNotice.vue'
+import '../mirror/mirror.css'
+import MirrorActionRail from './MirrorActionRail.vue'
+import MirrorDeviceHeader from './MirrorDeviceHeader.vue'
 
 const TOUCH_EFFECT_STORAGE_KEY = 'autotest.mirror.touch-effect'
 const TOUCH_SWIPE_STORAGE_KEY = 'autotest.mirror.swipe-effect'
@@ -73,42 +56,17 @@ const emit = defineEmits<{
   'disconnect-device': [device: Device]
   status: [status: MirrorUiStatus]
   screenshot: []
-  hierarchy: []
-  logcat: []
 }>()
-
-function readFlag(key: string): boolean {
-  try {
-    const stored = window.localStorage.getItem(key)
-    if (stored === '0') return false
-    if (stored === '1') return true
-  } catch {
-    /* 隐私模式/禁用 storage 时用默认值 */
-  }
-  return true
-}
-
-function writeFlag(key: string, value: boolean): void {
-  try {
-    window.localStorage.setItem(key, value ? '1' : '0')
-  } catch {
-    /* 存不下就只在本次会话生效 */
-  }
-}
 
 const rootRef = ref<HTMLDivElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const touchEffectRef = ref<TouchEffectHandle | null>(null)
-const deviceMenuRef = ref<HTMLDivElement | null>(null)
 const effectMenuRef = ref<HTMLDivElement | null>(null)
-const moreMenuRef = ref<HTMLDivElement | null>(null)
-const deviceMenuOpen = ref(false)
 const effectPopoverOpen = ref(false)
-const moreMenuOpen = ref(false)
 
-const tapEffectEnabled = ref(readFlag(TOUCH_EFFECT_STORAGE_KEY))
-const swipeEffectEnabled = ref(readFlag(TOUCH_SWIPE_STORAGE_KEY))
-const rippleEnabled = ref(readFlag(TOUCH_RIPPLE_STORAGE_KEY))
+const tapEffectEnabled = usePersistentFlag(TOUCH_EFFECT_STORAGE_KEY)
+const swipeEffectEnabled = usePersistentFlag(TOUCH_SWIPE_STORAGE_KEY)
+const rippleEnabled = usePersistentFlag(TOUCH_RIPPLE_STORAGE_KEY)
 const actionError = ref<string | null>(null)
 let errorTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -119,7 +77,6 @@ const session = useMirrorSession({
 })
 const keyMutation = useDeviceKey(props.serial)
 const devicesQuery = useDevices({ refetchInterval: 5000 })
-const disconnectMutation = useDisconnectDevice()
 
 watch(
   () => session.status.value,
@@ -198,7 +155,6 @@ watch(
     if (!locked) return
     gestures.abortGesture()
     touchEffectRef.value?.clear()
-    moreMenuOpen.value = false
     effectPopoverOpen.value = false
   },
 )
@@ -212,10 +168,6 @@ watch(actionError, (value) => {
   }, 5000)
 })
 
-watch(tapEffectEnabled, (value) => writeFlag(TOUCH_EFFECT_STORAGE_KEY, value))
-watch(swipeEffectEnabled, (value) => writeFlag(TOUCH_SWIPE_STORAGE_KEY, value))
-watch(rippleEnabled, (value) => writeFlag(TOUCH_RIPPLE_STORAGE_KEY, value))
-
 watch(
   () => session.status.value,
   (status) => {
@@ -223,14 +175,8 @@ watch(
   },
 )
 
-onClickOutside(deviceMenuRef, () => {
-  deviceMenuOpen.value = false
-})
 onClickOutside(effectMenuRef, () => {
   effectPopoverOpen.value = false
-})
-onClickOutside(moreMenuRef, () => {
-  moreMenuOpen.value = false
 })
 
 onMounted(() => {
@@ -285,16 +231,6 @@ const effectCount = computed(
     (tapEffectEnabled.value && rippleEnabled.value ? 1 : 0) +
     (swipeEffectEnabled.value ? 1 : 0),
 )
-
-const MORE_KEYS = [
-  { key: 'menu', label: '菜单', icon: MenuIcon },
-  { key: 'notification', label: '通知', icon: Bell },
-  { key: 'volume_up', label: '音量+', icon: Promotion },
-  { key: 'volume_down', label: '音量−', icon: Promotion },
-  { key: 'power', label: '电源', icon: TurnOff },
-  { key: 'enter', label: '回车', icon: ChatDotRound },
-  { key: 'delete', label: '删除', icon: Delete },
-]
 
 function focusPanel(): void {
   rootRef.value?.focus({ preventScroll: true })
@@ -385,64 +321,18 @@ watch(canvasRef, (canvas, previous) => {
 })
 
 function handleKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && (deviceMenuOpen.value || effectPopoverOpen.value || moreMenuOpen.value)) {
+  if (event.key === 'Escape' && effectPopoverOpen.value) {
     event.preventDefault()
     event.stopPropagation()
-    deviceMenuOpen.value = false
     effectPopoverOpen.value = false
-    moreMenuOpen.value = false
     return
   }
   keyboard.onKeyDown(event)
 }
 
-function toggleDeviceMenu(): void {
-  deviceMenuOpen.value = !deviceMenuOpen.value
-  effectPopoverOpen.value = false
-  moreMenuOpen.value = false
-}
-
-function connectFromMenu(): void {
-  deviceMenuOpen.value = false
-  emit('connect-device')
-}
-
-function selectDevice(serial: string): void {
-  if (serial === props.serial) {
-    deviceMenuOpen.value = false
-    return
-  }
-  deviceMenuOpen.value = false
-  emit('select-device', serial)
-}
-
-function closeAndRefreshDevices(): void {
-  deviceMenuOpen.value = false
+function refreshDevices(): void {
   devicesQuery.refetch()
   emit('refresh-devices')
-}
-
-async function disconnectCurrent(): Promise<void> {
-  deviceMenuOpen.value = false
-  const device = props.selectedDevice
-  if (!device) return
-  try {
-    await ElMessageBox.confirm(`断开 ${device.serial}？`, '断开网络设备', {
-      type: 'warning',
-      confirmButtonText: '断开',
-      cancelButtonText: '取消',
-    })
-  } catch {
-    return
-  }
-  try {
-    await disconnectMutation.mutateAsync(device.serial)
-    ElMessage.success(`已断开 ${device.serial}`)
-    emit('disconnect-device', device)
-    closeAndRefreshDevices()
-  } catch {
-    // 全局错误提示
-  }
 }
 
 function toggleMirror(): void {
@@ -454,15 +344,9 @@ function toggleMirror(): void {
 }
 
 function refreshMirror(): void {
-  closeAndRefreshDevices()
+  refreshDevices()
   if (streaming.value) session.requestKeyframe()
   else if (!idle.value) session.reconnect()
-}
-
-function sendKey(key: string): void {
-  if (props.runLocked) return
-  keyMutation.mutate({ key })
-  moreMenuOpen.value = false
 }
 
 function sendKeySilent(key: string): void {
@@ -492,81 +376,19 @@ defineExpose({
   <div ref="rootRef" class="console-mirror" tabindex="0" @keydown="handleKeydown">
     <UnsupportedNotice v-if="!session.isSupported" />
     <template v-else>
-      <header class="mirror-head">
-        <div ref="deviceMenuRef" class="device-dropdown">
-          <button
-            type="button"
-            class="device-btn"
-            :aria-expanded="deviceMenuOpen"
-            aria-haspopup="menu"
-            @click="toggleDeviceMenu"
-          >
-            <span
-              class="dot"
-              :class="selectedDevice ? (selectedDevice.busy ? 'busy' : 'online') : 'offline'"
-            />
-            <span class="device-name">{{ deviceName }}</span>
-            <span class="device-serial">{{ serial }}</span>
-            <el-icon class="chev" :size="12"><ArrowDown /></el-icon>
-          </button>
-          <div v-if="deviceMenuOpen" class="menu" role="menu">
-            <div class="menu-label">当前设备 · {{ deviceStateText }}</div>
-            <button
-              v-for="device in devices"
-              :key="device.serial"
-              type="button"
-              :class="['device-row', { active: device.serial === serial }]"
-              role="menuitem"
-              @click="selectDevice(device.serial)"
-            >
-              <span
-                class="dot"
-                :class="device.state === 'device' ? (device.busy ? 'busy' : 'online') : 'offline'"
-              />
-              <span class="device-row-main">
-                <strong>{{ [device.brand, device.model].filter(Boolean).join(' ') || device.serial }}</strong>
-                <small>{{ device.serial }} · {{ device.screen_width }}×{{ device.screen_height }}</small>
-              </span>
-              <el-icon v-if="device.serial === serial" class="row-check" :size="13"><Check /></el-icon>
-            </button>
-            <div v-if="devices.length === 0" class="menu-empty">暂无在线设备</div>
-            <div class="menu-sep" />
-            <button type="button" class="menu-item" @click="connectFromMenu">
-              <el-icon><Link /></el-icon>连接设备…
-            </button>
-            <button type="button" class="menu-item" @click="closeAndRefreshDevices">
-              <el-icon><Refresh /></el-icon>刷新设备
-            </button>
-            <button
-              v-if="serial.includes(':')"
-              type="button"
-              class="menu-item danger"
-              @click="disconnectCurrent"
-            >
-              <el-icon><Close /></el-icon>断开当前网络设备
-            </button>
-          </div>
-        </div>
-
-        <div v-if="selectedDevice?.rotation" class="mirror-meta">
-          <span class="hint">{{ selectedDevice.rotation }}°</span>
-        </div>
-
-        <span class="spacer" />
-
-        <el-button
-          :type="idle ? 'primary' : 'danger'"
-          size="small"
-          :icon="SwitchButton"
-          :loading="starting"
-          @click="toggleMirror"
-        >
-          {{ idle ? '启动镜像' : '停止镜像' }}
-        </el-button>
-        <el-tooltip content="重新连接镜像并刷新设备状态" placement="bottom">
-          <el-button size="small" :icon="Refresh" circle @click="refreshMirror" />
-        </el-tooltip>
-      </header>
+      <MirrorDeviceHeader
+        :serial="serial"
+        :devices="devices"
+        :selected-device="selectedDevice"
+        :idle="idle"
+        :starting="starting"
+        @select-device="emit('select-device', $event)"
+        @connect-device="emit('connect-device')"
+        @refresh-devices="refreshDevices"
+        @disconnect-device="emit('disconnect-device', $event)"
+        @toggle-mirror="toggleMirror"
+        @refresh-mirror="refreshMirror"
+      />
 
       <div class="mirror-toolbar">
         <span class="spacer" />
@@ -674,66 +496,7 @@ defineExpose({
           </div>
         </div>
 
-        <aside class="action-rail">
-          <button
-            type="button"
-            class="rail-btn"
-            title="返回"
-            :disabled="runLocked"
-            @click="sendKeySilent('back')"
-          >
-            <el-icon :size="16"><Back /></el-icon><span>返回</span>
-          </button>
-          <button
-            type="button"
-            class="rail-btn"
-            title="桌面"
-            :disabled="runLocked"
-            @click="sendKeySilent('home')"
-          >
-            <el-icon :size="16"><HomeFilled /></el-icon><span>桌面</span>
-          </button>
-          <button
-            type="button"
-            class="rail-btn"
-            title="最近任务"
-            :disabled="runLocked"
-            @click="sendKeySilent('recents')"
-          >
-            <el-icon :size="16"><Grid /></el-icon><span>最近</span>
-          </button>
-          <button type="button" class="rail-btn accent" title="截图" @click="emit('screenshot')">
-            <el-icon :size="16"><Camera /></el-icon><span>截图</span>
-          </button>
-          <div class="rail-divider" />
-          <div ref="moreMenuRef" class="more-wrap">
-            <button
-              type="button"
-              class="rail-btn"
-              :aria-expanded="moreMenuOpen"
-              title="更多系统按键"
-              :disabled="runLocked"
-              @click="moreMenuOpen = !moreMenuOpen"
-            >
-              <el-icon :size="16"><MoreFilled /></el-icon><span>更多</span>
-            </button>
-            <div v-if="moreMenuOpen" class="more-menu">
-              <div class="more-title">系统按键</div>
-              <div class="more-grid">
-                <button
-                  v-for="item in MORE_KEYS"
-                  :key="item.key"
-                  type="button"
-                  class="more-key"
-                  @click="sendKey(item.key)"
-                >
-                  <el-icon :size="15"><component :is="item.icon" /></el-icon>
-                  {{ item.label }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </aside>
+        <MirrorActionRail :locked="runLocked" @key="sendKeySilent" @screenshot="emit('screenshot')" />
       </div>
 
       <MirrorStatusLine
@@ -761,200 +524,6 @@ defineExpose({
 .console-mirror:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-}
-
-.mirror-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: none;
-  min-height: 46px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-.device-dropdown {
-  position: relative;
-  flex: none;
-  max-width: min(330px, 48%);
-}
-
-.device-btn {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  max-width: 100%;
-  height: 30px;
-  padding: 0 9px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--ink);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.device-btn:hover {
-  background: var(--surface-2);
-}
-
-.device-btn .device-name {
-  min-width: 0;
-  overflow: hidden;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.device-btn .device-serial {
-  flex: none;
-  color: var(--muted-2);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  white-space: nowrap;
-}
-
-.device-btn .chev {
-  flex: none;
-  color: var(--muted-2);
-}
-
-.menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 70;
-  width: 310px;
-  max-width: min(360px, calc(100vw - 40px));
-  padding: 6px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  box-shadow: var(--shadow-md);
-}
-
-.menu-label {
-  padding: 5px 8px 6px;
-  color: var(--muted-2);
-  font-size: 10.5px;
-}
-
-.device-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-
-.device-row:hover {
-  background: var(--surface-2);
-}
-
-.device-row.active {
-  background: var(--accent-soft);
-}
-
-.device-row-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.device-row-main strong {
-  display: block;
-  overflow: hidden;
-  font-size: 12px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.device-row-main small {
-  display: block;
-  overflow: hidden;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.device-row .row-check {
-  flex: none;
-  margin-top: 2px;
-  color: var(--accent);
-  opacity: 0;
-}
-
-.device-row.active .row-check {
-  opacity: 1;
-}
-
-.menu-empty {
-  padding: 8px;
-  color: var(--muted-2);
-  font-size: 11px;
-  text-align: center;
-}
-
-.menu-sep {
-  height: 1px;
-  margin: 5px 4px;
-  background: var(--line);
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 30px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.menu-item:hover {
-  background: var(--surface-2);
-  color: var(--ink);
-}
-
-.menu-item.danger {
-  color: var(--red);
-}
-
-.menu-item.danger:hover {
-  background: var(--red-soft);
-  color: var(--red);
-}
-
-.mirror-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-  color: var(--muted);
-  font-size: 11.5px;
-  white-space: nowrap;
-}
-
-.mirror-meta .mono {
-  color: var(--ink);
-}
-
-.mirror-head > .spacer {
-  flex: 1;
 }
 
 .mirror-toolbar {
@@ -1201,108 +770,6 @@ defineExpose({
   font-weight: 600;
 }
 
-.action-rail {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  overflow: visible;
-  padding: 8px 0;
-  border-left: 1px solid #232b36;
-  background: #111820;
-}
-
-.rail-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  width: 46px;
-  height: 43px;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #8494a8;
-  font-size: 9.5px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.rail-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
-  color: #f0f6ff;
-}
-
-.rail-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.rail-btn.accent {
-  color: #7fb0ff;
-}
-
-.rail-divider {
-  width: 24px;
-  height: 1px;
-  margin: 3px 0;
-  background: #293342;
-}
-
-.more-wrap {
-  position: relative;
-}
-
-.more-menu {
-  position: absolute;
-  right: calc(100% + 8px);
-  bottom: 0;
-  z-index: 45;
-  width: 238px;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--surface);
-  box-shadow: var(--shadow-md);
-}
-
-.more-title {
-  padding: 3px 4px 6px;
-  color: var(--muted-2);
-  font-size: 10px;
-}
-
-.more-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-}
-
-.more-key {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  height: 43px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 9.5px;
-  cursor: pointer;
-}
-
-.more-key:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
 .console-mirror :deep(.mirror-statusline) {
   flex: none;
   height: auto;
@@ -1327,49 +794,7 @@ defineExpose({
   font-size: 11.5px;
 }
 
-@media (max-width: 900px) {
-  .device-dropdown {
-    max-width: min(300px, 60%);
-  }
-}
-
 @media (max-width: 640px) {
-  .mirror-head {
-    min-height: 0;
-    padding: 6px 8px;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .device-dropdown {
-    max-width: 100%;
-  }
-
-  .device-btn {
-    height: 28px;
-  }
-
-  .menu {
-    width: min(310px, calc(100vw - 96px));
-  }
-
-  .device-btn .device-serial {
-    display: none;
-  }
-
-  .mirror-meta {
-    order: 2;
-    font-size: 10.5px;
-  }
-
-  .mirror-head > .spacer {
-    display: none;
-  }
-
-  .mirror-head > .el-button:first-of-type {
-    margin-left: auto;
-  }
-
   .mirror-toolbar {
     padding: 4px 8px;
   }
@@ -1379,24 +804,10 @@ defineExpose({
     margin: 6px 6px 0;
   }
 
-  .action-rail {
-    padding: 6px 0;
-  }
-
-  .rail-btn {
-    width: 42px;
-    height: 40px;
-    font-size: 9px;
-  }
-
-  .more-menu {
-    right: calc(100% + 5px);
-    width: 210px;
-  }
-
   .effect-popover {
     right: -4px;
     width: 236px;
   }
 }
+
 </style>

@@ -10,7 +10,7 @@ import {
   createGroup,
   createNot,
   createTargetCondition,
-} from '@/lib/condition'
+} from './lib/condition'
 import type {
   AppConditionState,
   ConditionGroup,

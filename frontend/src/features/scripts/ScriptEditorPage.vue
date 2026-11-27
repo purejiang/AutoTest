@@ -38,6 +38,7 @@ import {
   normalizeDraft,
   normalizeScriptData,
 } from './nodeDefaults'
+import './scripts.css'
 
 const route = useRoute()
 const router = useRouter()

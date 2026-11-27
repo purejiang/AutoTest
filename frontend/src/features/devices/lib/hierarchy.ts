@@ -15,6 +15,14 @@ import type { HierarchyNode, Target, TargetBy } from '@/types/api'
 /** 可作为元素定位的属性（point 是坐标，不在此列）。 */
 export type SelectorBy = 'text' | 'content_desc' | 'resource_id'
 
+/** 层级树组件（el-tree）用的精简行结构。 */
+export interface InspectorTreeRow {
+  key: string
+  node: HierarchyNode
+  depth: number
+  children: InspectorTreeRow[]
+}
+
 export interface InspectorNode {
   /** 稳定的树 key：根为 '0'，子节点为 '父key-序号'。 */
   key: string

@@ -7,6 +7,9 @@ import { useDevices } from '@/api/devices'
 import { useSettings } from '@/api/settings'
 import type { Device } from '@/types/api'
 import { useUiStore } from '@/stores/ui'
+import AppTabs from '@/components/AppTabs.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import type { AppTabItem } from '@/components/appTabs'
 
 import DeviceConnectDialog from '@/features/devices/DeviceConnectDialog.vue'
 import DeviceHierarchyDrawer from '@/features/devices/DeviceHierarchyDrawer.vue'
@@ -33,6 +36,7 @@ const devicesQuery = useDevices({ refetchInterval: 5000 })
 const settingsQuery = useSettings()
 
 const devices = computed<Device[]>(() => devicesQuery.data.value ?? [])
+
 const token = computed(() => {
   const value = settingsQuery.data.value?.effective?.['security.token']
   return typeof value === 'string' ? value : ''
@@ -56,6 +60,22 @@ const networkOpen = ref(false)
 
 const autoRunning = ref(false)
 const autoPaused = ref(false)
+
+const consoleTabs = computed<AppTabItem[]>(() => [
+  { key: 'manual', label: '手动控制', icon: Tools },
+  {
+    key: 'auto',
+    label: '自动控制',
+    icon: MagicStick,
+    badge: autoRunning.value
+      ? { text: autoPaused.value ? '已暂停' : '运行中', tone: autoPaused.value ? 'amber' : 'green' }
+      : undefined,
+  },
+])
+
+function setConsoleTab(key: string): void {
+  if (key === 'manual' || key === 'auto') ui.setConsoleTab(key)
+}
 
 /** 设备列表变化时保持当前选择；失效或首次加载时落到第一台设备。 */
 watch(
@@ -207,57 +227,41 @@ function openConnect(): void {
           @disconnect-device="refreshDevices"
           @status="handleMirrorStatus"
           @screenshot="openScreenshot"
-          @hierarchy="openHierarchy"
-          @logcat="openLogcat"
         />
 
-        <div v-else-if="devicesQuery.isPending.value" class="mirror-empty">
+        <div v-else-if="devicesQuery.isPending.value" class="mirror-loading">
           <el-skeleton :rows="5" animated style="width: min(420px, 100%)" />
         </div>
 
-        <div v-else class="mirror-empty">
-          <el-icon :size="34" class="empty-ico"><Monitor /></el-icon>
-          <h2>还没有可用的设备</h2>
-          <p>用 USB 连接并授权调试，或连接一台网络设备后开始镜像与手动控制。</p>
-          <p>手机已连接但仍看不到设备？请在「设置 → 工具链」检查 adb 路径与版本。</p>
-          <div class="empty-actions">
+        <EmptyState
+          v-else
+          :icon="Monitor"
+          title="还没有可用的设备"
+          description="用 USB 连接并授权调试，或连接一台网络设备后开始镜像与手动控制。"
+        >
+          <template #extra>
+            <p class="empty-note">手机已连接但仍看不到设备？请在「设置 → 工具链」检查 adb 路径与版本。</p>
+            <span v-if="devicesQuery.isError.value" class="empty-error">
+              设备列表加载失败，请确认后端服务已启动。
+            </span>
+          </template>
+          <template #actions>
             <el-button type="primary" :icon="Link" @click="openConnect">连接设备</el-button>
             <el-button :icon="Refresh" :loading="devicesQuery.isFetching.value" @click="refreshDevices">
               刷新设备
             </el-button>
-          </div>
-          <span v-if="devicesQuery.isError.value" class="empty-error"
-            >设备列表加载失败，请确认后端服务已启动。</span
-          >
-        </div>
+          </template>
+        </EmptyState>
       </section>
 
       <aside class="card dock">
-        <div class="dock-tabs" role="tablist" aria-label="控制台功能">
-          <button
-            type="button"
-            :class="['dock-tab', { active: ui.consoleTab === 'manual' }]"
-            role="tab"
-            :aria-selected="ui.consoleTab === 'manual'"
-            @click="ui.setConsoleTab('manual')"
-          >
-            <el-icon :size="13"><Tools /></el-icon>
-            手动控制
-          </button>
-          <button
-            type="button"
-            :class="['dock-tab', { active: ui.consoleTab === 'auto' }]"
-            role="tab"
-            :aria-selected="ui.consoleTab === 'auto'"
-            @click="ui.setConsoleTab('auto')"
-          >
-            <el-icon :size="13"><MagicStick /></el-icon>
-            自动控制
-            <span v-if="autoRunning" :class="['run-badge', { paused: autoPaused }]">
-              {{ autoPaused ? '已暂停' : '运行中' }}
-            </span>
-          </button>
-        </div>
+        <AppTabs
+          :model-value="ui.consoleTab"
+          :items="consoleTabs"
+          variant="dock"
+          aria-label="控制台功能"
+          @update:model-value="setConsoleTab"
+        />
 
         <div class="dock-body">
           <div v-show="ui.consoleTab === 'manual'" class="dock-pane">
@@ -274,12 +278,17 @@ function openConnect(): void {
               @network="openNetwork"
               @refresh-devices="refreshDevices"
             />
-            <div v-else class="dock-empty">
-              <el-icon :size="24"><Tools /></el-icon>
-              <strong>手动控制不可用</strong>
-              <span>选择或连接一台设备后，可在这里录制、输入文本和拉起应用。</span>
-              <el-button size="small" :icon="Link" @click="openConnect">连接设备</el-button>
-            </div>
+            <EmptyState
+              v-else
+              compact
+              :icon="Tools"
+              title="手动控制不可用"
+              description="选择或连接一台设备后，可在这里录制、输入文本和拉起应用。"
+            >
+              <template #actions>
+                <el-button size="small" :icon="Link" @click="openConnect">连接设备</el-button>
+              </template>
+            </EmptyState>
           </div>
 
           <div v-show="ui.consoleTab === 'auto'" class="dock-pane">
@@ -340,44 +349,21 @@ function openConnect(): void {
   overflow: hidden;
 }
 
-.mirror-empty {
+.mirror-loading {
   display: flex;
   flex: 1;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 9px;
   min-height: 0;
   padding: 28px;
-  text-align: center;
 }
 
-.mirror-empty .empty-ico {
-  color: var(--muted-2);
-}
-
-.mirror-empty h2 {
-  margin: 0;
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.mirror-empty p {
+.empty-note {
   max-width: 360px;
   margin: 0;
   color: var(--muted);
   font-size: 11.5px;
   line-height: 1.55;
-}
-
-.empty-actions {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-  justify-content: center;
-  margin-top: 3px;
 }
 
 .empty-error {
@@ -391,59 +377,6 @@ function openConnect(): void {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-}
-
-.dock-tabs {
-  flex: none;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 3px;
-  padding: 6px;
-  border-bottom: 1px solid var(--line);
-}
-
-.dock-tab {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.dock-tab:hover {
-  background: var(--surface-2);
-  color: var(--ink);
-}
-
-.dock-tab.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 650;
-}
-
-.run-badge {
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 5px;
-  border-radius: 8px;
-  background: var(--green-soft);
-  color: var(--green);
-  font-size: 9px;
-  font-weight: 700;
-}
-
-.run-badge.paused {
-  background: var(--amber-soft);
-  color: var(--amber);
 }
 
 .dock-body {
@@ -460,31 +393,6 @@ function openConnect(): void {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-}
-
-.dock-empty {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 28px 20px;
-  color: var(--muted-2);
-  text-align: center;
-}
-
-.dock-empty strong {
-  color: var(--ink);
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.dock-empty span {
-  max-width: 260px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.55;
 }
 
 @media (max-width: 1200px) {
@@ -537,15 +445,6 @@ function openConnect(): void {
 
   .dock {
     height: 520px;
-  }
-
-  .dock-tab {
-    padding: 0 5px;
-    font-size: 11.5px;
-  }
-
-  .mirror-empty {
-    padding: 20px 14px;
   }
 }
 </style>

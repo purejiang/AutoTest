@@ -11,8 +11,8 @@
 //        m.runMirrorSelfTest()
 // 生产构建不执行（import.meta.env.DEV 判断），也不暴露任何 UI。
 
-import { __selfTest as h264SelfTest } from '@/lib/h264'
-import { parseBinaryFrame } from '@/lib/mirrorWs'
+import { __selfTest as h264SelfTest } from '../lib/h264'
+import { parseBinaryFrame } from '../lib/mirrorWs'
 
 export interface SelfTestReport {
   passed: boolean

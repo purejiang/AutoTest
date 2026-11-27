@@ -1,0 +1,264 @@
+/* 镜像域共享样式：从 styles/index.css 迁出（画布/状态行/占位/录制条），
+   被 features/console 的 MirrorStage 与 features/mirror 组件共用。 */
+.mirror-toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mirror-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: clamp(360px, calc(100vh - 300px), 760px);
+  overflow: hidden;
+  border: 1px solid #23272f;
+  border-radius: 12px;
+  background: #0a0c10;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
+}
+
+.mirror-canvas {
+  display: block;
+  cursor:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26'><circle cx='13' cy='13' r='8.5' fill='none' stroke='black' stroke-opacity='0.55' stroke-width='4'/><circle cx='13' cy='13' r='8.5' fill='none' stroke='white' stroke-opacity='0.95' stroke-width='1.6'/><circle cx='13' cy='13' r='1.7' fill='white' stroke='black' stroke-opacity='0.45' stroke-width='1'/></svg>")
+      13 13,
+    crosshair;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mirror-config-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--amber-line);
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: var(--amber-ink);
+  font-size: 12px;
+}
+
+.mirror-touch-effect {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.mirror-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  background: #0a0c10;
+  text-align: center;
+  z-index: 2;
+}
+
+.mirror-placeholder.is-busy {
+  background: rgba(10, 12, 16, 0.92);
+}
+
+.mirror-placeholder-title {
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 14px;
+}
+
+.mirror-placeholder-sub {
+  color: rgba(255, 255, 255, 0.5);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.mirror-placeholder-error {
+  max-width: 520px;
+  color: #ff9a9a;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.mirror-placeholder-hint {
+  max-width: 420px;
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.mirror-statusline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 24px;
+  min-width: 0;
+  padding: 0 2px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mirror-statusline-strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.mirror-statusline-item {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.mirror-statusline-warn {
+  color: var(--amber);
+}
+
+.mirror-statusline-muted {
+  color: var(--muted-2);
+}
+
+.mirror-statusline-input {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+
+.mirror-statusline-sep {
+  width: 1px;
+  height: 11px;
+  flex: none;
+  background: var(--line-2);
+}
+
+.mirror-statusline-dot {
+  flex: none;
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.mirror-statusline-spacer {
+  flex: 1;
+}
+
+.mirror-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #bfbfbf;
+}
+
+.mirror-dot-live {
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-soft);
+}
+
+.mirror-dot-busy {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.mirror-dot-warn {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+.mirror-dot-error {
+  background: var(--red);
+  box-shadow: 0 0 0 3px var(--red-soft);
+}
+
+.mirror-dot-idle {
+  background: #d9d9d9;
+}
+
+.mirror-errorline {
+  min-height: 18px;
+  overflow: hidden;
+  color: var(--red);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mirror-recording {
+  margin-top: 2px;
+}
+
+.mirror-video-preview {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  background: #000;
+  border-radius: 8px;
+}
+
+.mirror-video-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.mirror-video-name {
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mirror-video-download {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.mirror-video-download:hover {
+  text-decoration: underline;
+}
+
+/* 视频录制状态点（MirrorVideoRecorder） */
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+}
+
+.rec-dot.is-live {
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.rec-clock {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+

@@ -18,6 +18,9 @@ import {
 } from '@/lib/format'
 import { useUiStore } from '@/stores/ui'
 import type { RunEvent } from '@/types/api'
+import AppTabs from '@/components/AppTabs.vue'
+import type { AppTabItem } from '@/components/appTabs'
+import PageHead from '@/components/PageHead.vue'
 import StatusTag from '@/components/StatusTag.vue'
 
 import RunArtifactsCard from './RunArtifactsCard.vue'
@@ -25,6 +28,7 @@ import RunControls from './RunControls.vue'
 import RunEventsPanel from './RunEventsPanel.vue'
 import RunReportsCard from './RunReportsCard.vue'
 import RunStepsTable from './RunStepsTable.vue'
+import './runs.css'
 
 const route = useRoute()
 const router = useRouter()
@@ -77,6 +81,16 @@ const visibleEvents = computed(() =>
   clearedSeq.value > 0 ? mergedEvents.value.filter((event) => event.seq > clearedSeq.value) : mergedEvents.value,
 )
 
+const runTabs = computed<AppTabItem[]>(() => [
+  { key: 'steps', label: '步骤进度' },
+  { key: 'events', label: '事件流', count: visibleEvents.value.length },
+])
+
+function setRunTab(key: string): void {
+  if (key === 'steps' || key === 'events') activeTab.value = key
+}
+
+
 const totalSteps = computed(() => run.value?.total_steps || run.value?.steps?.length || 0)
 const progress = computed(() =>
   runProgress({
@@ -120,16 +134,13 @@ function clearEvents(): void {
   </div>
 
   <div v-else class="page">
-    <div class="run-top">
-      <div class="grow">
-        <div class="run-title-line">
-          <button type="button" class="icon-btn" title="返回运行记录" @click="router.push('/scripts?tab=runs')">
-            <el-icon><ArrowLeft /></el-icon>
-          </button>
-          <h1>运行 #{{ run.id }}</h1>
-          <StatusTag :tone="statusMeta.tone">{{ statusMeta.label }}</StatusTag>
-          <StatusTag v-if="run.debug?.step_mode" tone="violet">单步调试</StatusTag>
-        </div>
+    <PageHead :title="'运行 #' + run.id" @back="router.push('/scripts?tab=runs')">
+      <template #back><el-icon><ArrowLeft /></el-icon></template>
+      <template #title-extra>
+        <StatusTag :tone="statusMeta.tone">{{ statusMeta.label }}</StatusTag>
+        <StatusTag v-if="run.debug?.step_mode" tone="violet">单步调试</StatusTag>
+      </template>
+      <template #below-title>
         <div class="run-meta">
           <button type="button" class="cell-link" @click="run.script_id && router.push(`/scripts/${run.script_id}`)">
             {{ run.script_name || run.script_id || '—' }}
@@ -139,12 +150,12 @@ function clearEvents(): void {
           <span>开始 {{ formatDateTime(run.started_at) }}</span>
           <span>创建 {{ formatDateTime(run.created_at) }}</span>
         </div>
-      </div>
-      <div class="run-actions">
+      </template>
+      <template #actions>
         <el-button :icon="Document" @click="reportOpen = true">报告</el-button>
         <el-button :icon="Refresh" :loading="runQuery.isFetching.value" @click="runQuery.refetch()">刷新</el-button>
-      </div>
-    </div>
+      </template>
+    </PageHead>
 
     <div class="card">
       <div class="card-body">
@@ -180,25 +191,13 @@ function clearEvents(): void {
 
         <section class="card">
           <div class="card-head">
-            <div class="row">
-              <button
-                type="button"
-                class="tab-btn"
-                :class="{ active: activeTab === 'steps' }"
-                @click="activeTab = 'steps'"
-              >
-                步骤进度
-              </button>
-              <button
-                type="button"
-                class="tab-btn"
-                :class="{ active: activeTab === 'events' }"
-                @click="activeTab = 'events'"
-              >
-                事件流
-                <span class="tag blue" style="margin-left: 4px">{{ visibleEvents.length }}</span>
-              </button>
-            </div>
+            <AppTabs
+              :model-value="activeTab"
+              :items="runTabs"
+              variant="plain"
+              aria-label="运行详情视图"
+              @update:model-value="setRunTab"
+            />
             <span class="hint">
               <span class="dot" :class="ws.connected.value ? 'live' : 'offline'" />
               {{ ws.connected.value ? '实时已连接' : ws.reconnectAttempt.value > 0 ? `重连中（第 ${ws.reconnectAttempt.value} 次）` : '实时未连接' }}

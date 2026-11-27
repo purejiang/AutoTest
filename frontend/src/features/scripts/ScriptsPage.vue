@@ -36,11 +36,14 @@ import {
 } from '@/lib/format'
 import { notifyBulkDeleteResult } from '@/lib/bulk'
 import type { Recording, Script } from '@/types/api'
+import AppTabs from '@/components/AppTabs.vue'
+import type { AppTabItem } from '@/components/appTabs'
 import StatusTag from '@/components/StatusTag.vue'
 
 import { scriptStepCount } from './nodeDefaults'
 import RunHistoryPanel from './RunHistoryPanel.vue'
 import CreateRecordingDialog from '@/features/recorder/CreateRecordingDialog.vue'
+import './scripts.css'
 
 type ScriptTab = 'library' | 'runs'
 
@@ -89,6 +92,15 @@ const importMutation = useImportScript()
 
 const scriptTotal = computed(() => scriptsCountQuery.data.value?.total ?? 0)
 const runTotal = computed(() => runsCountQuery.data.value?.total ?? 0)
+
+const scriptTabs = computed<AppTabItem[]>(() => [
+  { key: 'library', label: '脚本库', count: scriptTotal.value },
+  { key: 'runs', label: '运行记录', count: runTotal.value },
+])
+
+function onTabChange(key: string): void {
+  if (key === 'library' || key === 'runs') switchTab(key)
+}
 const scripts = computed(() => scriptsQuery.data.value?.items ?? [])
 const filteredTotal = computed(() => scriptsQuery.data.value?.total ?? 0)
 
@@ -291,27 +303,15 @@ async function handleImportFile(event: Event): Promise<void> {
 
 <template>
   <div class="page scripts-page">
+    <h1 class="visually-hidden">脚本</h1>
     <div class="scripts-head">
-      <div class="seg" role="tablist" aria-label="脚本视图">
-        <button
-          type="button"
-          role="tab"
-          :class="{ active: activeTab === 'library' }"
-          :aria-selected="activeTab === 'library'"
-          @click="switchTab('library')"
-        >
-          脚本库<span class="tab-count">{{ scriptTotal }}</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :class="{ active: activeTab === 'runs' }"
-          :aria-selected="activeTab === 'runs'"
-          @click="switchTab('runs')"
-        >
-          运行记录<span class="tab-count">{{ runTotal }}</span>
-        </button>
-      </div>
+      <AppTabs
+        :model-value="activeTab"
+        :items="scriptTabs"
+        variant="segmented"
+        aria-label="脚本视图"
+        @update:model-value="onTabChange"
+      />
       <span class="spacer" />
 
       <div v-if="activeTab === 'library'" class="scripts-actions">
@@ -523,59 +523,6 @@ async function handleImportFile(event: Event): Promise<void> {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-}
-
-.seg {
-  display: inline-flex;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-2);
-}
-
-.seg button {
-  height: 24px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 11.5px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.seg button:hover {
-  color: var(--ink);
-}
-
-.seg button.active {
-  background: var(--surface);
-  color: var(--ink);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
-}
-
-.tab-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  margin-left: 5px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--surface-3);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.seg button.active .tab-count {
-  background: var(--accent-soft);
-  color: var(--accent);
 }
 
 .cell-id {

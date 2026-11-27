@@ -19,15 +19,15 @@ import {
   type Ref,
 } from 'vue'
 
-import { base64ToBytes, bytesEqual, inspectAnnexB } from '@/lib/h264'
+import { base64ToBytes, bytesEqual, inspectAnnexB } from '../lib/h264'
 import {
   createMirrorSocket,
   type MirrorCloseInfo,
   type MirrorControlMessage,
   type MirrorHello,
   type MirrorSocket,
-} from '@/lib/mirrorWs'
-import { MirrorDecoder, type MirrorDecoderMode } from '@/lib/webcodecs'
+} from '../lib/mirrorWs'
+import { MirrorDecoder, type MirrorDecoderMode } from '../lib/webcodecs'
 import { formatMirrorDiag, measureDisplayHz, recordMirrorDiag } from '../lib/diag'
 import { CanvasRenderer } from '../render/canvasRenderer'
 import { errorMessage, get, post } from '../lib/api'

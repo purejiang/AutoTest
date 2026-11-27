@@ -580,7 +580,7 @@ function buildSyntheticPps(): Uint8Array {
 
 /**
  * 单元级自测：返回断言失败信息数组（空数组 = 全部通过）。
- * 可在浏览器 console 执行：`import('@/lib/h264').then(m => console.log(m.__selfTest()))`，
+ * 可在浏览器 console 执行：`import('@/features/mirror/lib/h264').then(m => console.log(m.__selfTest()))`，
  * 或由 features/mirror/dev/selfTest.ts 的自检入口调用。
  */
 export function __selfTest(): string[] {

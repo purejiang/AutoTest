@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import { createDefaultWhen, describeWhen } from '@/lib/condition'
+import { createDefaultWhen, describeWhen } from './lib/condition'
 import type { When } from '@/types/api'
 
 import ConditionNodeEditor from './ConditionNodeEditor.vue'

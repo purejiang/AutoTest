@@ -1,0 +1,575 @@
+/* 脚本页 / 编辑器样式：从 styles/index.css 迁出，只被 features/scripts 使用。 */
+.editor-grid {
+  display: grid;
+  grid-template-columns: 282px minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.editor-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  min-height: 38px;
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-alt);
+}
+
+.editor-col-head .title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.editor-col-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.node-search {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.node-add-menu {
+  min-width: 214px;
+}
+
+.node-add-group {
+  padding: 7px 12px 3px;
+  color: var(--muted-2);
+  font-size: 10.5px;
+  font-weight: 650;
+  list-style: none;
+}
+
+.node-add-menu .el-dropdown-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.node-add-icon {
+  display: inline-flex;
+  width: 18px;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.node-add-code {
+  margin-left: auto;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+/* 行布局/参数/标签在 NodeList.vue 的 scoped style 中维护；这里只保留共享视觉态。 */
+.node-row {
+  border-bottom: 1px solid var(--line-faint);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+}
+
+.node-row:hover {
+  background: var(--surface-hover);
+}
+
+.node-row.selected {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+.node-name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-row.disabled .node-name {
+  opacity: 0.45;
+}
+
+.editor-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-card {
+  flex: none;
+}
+
+/* 脚本名过长时不要让标题把页头操作挤到下一行 */
+.script-editor-page .page-title h1 {
+  max-width: min(52vw, 560px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.script-title .name-edit {
+  width: 24px;
+  height: 24px;
+  color: var(--muted-2);
+}
+
+.script-title .name-edit:hover {
+  color: var(--ink);
+}
+
+.script-name-input {
+  width: min(340px, 36vw);
+}
+
+.script-name-input .el-input__wrapper {
+  padding: 0 6px;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.script-name-input .el-input__inner {
+  font-weight: 650;
+}
+
+.last-run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.last-run-chip:hover .hint {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* 节点编辑区：卡片自身滚动，操作头吸顶，长表单不会把工具条顶走 */
+.editor-card.node-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.node-card > .card-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  overflow: auto;
+}
+
+.node-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.node-editor-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.node-editor-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* 节点名做成“标题输入框”：平时像标题，悬停/聚焦才出现输入框边界 */
+.node-name-input {
+  width: min(280px, 28vw);
+}
+
+.node-name-input .el-input__wrapper {
+  padding: 0 4px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.node-name-input .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--line) inset;
+}
+
+.node-name-input .el-input__wrapper.is-focus {
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.node-name-input .el-input__inner {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.node-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.node-head-actions .el-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.node-head-divider {
+  width: 1px;
+  height: 14px;
+  margin: 0 3px;
+  background: var(--line);
+}
+
+.node-editor-form {
+  padding: 10px 12px 16px;
+}
+
+.editor-json-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-color: var(--amber);
+  background: var(--amber-soft);
+  color: var(--ink);
+  font-size: 11.5px;
+}
+
+.editor-json-warning .spacer {
+  flex: 1;
+}
+
+.editor-validation {
+  flex: none;
+  overflow: hidden;
+}
+
+.editor-validation-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+.editor-validation-head strong {
+  font-weight: 650;
+}
+
+.editor-validation-body {
+  max-height: 150px;
+  overflow: auto;
+  padding: 4px 10px 8px;
+}
+
+.editor-validation .validation-item {
+  padding: 3px 0;
+}
+
+.editor-validation .validation-item .code-text {
+  flex: none;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 脚本设置抽屉：表单下方的来源信息 */
+.script-meta {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 7px 10px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.script-meta > div {
+  display: contents;
+}
+
+.script-meta code {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.script-meta .cell-link {
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+}
+
+.form-grid .full {
+  grid-column: 1 / -1;
+}
+
+.section-label {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.section-label:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.json-editor-host {
+  flex: 1;
+  min-height: 180px;
+  overflow: hidden;
+}
+
+.json-editor-host .cm-editor {
+  height: 100%;
+  font-size: 12px;
+}
+
+.json-editor-host .cm-scroller {
+  overflow: auto;
+  font-family: var(--mono);
+}
+
+.validation-list {
+  max-height: 180px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-alt);
+}
+
+.validation-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 2px 0;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.validation-item:hover {
+  background: var(--surface-alt);
+}
+
+/* 条件编辑器 */
+.condition-root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.condition-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-alt);
+}
+
+.condition-card.not {
+  border-color: var(--amber-line);
+  background: var(--amber-soft);
+}
+
+.condition-card.group {
+  background: var(--surface-alt);
+}
+
+.condition-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 7px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.condition-kind {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.condition-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.condition-body {
+  padding: 8px;
+}
+
+.condition-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.condition-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.condition-item > .condition-card {
+  flex: 1;
+}
+
+.condition-branch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex: none;
+  align-self: stretch;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.condition-empty {
+  padding: 8px;
+  border: 1px dashed var(--line-2);
+  border-radius: 6px;
+  color: var(--muted-2);
+  font-size: 11px;
+  text-align: center;
+}
+
+.condition-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.condition-inline .el-select {
+  width: 150px;
+}
+
+.condition-inline .el-input {
+  width: 220px;
+}
+
+.target-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.target-row .target-by {
+  width: 150px;
+}
+
+.target-row .target-value {
+  flex: 1;
+  min-width: 140px;
+}
+
+.target-row .target-index {
+  width: 100px;
+}
+
+.target-row .target-coord {
+  width: 110px;
+}
+
+.weekday-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.weekday-btn {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.weekday-btn.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+

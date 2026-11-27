@@ -8,7 +8,7 @@ import StatusTag from '@/components/StatusTag.vue'
 withDefaults(
   defineProps<{
     entry: SettingEntry
-    modelValue: any
+    modelValue: string | number | boolean | null
     source: 'default' | 'file' | 'env'
     /** 启动项（bootstrap）：只读，改配置文件/环境变量后重启 */
     readonly?: boolean

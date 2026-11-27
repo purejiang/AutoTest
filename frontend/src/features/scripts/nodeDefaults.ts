@@ -1,5 +1,5 @@
 // 12 类节点的元信息、默认 params、新建节点构造、脚本数据兜底（v0.2：when 默认关闭）。
-import { createDefaultWhen } from '@/lib/condition'
+import { createDefaultWhen } from './lib/condition'
 import type { NodeType, Script, ScriptData, ScriptSettings, StepNode, When } from '@/types/api'
 
 export interface NodeTypeMeta {

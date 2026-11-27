@@ -21,7 +21,7 @@ const props = withDefaults(
     serverVersion?: string
     disabled?: boolean
   }>(),
-  { serverVersion: '5.0.1', disabled: false },
+  { serverVersion: '', disabled: false },
 )
 
 const emit = defineEmits<{
@@ -251,7 +251,7 @@ function defaultLabel(key: string): string {
         target="镜像"
         detail="预设按设备长边比例缩放，再受长边上限约束；实际分辨率在镜像启动时按设备计算。保存后需停止并重新启动镜像。"
       />
-      <StatusTag tone="blue">scrcpy {{ serverVersion }}</StatusTag>
+      <StatusTag tone="blue">scrcpy {{ serverVersion || '—' }}</StatusTag>
     </div>
     <div class="card-body">
       <div class="preset-grid">

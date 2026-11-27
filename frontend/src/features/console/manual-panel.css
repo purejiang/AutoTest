@@ -1,0 +1,243 @@
+/* 手动控制面板共用样式：容器（ManualPanel.vue）与 5 个 tab 子组件共享。
+   放在这里而不是各组件 scoped 里，避免同一套 section/field 规则复制 5 份；
+   类名统一以 manual-/tool-/field- 前缀，避免与全局样式冲突。 */
+
+.manual-page {
+  display: block;
+  padding: 12px 12px 16px;
+}
+
+/* ---------------------------------------------------------------- 区块标题 */
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 9px;
+}
+
+.section-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin: 0 auto 0 0;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.section-head h3 .el-icon {
+  color: var(--muted);
+}
+
+.section-head .tag {
+  flex: none;
+}
+
+.section-sub {
+  margin: 7px 0 8px;
+  color: var(--muted-2);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+/* ---------------------------------------------------------------- 表单 */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field > span {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.field + .field {
+  margin-top: 8px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rec-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rec-row .el-input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.inline-warning {
+  margin-top: 7px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 10.5px;
+}
+
+/* ---------------------------------------------------------------- 视频提示 */
+.video-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.video-warning .el-icon {
+  flex: none;
+  margin-top: 1px;
+}
+
+.video-warning strong {
+  font-weight: 650;
+}
+
+/* ---------------------------------------------------------------- 工具列表 */
+.manual-divider {
+  height: 1px;
+  margin: 15px 0 13px;
+  background: var(--line-soft);
+}
+
+.tool-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 3px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.tool-item:last-child {
+  border-bottom: 0;
+}
+
+.tool-ico {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+.tool-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-main strong {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-main small {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.tool-item .el-button {
+  flex: none;
+}
+
+/* ---------------------------------------------------------------- 设备信息抽屉 */
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0 12px;
+}
+
+.info-grid .kv {
+  min-width: 0;
+}
+
+.info-grid .kv > strong {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.pre-block {
+  width: 100%;
+  max-height: 220px;
+}
+
+/* 嵌入的录制卡片去掉自己的边框与标题，融进手动控制页。 */
+.manual-page .mirror-recording {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.manual-page .mirror-recording > .card-head {
+  display: none;
+}
+
+.manual-page .mirror-recording > .card-body {
+  padding: 0;
+}
+
+.manual-page .mirror-recording .el-alert {
+  margin-top: 8px;
+}
+
+.manual-page .mirror-recording .mirror-video-preview {
+  max-height: 300px;
+}
+
+.manual-page .code-text .el-input__inner {
+  font-family: var(--mono);
+}
+
+@media (max-width: 640px) {
+  .manual-page {
+    padding: 9px 9px 14px;
+  }
+
+  .field-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .info-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tool-main small {
+    display: none;
+  }
+}

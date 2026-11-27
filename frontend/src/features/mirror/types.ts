@@ -1,6 +1,6 @@
 // 镜像页内部类型（对外只暴露 MirrorPanelProps，见 ../index.tsx）。
 
-import type { MirrorDecoderMode } from '@/lib/webcodecs'
+import type { MirrorDecoderMode } from './lib/webcodecs'
 
 /** hello / config 消息归一化后的展示信息 */
 export interface MirrorHelloInfo {
